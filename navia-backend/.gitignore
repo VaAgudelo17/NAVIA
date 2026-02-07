@@ -1,0 +1,83 @@
+# ============================================================================
+# NAVIA Backend - Archivos a Ignorar en Git
+# ============================================================================
+
+# --- Entorno Virtual de Python ---
+venv/
+env/
+.venv/
+.env
+
+# --- Cache de Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# --- Archivos de distribución ---
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- Archivos de IDEs ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# --- Archivos del sistema operativo ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# --- Archivos de imágenes subidas ---
+uploads/*
+!uploads/.gitkeep
+
+# --- Modelos descargados (muy grandes) ---
+models/
+*.pt
+*.onnx
+*.pth
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Jupyter Notebooks ---
+.ipynb_checkpoints/
+
+# --- Testing ---
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# --- Documentación generada ---
+docs/_build/
+
+# --- Archivos temporales ---
+tmp/
+temp/
+*.tmp
