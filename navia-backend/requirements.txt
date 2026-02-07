@@ -1,0 +1,48 @@
+# ============================================================================
+# NAVIA Backend - Archivo de Dependencias
+# ============================================================================
+# Este archivo lista todas las librerías necesarias para el proyecto.
+# Instalar con: pip install -r requirements.txt
+# ============================================================================
+
+# --- FRAMEWORK WEB ---
+# FastAPI: Framework moderno y rápido para crear APIs REST en Python.
+fastapi>=0.115.0
+
+# Uvicorn: Servidor ASGI de alto rendimiento para ejecutar aplicaciones FastAPI.
+uvicorn[standard]>=0.32.0
+
+# python-multipart: Necesario para manejar archivos subidos (form-data).
+python-multipart>=0.0.12
+
+# --- PROCESAMIENTO DE IMÁGENES ---
+# OpenCV (cv2): Librería de visión por computadora más usada en el mundo.
+# La versión "headless" no incluye interfaz gráfica (ideal para servidores).
+opencv-python-headless>=4.10.0
+
+# Pillow: Librería para manipulación de imágenes en Python.
+Pillow>=11.0.0
+
+# NumPy: Librería fundamental para computación numérica.
+numpy>=2.0.0
+
+# --- OCR (Reconocimiento Óptico de Caracteres) ---
+# pytesseract: Wrapper de Python para Tesseract OCR.
+pytesseract>=0.3.13
+
+# --- DETECCIÓN DE OBJETOS ---
+# Ultralytics: Librería oficial de YOLOv8.
+ultralytics>=8.3.0
+
+# --- UTILIDADES ---
+# Pydantic: Validación de datos y configuración.
+pydantic>=2.9.0
+
+# pydantic-settings: Extensión para manejar configuración con Pydantic v2
+pydantic-settings>=2.6.0
+
+# python-dotenv: Cargar variables de entorno desde archivo .env
+python-dotenv>=1.0.1
+
+# aiofiles: Manejo asíncrono de archivos.
+aiofiles>=24.1.0

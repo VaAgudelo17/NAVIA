@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Configuraciones locales
+.claude/
+
+# Node / frontend
+node_modules
+dist
+.next
+
+# Entornos
+.env
+.env.*
