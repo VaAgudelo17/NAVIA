@@ -123,6 +123,7 @@ export function HomeScreen() {
 
   // Seleccionar imagen de la galería
   const handlePickImage = async () => {
+    if (ttsEnabled) speak('Abriendo galería');
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       quality: 0.8,
@@ -294,7 +295,10 @@ export function HomeScreen() {
                   styles.modeButton,
                   analysisMode === value && styles.modeButtonActive,
                 ]}
-                onPress={() => setAnalysisMode(value)}
+                onPress={() => {
+                  setAnalysisMode(value);
+                  if (ttsEnabled) speak(`Modo ${label}`);
+                }}
                 accessibilityRole="radio"
                 accessibilityState={{ selected: analysisMode === value }}
                 accessibilityLabel={`Modo ${label}`}
@@ -351,7 +355,11 @@ export function HomeScreen() {
       {/* Toggle TTS */}
       <TouchableOpacity
         style={styles.ttsToggle}
-        onPress={() => setTtsEnabled(!ttsEnabled)}
+        onPress={() => {
+          const newValue = !ttsEnabled;
+          speak(newValue ? 'Voz activada' : 'Voz desactivada');
+          setTtsEnabled(newValue);
+        }}
         accessibilityLabel={ttsEnabled ? 'Desactivar voz' : 'Activar voz'}
         accessibilityRole="switch"
         accessibilityState={{ checked: ttsEnabled }}
@@ -433,7 +441,10 @@ export function HomeScreen() {
       <View style={styles.realtimeControls}>
         <TouchableOpacity
           style={styles.stopRealtimeButton}
-          onPress={handleReset}
+          onPress={() => {
+            handleReset();
+            if (ttsEnabled) speak('Detenido');
+          }}
           accessibilityLabel="Detener detección en tiempo real"
           accessibilityRole="button"
         >
@@ -460,7 +471,10 @@ export function HomeScreen() {
       <View style={styles.cameraControls}>
         <TouchableOpacity
           style={styles.cameraButton}
-          onPress={handleReset}
+          onPress={() => {
+            handleReset();
+            if (ttsEnabled) speak('Cancelado');
+          }}
           accessibilityLabel="Cancelar y volver"
           accessibilityRole="button"
         >
@@ -574,7 +588,10 @@ export function HomeScreen() {
       <View style={styles.resultActions}>
         <Button
           title="Nueva Imagen"
-          onPress={handleReset}
+          onPress={() => {
+            handleReset();
+            if (ttsEnabled) speak('Nueva captura');
+          }}
           variant="outline"
           size="large"
           icon={<Ionicons name="refresh" size={20} color={COLORS.primary} />}
@@ -603,7 +620,14 @@ export function HomeScreen() {
       <Ionicons name="alert-circle" size={64} color={COLORS.error} />
       <Text style={styles.errorTitle}>Error</Text>
       <Text style={styles.errorMessage}>{error}</Text>
-      <Button title="Intentar de nuevo" onPress={handleReset} size="large" />
+      <Button
+        title="Intentar de nuevo"
+        onPress={() => {
+          handleReset();
+          if (ttsEnabled) speak('Volviendo al inicio');
+        }}
+        size="large"
+      />
     </View>
   );
 
