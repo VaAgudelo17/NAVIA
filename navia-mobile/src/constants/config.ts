@@ -44,6 +44,17 @@ export const ANALYSIS_MODES = {
   SCENE: 'scene',      // OCR + Detección de objetos
   TEXT: 'text',        // Solo OCR
   OBJECTS: 'objects',  // Solo detección de objetos
+  REALTIME: 'realtime', // Detección en tiempo real
 } as const;
 
 export type AnalysisMode = typeof ANALYSIS_MODES[keyof typeof ANALYSIS_MODES];
+
+// URL WebSocket (convierte http → ws)
+export const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
+
+// Configuración de detección en tiempo real
+export const REALTIME_CONFIG = {
+  targetFps: 2,           // 2 frames por segundo (mobile)
+  ttsMinInterval: 3000,   // 3 segundos entre frases TTS
+  imageQuality: 0.3,      // Calidad JPEG baja para velocidad
+};

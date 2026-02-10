@@ -34,6 +34,15 @@ pytesseract>=0.3.13
 # Ultralytics: Librería oficial de YOLOv8.
 ultralytics>=8.3.0
 
+# --- WEBSOCKET ---
+# websockets: Soporte WebSocket para detección en tiempo real.
+websockets>=12.0
+
+# --- ESTIMACIÓN DE PROFUNDIDAD ---
+# Transformers: Librería de Hugging Face para modelos de deep learning.
+# Usamos Depth Anything V2 Small para estimación de profundidad monocular.
+transformers>=4.41.0
+
 # --- UTILIDADES ---
 # Pydantic: Validación de datos y configuración.
 pydantic>=2.9.0

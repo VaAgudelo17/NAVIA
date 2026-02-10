@@ -20,11 +20,15 @@ export interface BoundingBox {
   y_max: number
 }
 
+export type DistanceZone = 'muy_cerca' | 'cerca' | 'lejos'
+
 export interface DetectedObject {
   name: string
   name_es: string
   confidence: number
   bounding_box: BoundingBox
+  distance_zone?: DistanceZone
+  distance_estimate?: string
 }
 
 export interface OCRResponse {
@@ -71,6 +75,25 @@ export interface APIError {
   error_code: string
   message: string
   detail?: string
+}
+
+// Resultado de detección en tiempo real (WebSocket)
+export interface RealtimeDetectionResult {
+  type: 'detection'
+  frame_id: number
+  objects: DetectedObject[]
+  object_count: number
+  summary: string
+  processing_time_ms: number
+  timestamp: number
+  changes?: {
+    appeared: string[]
+    disappeared: string[]
+    zone_changes: Array<{ name: string; from_zone: string; to_zone: string }>
+    smoothed_zones: Record<string, DistanceZone>
+    has_significant_change: boolean
+    current_objects: string[]
+  }
 }
 
 /**

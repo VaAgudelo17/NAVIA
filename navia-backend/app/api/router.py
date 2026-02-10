@@ -21,6 +21,7 @@ from fastapi import APIRouter
 # Importar routers de cada módulo de endpoints
 from app.api.endpoints.health import router as health_router
 from app.api.endpoints.image_analysis import router as image_router
+from app.api.endpoints.realtime_ws import router as realtime_router
 
 # Crear router principal de la API
 # Todas las rutas tendrán el prefijo /api/v1
@@ -29,3 +30,4 @@ api_router = APIRouter(prefix="/api/v1")
 # Incluir routers de cada módulo
 api_router.include_router(health_router)
 api_router.include_router(image_router)
+api_router.include_router(realtime_router)
