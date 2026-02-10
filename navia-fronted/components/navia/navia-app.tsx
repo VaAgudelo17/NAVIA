@@ -278,8 +278,13 @@ export function NaviaApp() {
             variant="ghost"
             size="icon"
             onClick={() => {
-              setTtsEnabled(!ttsEnabled)
-              if (ttsEnabled) stopSpeaking()
+              const newValue = !ttsEnabled
+              setTtsEnabled(newValue)
+              window.speechSynthesis.cancel()
+              const utterance = new SpeechSynthesisUtterance(newValue ? "Voz activada" : "Voz desactivada")
+              utterance.lang = "es-ES"
+              utterance.rate = 0.9
+              window.speechSynthesis.speak(utterance)
             }}
             aria-label={ttsEnabled ? "Desactivar voz" : "Activar voz"}
           >
@@ -317,7 +322,10 @@ export function NaviaApp() {
                     <Button
                       key={mode}
                       variant={analysisMode === mode ? "default" : "outline"}
-                      onClick={() => setAnalysisMode(mode)}
+                      onClick={() => {
+                        setAnalysisMode(mode)
+                        speak(`Modo ${label}`)
+                      }}
                       role="radio"
                       aria-checked={analysisMode === mode}
                       className="h-12 text-sm px-3 w-full"
@@ -344,7 +352,10 @@ export function NaviaApp() {
                   <Button
                     variant="outline"
                     size="lg"
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={() => {
+                      speak("Abriendo galería")
+                      fileInputRef.current?.click()
+                    }}
                     disabled={isBackendConnected === false}
                     className="w-full min-h-[48px]"
                     aria-label="Subir imagen desde galería"
@@ -397,6 +408,7 @@ export function NaviaApp() {
                 onClick={() => {
                   stopCamera()
                   setAppState("idle")
+                  speak("Cancelado")
                 }}
                 aria-label="Cancelar y volver"
               >
@@ -415,7 +427,10 @@ export function NaviaApp() {
               <Button
                 variant="outline"
                 size="icon-lg"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => {
+                  speak("Abriendo galería")
+                  fileInputRef.current?.click()
+                }}
                 aria-label="Subir imagen desde galería"
               >
                 <Upload className="h-6 w-6" />
@@ -539,7 +554,10 @@ export function NaviaApp() {
               <Button
                 variant="outline"
                 size="lg"
-                onClick={reset}
+                onClick={() => {
+                  reset()
+                  speak("Nueva captura")
+                }}
                 className="min-h-[48px]"
                 aria-label="Tomar nueva imagen"
               >
@@ -642,7 +660,10 @@ export function NaviaApp() {
               <Button
                 variant="destructive"
                 size="lg"
-                onClick={reset}
+                onClick={() => {
+                  reset()
+                  speak("Detenido")
+                }}
                 className="w-full min-h-[48px]"
                 aria-label="Detener detección en tiempo real"
               >
@@ -662,7 +683,7 @@ export function NaviaApp() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <p>{error}</p>
-                <Button onClick={reset} className="w-full min-h-[48px]" aria-label="Intentar de nuevo">
+                <Button onClick={() => { reset(); speak("Volviendo al inicio") }} className="w-full min-h-[48px]" aria-label="Intentar de nuevo">
                   Intentar de nuevo
                 </Button>
               </CardContent>
