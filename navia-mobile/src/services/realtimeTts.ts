@@ -1,70 +1,97 @@
 /**
- * TTS inteligente para modo tiempo real
+ * TTS inteligente para modos tiempo real (Navegación y Riesgo)
  *
- * Solo narra cambios significativos:
- * - Objetos que aparecen/desaparecen
- * - Alertas de zona: cuando un objeto entra en "muy cerca" (peligro)
+ * Modo Navegación:
+ * - Usa el summary del backend directamente (ya formateado como instrucción)
+ * - Mínimo 3 segundos entre frases
  *
- * Mínimo 3 segundos entre frases para no saturar al usuario.
+ * Modo Riesgo:
+ * - Solo habla si has_danger === true
+ * - Alertas critical bypassean el cooldown de 3s
+ * - Interrumpe speech actual para alertas critical
  */
 
 import * as Speech from 'expo-speech';
 import { TTS_CONFIG, REALTIME_CONFIG } from '../constants/config';
-
-interface ZoneChange {
-  name: string;
-  from_zone: string;
-  to_zone: string;
-}
+import { NaviaMode } from '../types/api';
 
 interface RealtimeChanges {
   appeared: string[];
   disappeared: string[];
-  zone_changes: ZoneChange[];
+  zone_changes: Array<{ name: string; from_zone: string; to_zone: string }>;
   has_significant_change: boolean;
+}
+
+interface RiskData {
+  has_danger: boolean;
+  priority: string;
+  alert_text: string;
 }
 
 export class RealtimeTtsManager {
   private lastSpeakTime = 0;
   private isSpeaking = false;
+  private mode: NaviaMode = 'navegacion';
+  private lastSummary = '';
 
-  async speakChanges(changes: RealtimeChanges): Promise<void> {
-    if (!changes.has_significant_change) return;
+  setMode(mode: NaviaMode): void {
+    this.mode = mode;
+  }
+
+  /**
+   * Procesa resultado de detección según el modo activo.
+   * summary: texto del backend (instrucción de navegación o alerta de riesgo)
+   */
+  async speakResult(
+    summary: string,
+    changes?: RealtimeChanges,
+    riskData?: RiskData,
+  ): Promise<void> {
+    if (this.mode === 'riesgo') {
+      return this.speakRiskAlert(riskData);
+    }
+
+    // Modo navegación: usa el summary del backend
+    return this.speakNavigationSummary(summary, changes);
+  }
+
+  private async speakNavigationSummary(
+    summary: string,
+    changes?: RealtimeChanges,
+  ): Promise<void> {
+    // Solo hablar si hay cambio significativo o summary cambió
+    if (!changes?.has_significant_change && summary === this.lastSummary) return;
+    if (!summary) return;
 
     const now = Date.now();
     if (now - this.lastSpeakTime < REALTIME_CONFIG.ttsMinInterval) return;
     if (this.isSpeaking) return;
 
-    let text = '';
+    this.lastSummary = summary;
+    await this.doSpeak(summary);
+  }
 
-    // Prioridad 1: Alertas de zona "muy cerca" (peligro)
-    const dangerAlerts = (changes.zone_changes || []).filter(
-      (zc) => zc.to_zone === 'muy_cerca'
-    );
-    if (dangerAlerts.length > 0) {
-      const names = dangerAlerts.map((z) => z.name).join(', ');
-      text = `Precaución, ${names} muy cerca`;
-    }
-    // Prioridad 2: Objetos que aparecen
-    else if (changes.appeared.length > 0 && changes.disappeared.length === 0) {
-      const items = changes.appeared.join(', ');
-      text = changes.appeared.length === 1
-        ? `Nuevo: ${items}`
-        : `Nuevos: ${items}`;
-    }
-    // Prioridad 3: Objetos que desaparecen
-    else if (changes.disappeared.length > 0 && changes.appeared.length === 0) {
-      text = `${changes.disappeared.join(', ')} ya no visible`;
-    }
-    // Prioridad 4: Ambos
-    else if (changes.appeared.length > 0 && changes.disappeared.length > 0) {
-      text = `Ahora: ${changes.appeared.join(', ')}`;
+  private async speakRiskAlert(riskData?: RiskData): Promise<void> {
+    if (!riskData?.has_danger || !riskData.alert_text) return;
+
+    const now = Date.now();
+
+    if (riskData.priority === 'critical') {
+      // Critical: interrumpe todo y habla inmediatamente
+      await Speech.stop();
+      this.isSpeaking = false;
+    } else {
+      // High: respeta el cooldown
+      if (now - this.lastSpeakTime < REALTIME_CONFIG.ttsMinInterval) return;
+      if (this.isSpeaking) return;
     }
 
-    if (!text) return;
+    await this.doSpeak(riskData.alert_text);
+  }
 
+  private async doSpeak(text: string): Promise<void> {
     this.isSpeaking = true;
-    this.lastSpeakTime = now;
+    this.lastSpeakTime = Date.now();
 
     try {
       await Speech.stop();
@@ -92,5 +119,6 @@ export class RealtimeTtsManager {
   reset(): void {
     this.stop();
     this.lastSpeakTime = 0;
+    this.lastSummary = '';
   }
 }

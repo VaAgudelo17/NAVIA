@@ -9,6 +9,9 @@ import {
   ObjectDetectionResponse,
   SceneDescriptionResponse,
   QuickAnalysisResponse,
+  NavigationResponse,
+  ExplorationResponse,
+  RiskResponse,
 } from '../types/api';
 
 /**
@@ -49,110 +52,69 @@ function createImageFormData(imageUri: string): FormData {
 }
 
 /**
- * Extrae texto de una imagen usando OCR
+ * Helper genérico para enviar imagen a un endpoint
  */
+async function postImage<T>(endpoint: string, imageUri: string, errorMsg: string): Promise<T> {
+  try {
+    const formData = createImageFormData(imageUri);
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'POST',
+      body: formData,
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || errorMsg);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error(`Error: ${errorMsg}:`, error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// NUEVOS MODOS
+// ============================================================================
+
+/** Modo Navegación: instrucciones cortas de navegación */
+export async function analyzeNavigation(imageUri: string): Promise<NavigationResponse> {
+  return postImage<NavigationResponse>(API_ENDPOINTS.NAVEGACION, imageUri, 'Error en navegación');
+}
+
+/** Modo Exploración: descripción estructurada del entorno */
+export async function analyzeExploration(imageUri: string): Promise<ExplorationResponse> {
+  return postImage<ExplorationResponse>(API_ENDPOINTS.EXPLORACION, imageUri, 'Error en exploración');
+}
+
+/** Modo Lectura: OCR puro */
+export async function analyzeReading(imageUri: string): Promise<OCRResponse> {
+  return postImage<OCRResponse>(API_ENDPOINTS.LECTURA, imageUri, 'Error en lectura');
+}
+
+/** Modo Riesgo: detección de peligros */
+export async function analyzeRisk(imageUri: string): Promise<RiskResponse> {
+  return postImage<RiskResponse>(API_ENDPOINTS.RIESGO, imageUri, 'Error en evaluación de riesgo');
+}
+
+// ============================================================================
+// LEGACY (compatibilidad)
+// ============================================================================
+
 export async function extractText(imageUri: string): Promise<OCRResponse> {
-  try {
-    const formData = createImageFormData(imageUri);
-
-    const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.OCR}`, {
-      method: 'POST',
-      body: formData,
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || 'Error en el procesamiento de OCR');
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error('Error in OCR:', error);
-    throw error;
-  }
+  return postImage<OCRResponse>(API_ENDPOINTS.OCR, imageUri, 'Error en OCR');
 }
 
-/**
- * Detecta objetos en una imagen
- */
 export async function detectObjects(imageUri: string): Promise<ObjectDetectionResponse> {
-  try {
-    const formData = createImageFormData(imageUri);
-
-    const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.OBJECTS}`, {
-      method: 'POST',
-      body: formData,
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || 'Error en la detección de objetos');
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error('Error in object detection:', error);
-    throw error;
-  }
+  return postImage<ObjectDetectionResponse>(API_ENDPOINTS.OBJECTS, imageUri, 'Error en detección');
 }
 
-/**
- * Analiza una escena completa (OCR + detección de objetos)
- * Este es el endpoint principal para la aplicación
- */
 export async function analyzeScene(imageUri: string): Promise<SceneDescriptionResponse> {
-  try {
-    const formData = createImageFormData(imageUri);
-
-    const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.SCENE}`, {
-      method: 'POST',
-      body: formData,
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || 'Error analizando la escena');
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error('Error analyzing scene:', error);
-    throw error;
-  }
+  return postImage<SceneDescriptionResponse>(API_ENDPOINTS.SCENE, imageUri, 'Error en análisis de escena');
 }
 
-/**
- * Análisis rápido (solo detección de objetos, sin OCR)
- */
 export async function quickAnalysis(imageUri: string): Promise<QuickAnalysisResponse> {
-  try {
-    const formData = createImageFormData(imageUri);
-
-    const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.QUICK}`, {
-      method: 'POST',
-      body: formData,
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || 'Error en análisis rápido');
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error('Error in quick analysis:', error);
-    throw error;
-  }
+  return postImage<QuickAnalysisResponse>(API_ENDPOINTS.QUICK, imageUri, 'Error en análisis rápido');
 }
