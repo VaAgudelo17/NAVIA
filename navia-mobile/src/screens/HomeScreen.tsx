@@ -21,6 +21,7 @@ import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Button } from '../components/Button';
+import { AnimatedEye } from '../components/AnimatedEye';
 import { COLORS, ANALYSIS_MODES, AnalysisMode } from '../constants/config';
 import { analyzeScene, extractText, detectObjects, checkHealth } from '../services/api';
 import { speak, stop, speakProcessing, speakError } from '../services/tts';
@@ -245,7 +246,7 @@ export function HomeScreen() {
   const renderHome = () => (
     <View style={styles.homeContainer}>
       <View style={styles.header}>
-        <Ionicons name="eye" size={48} color={COLORS.primary} />
+        <AnimatedEye size={48} color={COLORS.primary} />
         <Text style={styles.title}>NAVIA</Text>
         <Text style={styles.subtitle}>Asistente Visual con IA</Text>
       </View>
