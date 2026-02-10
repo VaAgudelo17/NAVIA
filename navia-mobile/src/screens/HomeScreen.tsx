@@ -1,5 +1,11 @@
 /**
  * Pantalla principal de NAVIA
+ *
+ * 4 modos:
+ * - Navegación: tiempo real, instrucciones cortas de navegación
+ * - Exploración: foto, descripción estructurada del entorno
+ * - Lectura: foto, OCR puro
+ * - Riesgo: tiempo real, alertas de peligro
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -15,35 +21,55 @@ import {
   Dimensions,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Button } from '../components/Button';
 import { AnimatedEye } from '../components/AnimatedEye';
-import { COLORS, ANALYSIS_MODES, AnalysisMode } from '../constants/config';
-import { analyzeScene, extractText, detectObjects, checkHealth } from '../services/api';
+import { COLORS, ANALYSIS_MODES, REALTIME_MODES, AnalysisMode } from '../constants/config';
+import {
+  analyzeNavigation,
+  analyzeExploration,
+  analyzeReading,
+  analyzeRisk,
+  checkHealth,
+} from '../services/api';
 import { speak, stop, speakProcessing, speakError } from '../services/tts';
-import { SceneDescriptionResponse, OCRResponse, ObjectDetectionResponse } from '../types/api';
+import {
+  NavigationResponse,
+  ExplorationResponse,
+  OCRResponse,
+  RiskResponse,
+} from '../types/api';
 import { useRealtimeDetection } from '../hooks/useRealtimeDetection';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 type AppState = 'home' | 'camera' | 'processing' | 'results' | 'error' | 'realtime';
 
+// Configuración de cada modo
+const MODE_CONFIG: Record<AnalysisMode, { label: string; icon: string; description: string }> = {
+  navegacion: { label: 'Navegación', icon: 'compass', description: 'Detecta obstáculos' },
+  exploracion: { label: 'Exploración', icon: 'eye', description: 'Describe el entorno' },
+  lectura: { label: 'Lectura', icon: 'document-text', description: 'Lee textos' },
+  riesgo: { label: 'Riesgo', icon: 'warning', description: 'Alerta de peligros' },
+};
+
 export function HomeScreen() {
   // Estados principales
   const [appState, setAppState] = useState<AppState>('home');
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>(ANALYSIS_MODES.SCENE);
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>(ANALYSIS_MODES.NAVEGACION);
   const [isBackendConnected, setIsBackendConnected] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Estados de imagen y resultados
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
-  const [sceneResult, setSceneResult] = useState<SceneDescriptionResponse | null>(null);
+  const [navResult, setNavResult] = useState<NavigationResponse | null>(null);
+  const [explorationResult, setExplorationResult] = useState<ExplorationResponse | null>(null);
   const [ocrResult, setOcrResult] = useState<OCRResponse | null>(null);
-  const [objectsResult, setObjectsResult] = useState<ObjectDetectionResponse | null>(null);
+  const [riskResult, setRiskResult] = useState<RiskResponse | null>(null);
 
   // Estados de TTS
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -53,13 +79,16 @@ export function HomeScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
 
-  // Detección en tiempo real
+  // Detección en tiempo real (para Navegación y Riesgo)
   const [realtimeActive, setRealtimeActive] = useState(false);
   const { wsStatus, latestResult } = useRealtimeDetection({
     cameraRef,
     enabled: realtimeActive,
     ttsEnabled,
+    mode: analysisMode,
   });
+
+  const isRealtimeMode = REALTIME_MODES.includes(analysisMode);
 
   // Verificar conexión con el backend al iniciar
   useEffect(() => {
@@ -75,23 +104,26 @@ export function HomeScreen() {
     }
   };
 
-  // Solicitar permisos de cámara
+  // Abrir cámara
   const handleOpenCamera = async () => {
     if (!permission?.granted) {
       const result = await requestPermission();
       if (!result.granted) {
-        Alert.alert('Permiso denegado', 'Se necesita acceso a la cámara para usar esta función.');
+        Alert.alert('Permiso denegado', 'Se necesita acceso a la cámara.');
         return;
       }
     }
 
-    if (analysisMode === ANALYSIS_MODES.REALTIME) {
+    if (isRealtimeMode) {
+      // Navegación y Riesgo: entran directo a modo realtime
       setAppState('realtime');
       setRealtimeActive(true);
+      const modeLabel = MODE_CONFIG[analysisMode].label;
       if (ttsEnabled) {
-        speak('Modo tiempo real activado. Apunta la cámara para detectar objetos.');
+        speak(`Modo ${modeLabel} activado. Apunta la cámara.`);
       }
     } else {
+      // Exploración y Lectura: capturan foto
       setAppState('camera');
       if (ttsEnabled) {
         speak('Cámara activada. Toca el botón central para capturar.');
@@ -136,74 +168,66 @@ export function HomeScreen() {
     }
   };
 
-  // Procesar imagen con el backend
+  // Procesar imagen según el modo
   const processImage = async (imageUri: string) => {
-    if (ttsEnabled) {
-      await speakProcessing();
-    }
+    if (ttsEnabled) await speakProcessing();
 
     try {
-      let result;
-
       switch (analysisMode) {
-        case ANALYSIS_MODES.TEXT:
-          result = await extractText(imageUri);
+        case 'navegacion': {
+          const result = await analyzeNavigation(imageUri);
+          setNavResult(result);
+          if (ttsEnabled) await speak(result.instruction);
+          break;
+        }
+        case 'exploracion': {
+          const result = await analyzeExploration(imageUri);
+          setExplorationResult(result);
+          if (ttsEnabled) await speak(result.description);
+          break;
+        }
+        case 'lectura': {
+          const result = await analyzeReading(imageUri);
           setOcrResult(result);
           if (ttsEnabled) {
-            if (result.has_text) {
-              await speak(`Texto encontrado: ${result.text}`);
-            } else {
-              await speak('No se detectó texto en la imagen.');
-            }
+            await speak(result.has_text ? `Texto: ${result.text}` : 'No se detectó texto.');
           }
           break;
-
-        case ANALYSIS_MODES.OBJECTS:
-          result = await detectObjects(imageUri);
-          setObjectsResult(result);
+        }
+        case 'riesgo': {
+          const result = await analyzeRisk(imageUri);
+          setRiskResult(result);
           if (ttsEnabled) {
-            await speak(result.summary);
+            await speak(result.has_danger ? result.alert_text : 'Sin peligros detectados.');
           }
           break;
-
-        case ANALYSIS_MODES.SCENE:
-        default:
-          result = await analyzeScene(imageUri);
-          setSceneResult(result);
-          if (ttsEnabled) {
-            await speak(result.description);
-          }
-          break;
+        }
       }
-
       setAppState('results');
     } catch (error: any) {
       handleError(error.message || 'Error procesando la imagen');
     }
   };
 
-  // Manejar errores
   const handleError = (message: string) => {
     setError(message);
     setAppState('error');
-    if (ttsEnabled) {
-      speakError(message);
-    }
+    if (ttsEnabled) speakError(message);
   };
 
-  // Reiniciar app
   const handleReset = () => {
     stop();
     setRealtimeActive(false);
     setAppState('home');
     setCapturedImage(null);
-    setSceneResult(null);
+    setNavResult(null);
+    setExplorationResult(null);
     setOcrResult(null);
-    setObjectsResult(null);
+    setRiskResult(null);
     setError(null);
   };
 
-  // Repetir resultado
+  // Repetir resultado por TTS
   const handleRepeat = async () => {
     if (isSpeaking) {
       await stop();
@@ -213,33 +237,27 @@ export function HomeScreen() {
 
     setIsSpeaking(true);
     try {
-      if (sceneResult) {
-        await speak(sceneResult.description);
-      } else if (ocrResult?.has_text) {
-        await speak(ocrResult.text);
-      } else if (objectsResult) {
-        await speak(objectsResult.summary);
-      }
+      if (navResult) await speak(navResult.instruction);
+      else if (explorationResult) await speak(explorationResult.description);
+      else if (ocrResult?.has_text) await speak(ocrResult.text);
+      else if (riskResult) await speak(riskResult.has_danger ? riskResult.alert_text : 'Sin peligros.');
     } finally {
       setIsSpeaking(false);
     }
   };
 
-  // Renderizar según el estado
+  // ============================================================================
+  // RENDERIZADO
+  // ============================================================================
+
   const renderContent = () => {
     switch (appState) {
-      case 'camera':
-        return renderCamera();
-      case 'realtime':
-        return renderRealtime();
-      case 'processing':
-        return renderProcessing();
-      case 'results':
-        return renderResults();
-      case 'error':
-        return renderError();
-      default:
-        return renderHome();
+      case 'camera': return renderCamera();
+      case 'realtime': return renderRealtime();
+      case 'processing': return renderProcessing();
+      case 'results': return renderResults();
+      case 'error': return renderError();
+      default: return renderHome();
     }
   };
 
@@ -259,19 +277,15 @@ export function HomeScreen() {
             styles.connectionDot,
             {
               backgroundColor:
-                isBackendConnected === null
-                  ? COLORS.warning
-                  : isBackendConnected
-                  ? COLORS.success
+                isBackendConnected === null ? COLORS.warning
+                  : isBackendConnected ? COLORS.success
                   : COLORS.error,
             },
           ]}
         />
         <Text style={styles.connectionText}>
-          {isBackendConnected === null
-            ? 'Conectando...'
-            : isBackendConnected
-            ? 'Servidor conectado'
+          {isBackendConnected === null ? 'Conectando...'
+            : isBackendConnected ? 'Servidor conectado'
             : 'Sin conexión al servidor'}
         </Text>
       </View>
@@ -281,13 +295,7 @@ export function HomeScreen() {
         <Text style={styles.modeLabel}>Modo de análisis:</Text>
         <View style={styles.modeButtons}>
           {Object.entries(ANALYSIS_MODES).map(([key, value]) => {
-            const label = value === 'scene'
-              ? 'Escena'
-              : value === 'text'
-              ? 'Texto'
-              : value === 'realtime'
-              ? 'En Vivo'
-              : 'Objetos';
+            const config = MODE_CONFIG[value];
             return (
               <TouchableOpacity
                 key={key}
@@ -297,22 +305,14 @@ export function HomeScreen() {
                 ]}
                 onPress={() => {
                   setAnalysisMode(value);
-                  if (ttsEnabled) speak(`Modo ${label}`);
+                  if (ttsEnabled) speak(`Modo ${config.label}`);
                 }}
                 accessibilityRole="radio"
                 accessibilityState={{ selected: analysisMode === value }}
-                accessibilityLabel={`Modo ${label}`}
+                accessibilityLabel={`Modo ${config.label}. ${config.description}`}
               >
                 <Ionicons
-                  name={
-                    value === 'scene'
-                      ? 'eye'
-                      : value === 'text'
-                      ? 'document-text'
-                      : value === 'realtime'
-                      ? 'radio'
-                      : 'cube'
-                  }
+                  name={config.icon as any}
                   size={20}
                   color={analysisMode === value ? COLORS.background : COLORS.primary}
                 />
@@ -322,7 +322,7 @@ export function HomeScreen() {
                     analysisMode === value && styles.modeButtonTextActive,
                   ]}
                 >
-                  {label}
+                  {config.label}
                 </Text>
               </TouchableOpacity>
             );
@@ -333,7 +333,7 @@ export function HomeScreen() {
       {/* Botones principales */}
       <View style={styles.mainButtons}>
         <Button
-          title="Abrir Cámara"
+          title={isRealtimeMode ? 'Iniciar Cámara' : 'Abrir Cámara'}
           onPress={handleOpenCamera}
           size="xl"
           disabled={isBackendConnected === false}
@@ -341,15 +341,17 @@ export function HomeScreen() {
           style={styles.mainButton}
         />
 
-        <Button
-          title="Subir Imagen"
-          onPress={handlePickImage}
-          variant="outline"
-          size="large"
-          disabled={isBackendConnected === false}
-          icon={<Ionicons name="image" size={24} color={COLORS.primary} />}
-          style={styles.secondaryButton}
-        />
+        {!isRealtimeMode && (
+          <Button
+            title="Subir Imagen"
+            onPress={handlePickImage}
+            variant="outline"
+            size="large"
+            disabled={isBackendConnected === false}
+            icon={<Ionicons name="image" size={24} color={COLORS.primary} />}
+            style={styles.secondaryButton}
+          />
+        )}
       </View>
 
       {/* Toggle TTS */}
@@ -376,93 +378,117 @@ export function HomeScreen() {
     </View>
   );
 
-  // Vista de tiempo real
-  const renderRealtime = () => (
-    <View style={styles.cameraContainer}>
-      <CameraView
-        ref={cameraRef}
-        style={styles.camera}
-        facing="back"
-      >
-        {/* Overlay con resultados de detección */}
-        <View style={styles.realtimeOverlay}>
-          {/* Barra de estado superior */}
-          <View style={styles.realtimeStatusBar}>
-            <View style={styles.realtimeStatusLeft}>
-              <View
-                style={[
-                  styles.connectionDot,
-                  { backgroundColor: wsStatus === 'connected' ? COLORS.success : COLORS.warning },
-                ]}
-              />
-              <Text style={styles.realtimeStatusText}>
-                {wsStatus === 'connected' ? 'En vivo' : 'Conectando...'}
-              </Text>
-            </View>
-            {latestResult && (
-              <Text style={styles.realtimeStatusText}>
-                {latestResult.processing_time_ms}ms
-              </Text>
-            )}
-          </View>
+  // Vista de tiempo real (Navegación y Riesgo)
+  const renderRealtime = () => {
+    const isRiskMode = analysisMode === 'riesgo';
 
-          {/* Resumen de detección en la parte inferior */}
-          <View style={styles.realtimeSummaryContainer}>
-            <View style={styles.realtimeSummary}>
-              <Text style={styles.realtimeSummaryText}>
-                {latestResult?.summary || 'Apunta la cámara para detectar...'}
-              </Text>
-              {latestResult && latestResult.objects.length > 0 && (
-                <View style={styles.realtimeObjectList}>
-                  {latestResult.objects.slice(0, 5).map((obj, idx) => {
-                    const zoneColor =
-                      obj.distance_zone === 'muy_cerca' ? '#EF4444' :
-                      obj.distance_zone === 'cerca' ? '#F59E0B' : '#22C55E';
-                    return (
-                      <View key={idx} style={styles.realtimeObjectItem}>
-                        <View style={styles.realtimeObjLeft}>
-                          <View style={[styles.zoneDot, { backgroundColor: zoneColor }]} />
-                          <Text style={styles.realtimeObjectName}>{obj.name_es}</Text>
-                        </View>
-                        <Text style={[styles.realtimeObjectDistance, { color: zoneColor }]}>
-                          {obj.distance_estimate || `${(obj.confidence * 100).toFixed(0)}%`}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </View>
+    return (
+      <View style={styles.cameraContainer}>
+        <CameraView ref={cameraRef} style={styles.camera} facing="back">
+          <View style={styles.realtimeOverlay}>
+            {/* Barra de estado superior */}
+            <View style={styles.realtimeStatusBar}>
+              <View style={styles.realtimeStatusLeft}>
+                <View
+                  style={[
+                    styles.connectionDot,
+                    { backgroundColor: wsStatus === 'connected' ? COLORS.success : COLORS.warning },
+                  ]}
+                />
+                <Text style={styles.realtimeStatusText}>
+                  {MODE_CONFIG[analysisMode].label}
+                  {wsStatus === 'connected' ? '' : ' - Conectando...'}
+                </Text>
+              </View>
+              {latestResult && (
+                <Text style={styles.realtimeStatusText}>
+                  {latestResult.processing_time_ms}ms
+                </Text>
               )}
             </View>
+
+            {/* Indicador de peligro para modo Riesgo */}
+            {isRiskMode && (
+              <View style={styles.riskIndicatorContainer}>
+                <View
+                  style={[
+                    styles.riskIndicator,
+                    {
+                      backgroundColor: latestResult?.has_danger
+                        ? (latestResult.priority === 'critical' ? '#EF4444' : '#F59E0B')
+                        : '#22C55E',
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name={latestResult?.has_danger ? 'warning' : 'checkmark-circle'}
+                    size={48}
+                    color="white"
+                  />
+                  <Text style={styles.riskIndicatorText}>
+                    {latestResult?.has_danger
+                      ? (latestResult.priority === 'critical' ? 'PELIGRO' : 'PRECAUCIÓN')
+                      : 'SEGURO'}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Resumen de detección en la parte inferior */}
+            <View style={styles.realtimeSummaryContainer}>
+              <View style={styles.realtimeSummary}>
+                <Text style={styles.realtimeSummaryText}>
+                  {latestResult?.summary || (isRiskMode ? 'Monitoreando peligros...' : 'Analizando entorno...')}
+                </Text>
+                {/* Lista de objetos solo en modo Navegación */}
+                {!isRiskMode && latestResult && latestResult.objects.length > 0 && (
+                  <View style={styles.realtimeObjectList}>
+                    {latestResult.objects.slice(0, 5).map((obj, idx) => {
+                      const zoneColor =
+                        obj.distance_zone === 'muy_cerca' ? '#EF4444' :
+                        obj.distance_zone === 'cerca' ? '#F59E0B' : '#22C55E';
+                      return (
+                        <View key={idx} style={styles.realtimeObjectItem}>
+                          <View style={styles.realtimeObjLeft}>
+                            <View style={[styles.zoneDot, { backgroundColor: zoneColor }]} />
+                            <Text style={styles.realtimeObjectName}>{obj.name_es}</Text>
+                          </View>
+                          <Text style={[styles.realtimeObjectDistance, { color: zoneColor }]}>
+                            {obj.distance_estimate || `${(obj.confidence * 100).toFixed(0)}%`}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            </View>
           </View>
+        </CameraView>
+
+        {/* Controles */}
+        <View style={styles.realtimeControls}>
+          <TouchableOpacity
+            style={styles.stopRealtimeButton}
+            onPress={() => {
+              handleReset();
+              if (ttsEnabled) speak('Detenido');
+            }}
+            accessibilityLabel="Detener"
+            accessibilityRole="button"
+          >
+            <Ionicons name="stop" size={28} color={COLORS.text} />
+            <Text style={styles.stopRealtimeText}>Detener</Text>
+          </TouchableOpacity>
         </View>
-      </CameraView>
-
-      {/* Controles */}
-      <View style={styles.realtimeControls}>
-        <TouchableOpacity
-          style={styles.stopRealtimeButton}
-          onPress={() => {
-            handleReset();
-            if (ttsEnabled) speak('Detenido');
-          }}
-          accessibilityLabel="Detener detección en tiempo real"
-          accessibilityRole="button"
-        >
-          <Ionicons name="stop" size={28} color={COLORS.text} />
-          <Text style={styles.stopRealtimeText}>Detener</Text>
-        </TouchableOpacity>
       </View>
-    </View>
-  );
+    );
+  };
 
-  // Vista de cámara
+  // Vista de cámara (Exploración y Lectura)
   const renderCamera = () => (
     <View style={styles.cameraContainer}>
-      <CameraView
-        ref={cameraRef}
-        style={styles.camera}
-        facing="back"
-      >
+      <CameraView ref={cameraRef} style={styles.camera} facing="back">
         <View style={styles.cameraOverlay}>
           <View style={styles.cameraFrame} />
         </View>
@@ -521,32 +547,75 @@ export function HomeScreen() {
       )}
 
       <View style={styles.resultCard}>
-        <Text style={styles.resultTitle}>Resultado</Text>
+        <Text style={styles.resultTitle}>
+          {MODE_CONFIG[analysisMode].label}
+        </Text>
 
-        {sceneResult && (
+        {/* Resultado de Navegación */}
+        {navResult && (
           <View>
-            <Text style={styles.resultDescription}>{sceneResult.description}</Text>
-            {sceneResult.has_text && (
-              <View style={styles.textBox}>
-                <Text style={styles.textBoxLabel}>Texto detectado:</Text>
-                <Text style={styles.textBoxContent}>{sceneResult.detected_text}</Text>
+            <Text style={styles.resultDescription}>{navResult.instruction}</Text>
+            {navResult.path_clear && (
+              <View style={[styles.statusBadge, { backgroundColor: COLORS.success + '20' }]}>
+                <Text style={[styles.statusBadgeText, { color: COLORS.success }]}>
+                  Camino libre
+                </Text>
               </View>
             )}
-            {sceneResult.object_count > 0 && (
+            {navResult.obstacles.length > 0 && (
+              <View style={styles.obstacleList}>
+                {navResult.obstacles.map((obj, idx) => {
+                  const zoneColor =
+                    obj.distance_zone === 'muy_cerca' ? '#EF4444' :
+                    obj.distance_zone === 'cerca' ? '#F59E0B' : '#22C55E';
+                  return (
+                    <View key={idx} style={styles.objectItem}>
+                      <View style={styles.objectInfo}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={[styles.zoneDot, { backgroundColor: zoneColor }]} />
+                          <Text style={styles.objectName}>{obj.name_es}</Text>
+                        </View>
+                        {obj.distance_estimate && (
+                          <Text style={[styles.objectDistance, { color: zoneColor }]}>
+                            {obj.distance_estimate}
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Resultado de Exploración */}
+        {explorationResult && (
+          <View>
+            <Text style={styles.resultDescription}>{explorationResult.description}</Text>
+            {explorationResult.has_text && (
+              <View style={styles.textBox}>
+                <Text style={styles.textBoxLabel}>Texto detectado:</Text>
+                <Text style={styles.textBoxContent}>{explorationResult.detected_text}</Text>
+              </View>
+            )}
+            {explorationResult.object_count > 0 && (
               <Text style={styles.objectCount}>
-                {sceneResult.object_count} objeto(s) detectado(s)
+                {explorationResult.object_count} objeto(s) detectado(s)
               </Text>
             )}
           </View>
         )}
 
+        {/* Resultado de Lectura */}
         {ocrResult && (
           <View>
             {ocrResult.has_text ? (
               <>
                 <Text style={styles.resultDescription}>{ocrResult.text}</Text>
                 <Text style={styles.confidence}>
-                  {ocrResult.word_count} palabras • {ocrResult.confidence?.toFixed(0)}% confianza
+                  {ocrResult.word_count} palabras
+                  {ocrResult.confidence ? ` • ${ocrResult.confidence.toFixed(0)}% confianza` : ''}
                 </Text>
               </>
             ) : (
@@ -555,32 +624,56 @@ export function HomeScreen() {
           </View>
         )}
 
-        {objectsResult && (
+        {/* Resultado de Riesgo */}
+        {riskResult && (
           <View>
-            <Text style={styles.resultDescription}>{objectsResult.summary}</Text>
-            {objectsResult.objects.map((obj, idx) => {
-              const zoneColor =
-                obj.distance_zone === 'muy_cerca' ? '#EF4444' :
-                obj.distance_zone === 'cerca' ? '#F59E0B' : '#22C55E';
-              return (
-                <View key={idx} style={styles.objectItem}>
-                  <View style={styles.objectInfo}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <View style={[styles.zoneDot, { backgroundColor: zoneColor }]} />
-                      <Text style={styles.objectName}>{obj.name_es}</Text>
-                    </View>
-                    {obj.distance_estimate && (
-                      <Text style={[styles.objectDistance, { color: zoneColor }]}>
-                        {obj.distance_estimate}
+            <View style={[
+              styles.statusBadge,
+              {
+                backgroundColor: riskResult.has_danger
+                  ? (riskResult.priority === 'critical' ? '#EF444420' : '#F59E0B20')
+                  : '#22C55E20',
+              },
+            ]}>
+              <Ionicons
+                name={riskResult.has_danger ? 'warning' : 'checkmark-circle'}
+                size={20}
+                color={riskResult.has_danger
+                  ? (riskResult.priority === 'critical' ? '#EF4444' : '#F59E0B')
+                  : '#22C55E'}
+              />
+              <Text style={[
+                styles.statusBadgeText,
+                {
+                  color: riskResult.has_danger
+                    ? (riskResult.priority === 'critical' ? '#EF4444' : '#F59E0B')
+                    : '#22C55E',
+                },
+              ]}>
+                {riskResult.has_danger
+                  ? (riskResult.priority === 'critical' ? 'PELIGRO' : 'PRECAUCIÓN')
+                  : 'SEGURO'}
+              </Text>
+            </View>
+            <Text style={styles.resultDescription}>
+              {riskResult.has_danger ? riskResult.alert_text : 'No se detectaron peligros.'}
+            </Text>
+            {riskResult.dangers.length > 0 && (
+              <View style={styles.obstacleList}>
+                {riskResult.dangers.map((d, idx) => (
+                  <View key={idx} style={styles.objectItem}>
+                    <View style={styles.objectInfo}>
+                      <Text style={styles.objectName}>{d.object_name}</Text>
+                      <Text style={[styles.objectDistance, {
+                        color: d.danger_level === 'critical' ? '#EF4444' : '#F59E0B',
+                      }]}>
+                        {d.distance_zone === 'muy_cerca' ? 'Muy cerca' : 'Cerca'} - {d.position}
                       </Text>
-                    )}
+                    </View>
                   </View>
-                  <Text style={styles.objectConfidence}>
-                    {(obj.confidence * 100).toFixed(0)}%
-                  </Text>
-                </View>
-              );
-            })}
+                ))}
+              </View>
+            )}
           </View>
         )}
       </View>
@@ -817,6 +910,24 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
+  riskIndicatorContainer: {
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  riskIndicator: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    opacity: 0.9,
+  },
+  riskIndicatorText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginTop: 4,
+  },
   realtimeSummaryContainer: {
     padding: 20,
     paddingBottom: 100,
@@ -938,6 +1049,23 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     lineHeight: 24,
   },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 6,
+    marginBottom: 12,
+  },
+  statusBadgeText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  obstacleList: {
+    marginTop: 12,
+  },
   textBox: {
     backgroundColor: COLORS.secondary,
     borderRadius: 12,
@@ -989,10 +1117,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.primary,
     marginTop: 2,
-  },
-  objectConfidence: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
   },
   resultActions: {
     flexDirection: 'row',

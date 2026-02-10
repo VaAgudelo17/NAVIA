@@ -1,9 +1,10 @@
 /**
  * Cliente WebSocket para detección en tiempo real
+ * Soporta modos: navegacion y riesgo
  */
 
 import { API_BASE_URL } from '../constants/config';
-import { RealtimeDetectionResult } from '../types/api';
+import { RealtimeDetectionResult, NaviaMode } from '../types/api';
 
 type DetectionHandler = (data: RealtimeDetectionResult) => void;
 type StatusHandler = (status: 'connecting' | 'connected' | 'disconnected' | 'error') => void;
@@ -12,14 +13,20 @@ export class RealtimeWebSocket {
   private ws: WebSocket | null = null;
   private onDetection: DetectionHandler;
   private onStatus: StatusHandler;
+  private mode: NaviaMode;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private frameId = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(onDetection: DetectionHandler, onStatus: StatusHandler) {
+  constructor(
+    onDetection: DetectionHandler,
+    onStatus: StatusHandler,
+    mode: NaviaMode = 'navegacion',
+  ) {
     this.onDetection = onDetection;
     this.onStatus = onStatus;
+    this.mode = mode;
   }
 
   connect(): void {
@@ -31,6 +38,11 @@ export class RealtimeWebSocket {
     this.ws.onopen = () => {
       this.reconnectAttempts = 0;
       this.onStatus('connected');
+      // Enviar configuración de modo al conectar
+      this.ws?.send(JSON.stringify({
+        type: 'config',
+        mode: this.mode,
+      }));
     };
 
     this.ws.onmessage = (event: MessageEvent) => {
@@ -52,6 +64,14 @@ export class RealtimeWebSocket {
       this.onStatus('disconnected');
       this.attemptReconnect();
     };
+  }
+
+  /** Cambia el modo en caliente (sin reconectar) */
+  setMode(mode: NaviaMode): void {
+    this.mode = mode;
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'config', mode }));
+    }
   }
 
   sendFrame(base64Data: string): void {

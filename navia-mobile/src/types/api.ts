@@ -3,6 +3,9 @@
  * Corresponden a los schemas del backend FastAPI
  */
 
+// Modos de NAVIA
+export type NaviaMode = 'navegacion' | 'exploracion' | 'lectura' | 'riesgo';
+
 // Bounding box de un objeto detectado
 export interface BoundingBox {
   x_min: number;
@@ -32,7 +35,7 @@ export interface HealthResponse {
   version: string;
 }
 
-// Respuesta del OCR
+// Respuesta del OCR (modo Lectura)
 export interface OCRResponse {
   success: boolean;
   message: string;
@@ -42,7 +45,7 @@ export interface OCRResponse {
   has_text: boolean;
 }
 
-// Respuesta de detección de objetos
+// Respuesta de detección de objetos (legacy)
 export interface ObjectDetectionResponse {
   success: boolean;
   message: string;
@@ -51,12 +54,12 @@ export interface ObjectDetectionResponse {
   summary: string;
 }
 
-// Respuesta del análisis de escena (endpoint principal)
+// Respuesta del análisis de escena (legacy)
 export interface SceneDescriptionResponse {
   success: boolean;
   message: string;
-  description: string;          // Texto para TTS
-  detected_text: string;        // Texto encontrado en la imagen
+  description: string;
+  detected_text: string;
   has_text: boolean;
   objects: DetectedObject[];
   object_count: number;
@@ -67,7 +70,7 @@ export interface SceneDescriptionResponse {
   };
 }
 
-// Respuesta de análisis rápido
+// Respuesta de análisis rápido (legacy)
 export interface QuickAnalysisResponse {
   success: boolean;
   description: string;
@@ -76,6 +79,49 @@ export interface QuickAnalysisResponse {
     name: string;
     confidence: number;
   }>;
+}
+
+// ============================================================================
+// NUEVOS MODOS
+// ============================================================================
+
+// Respuesta del modo Navegación
+export interface NavigationResponse {
+  success: boolean;
+  message: string;
+  instruction: string;        // Texto corto para TTS
+  obstacles: DetectedObject[];
+  path_clear: boolean;
+  object_count: number;
+}
+
+// Respuesta del modo Exploración
+export interface ExplorationResponse {
+  success: boolean;
+  message: string;
+  description: string;        // Descripción estructurada para TTS
+  detected_text: string;
+  has_text: boolean;
+  objects: DetectedObject[];
+  object_count: number;
+}
+
+// Alerta de riesgo individual
+export interface RiskAlert {
+  object_name: string;
+  danger_level: 'critical' | 'high' | 'medium';
+  distance_zone: string;
+  position: string;
+}
+
+// Respuesta del modo Riesgo
+export interface RiskResponse {
+  success: boolean;
+  message: string;
+  has_danger: boolean;
+  priority: 'critical' | 'high' | 'medium' | 'none';
+  alert_text: string;
+  dangers: RiskAlert[];
 }
 
 // Error de la API
@@ -89,6 +135,7 @@ export interface APIError {
 // Resultado de detección en tiempo real (WebSocket)
 export interface RealtimeDetectionResult {
   type: 'detection';
+  mode: NaviaMode;
   frame_id: number;
   objects: DetectedObject[];
   object_count: number;
@@ -103,6 +150,9 @@ export interface RealtimeDetectionResult {
     has_significant_change: boolean;
     current_objects: string[];
   };
+  // Campos específicos del modo Riesgo
+  has_danger?: boolean;
+  priority?: string;
 }
 
 // Mensaje de estado WebSocket

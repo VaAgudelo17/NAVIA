@@ -10,6 +10,12 @@ export const API_BASE_URL = 'http://192.168.1.21:8000';
 // Endpoints de la API
 export const API_ENDPOINTS = {
   HEALTH: '/api/v1/health',
+  // Nuevos modos
+  NAVEGACION: '/api/v1/analyze/navegacion',
+  EXPLORACION: '/api/v1/analyze/exploracion',
+  LECTURA: '/api/v1/analyze/lectura',
+  RIESGO: '/api/v1/analyze/riesgo',
+  // Legacy (compatibilidad)
   OCR: '/api/v1/analyze/ocr',
   OBJECTS: '/api/v1/analyze/objects',
   SCENE: '/api/v1/analyze/scene',
@@ -41,13 +47,16 @@ export const TTS_CONFIG = {
 
 // Modos de análisis disponibles
 export const ANALYSIS_MODES = {
-  SCENE: 'scene',      // OCR + Detección de objetos
-  TEXT: 'text',        // Solo OCR
-  OBJECTS: 'objects',  // Solo detección de objetos
-  REALTIME: 'realtime', // Detección en tiempo real
+  NAVEGACION: 'navegacion',
+  EXPLORACION: 'exploracion',
+  LECTURA: 'lectura',
+  RIESGO: 'riesgo',
 } as const;
 
 export type AnalysisMode = typeof ANALYSIS_MODES[keyof typeof ANALYSIS_MODES];
+
+// Modos que usan WebSocket (tiempo real con cámara)
+export const REALTIME_MODES: AnalysisMode[] = ['navegacion', 'riesgo'];
 
 // URL WebSocket (convierte http → ws)
 export const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');

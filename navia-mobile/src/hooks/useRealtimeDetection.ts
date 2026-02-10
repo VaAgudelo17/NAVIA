@@ -2,26 +2,28 @@
  * Hook para detección en tiempo real
  *
  * Captura frames periódicos de la cámara y los envía al backend
- * via WebSocket para detección con YOLOv8.
+ * via WebSocket. Soporta modos Navegación y Riesgo.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { CameraView } from 'expo-camera';
 import { RealtimeWebSocket } from '../services/websocket';
 import { RealtimeTtsManager } from '../services/realtimeTts';
-import { RealtimeDetectionResult } from '../types/api';
+import { RealtimeDetectionResult, NaviaMode } from '../types/api';
 import { REALTIME_CONFIG } from '../constants/config';
 
 interface UseRealtimeDetectionOptions {
   cameraRef: React.RefObject<CameraView | null>;
   enabled: boolean;
   ttsEnabled: boolean;
+  mode: NaviaMode;
 }
 
 export function useRealtimeDetection({
   cameraRef,
   enabled,
   ttsEnabled,
+  mode,
 }: UseRealtimeDetectionOptions) {
   const [wsStatus, setWsStatus] = useState<string>('disconnected');
   const [latestResult, setLatestResult] = useState<RealtimeDetectionResult | null>(null);
@@ -31,19 +33,31 @@ export function useRealtimeDetection({
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isCapturing = useRef(false);
 
+  // Actualizar modo del TTS manager cuando cambie
+  useEffect(() => {
+    ttsManagerRef.current.setMode(mode);
+  }, [mode]);
+
   const handleDetection = useCallback((data: RealtimeDetectionResult) => {
     setLatestResult(data);
 
-    // Narrar cambios si TTS está habilitado
-    if (ttsEnabled && data.changes) {
-      ttsManagerRef.current.speakChanges(data.changes);
+    if (ttsEnabled) {
+      ttsManagerRef.current.speakResult(
+        data.summary,
+        data.changes as any,
+        mode === 'riesgo' ? {
+          has_danger: data.has_danger ?? false,
+          priority: data.priority ?? 'none',
+          alert_text: data.summary,
+        } : undefined,
+      );
     }
-  }, [ttsEnabled]);
+  }, [ttsEnabled, mode]);
 
   useEffect(() => {
     if (enabled) {
-      // Conectar WebSocket
-      wsRef.current = new RealtimeWebSocket(handleDetection, setWsStatus);
+      // Conectar WebSocket con modo
+      wsRef.current = new RealtimeWebSocket(handleDetection, setWsStatus, mode);
       wsRef.current.connect();
 
       // Capturar frames periódicamente
@@ -90,7 +104,7 @@ export function useRealtimeDetection({
       wsRef.current = null;
       ttsManagerRef.current.stop();
     };
-  }, [enabled, handleDetection]);
+  }, [enabled, handleDetection, mode]);
 
   return { wsStatus, latestResult };
 }
