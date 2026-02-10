@@ -42,90 +42,93 @@ from app.models.schemas import DetectedObject, BoundingBox
 logger = logging.getLogger(__name__)
 
 
-# Diccionario de traducción: inglés → español
-# Las 80 clases del dataset COCO traducidas
+# Diccionario de traducción: inglés → (español, género)
+# género: "m" = masculino (un), "f" = femenino (una)
 COCO_CLASSES_ES = {
-    "person": "persona",
-    "bicycle": "bicicleta",
-    "car": "carro",
-    "motorcycle": "motocicleta",
-    "airplane": "avión",
-    "bus": "autobús",
-    "train": "tren",
-    "truck": "camión",
-    "boat": "bote",
-    "traffic light": "semáforo",
-    "fire hydrant": "hidrante",
-    "stop sign": "señal de pare",
-    "parking meter": "parquímetro",
-    "bench": "banco",
-    "bird": "pájaro",
-    "cat": "gato",
-    "dog": "perro",
-    "horse": "caballo",
-    "sheep": "oveja",
-    "cow": "vaca",
-    "elephant": "elefante",
-    "bear": "oso",
-    "zebra": "cebra",
-    "giraffe": "jirafa",
-    "backpack": "mochila",
-    "umbrella": "paraguas",
-    "handbag": "bolso",
-    "tie": "corbata",
-    "suitcase": "maleta",
-    "frisbee": "frisbee",
-    "skis": "esquís",
-    "snowboard": "tabla de nieve",
-    "sports ball": "pelota",
-    "kite": "cometa",
-    "baseball bat": "bate de béisbol",
-    "baseball glove": "guante de béisbol",
-    "skateboard": "patineta",
-    "surfboard": "tabla de surf",
-    "tennis racket": "raqueta de tenis",
-    "bottle": "botella",
-    "wine glass": "copa de vino",
-    "cup": "taza",
-    "fork": "tenedor",
-    "knife": "cuchillo",
-    "spoon": "cuchara",
-    "bowl": "tazón",
-    "banana": "banana",
-    "apple": "manzana",
-    "sandwich": "sándwich",
-    "orange": "naranja",
-    "broccoli": "brócoli",
-    "carrot": "zanahoria",
-    "hot dog": "perro caliente",
-    "pizza": "pizza",
-    "donut": "dona",
-    "cake": "pastel",
-    "chair": "silla",
-    "couch": "sofá",
-    "potted plant": "planta en maceta",
-    "bed": "cama",
-    "dining table": "mesa de comedor",
-    "toilet": "inodoro",
-    "tv": "televisor",
-    "laptop": "computadora portátil",
-    "mouse": "ratón de computadora",
-    "remote": "control remoto",
-    "keyboard": "teclado",
-    "cell phone": "teléfono celular",
-    "microwave": "microondas",
-    "oven": "horno",
-    "toaster": "tostadora",
-    "sink": "lavabo",
-    "refrigerator": "refrigerador",
-    "book": "libro",
-    "clock": "reloj",
-    "vase": "jarrón",
-    "scissors": "tijeras",
-    "teddy bear": "oso de peluche",
-    "hair drier": "secador de pelo",
-    "toothbrush": "cepillo de dientes",
+    "person": ("persona", "f"),
+    "bicycle": ("bicicleta", "f"),
+    "car": ("carro", "m"),
+    "motorcycle": ("motocicleta", "f"),
+    "airplane": ("avión", "m"),
+    "bus": ("autobús", "m"),
+    "train": ("tren", "m"),
+    "truck": ("camión", "m"),
+    "boat": ("bote", "m"),
+    "traffic light": ("semáforo", "m"),
+    "fire hydrant": ("hidrante", "m"),
+    "stop sign": ("señal de pare", "f"),
+    "parking meter": ("parquímetro", "m"),
+    "bench": ("banco", "m"),
+    "bird": ("pájaro", "m"),
+    "cat": ("gato", "m"),
+    "dog": ("perro", "m"),
+    "horse": ("caballo", "m"),
+    "sheep": ("oveja", "f"),
+    "cow": ("vaca", "f"),
+    "elephant": ("elefante", "m"),
+    "bear": ("oso", "m"),
+    "zebra": ("cebra", "f"),
+    "giraffe": ("jirafa", "f"),
+    "backpack": ("mochila", "f"),
+    "umbrella": ("paraguas", "m"),
+    "handbag": ("bolso", "m"),
+    "tie": ("corbata", "f"),
+    "suitcase": ("maleta", "f"),
+    "frisbee": ("frisbee", "m"),
+    "skis": ("esquís", "m"),
+    "snowboard": ("tabla de nieve", "f"),
+    "sports ball": ("pelota", "f"),
+    "kite": ("cometa", "f"),
+    "baseball bat": ("bate de béisbol", "m"),
+    "baseball glove": ("guante de béisbol", "m"),
+    "skateboard": ("patineta", "f"),
+    "surfboard": ("tabla de surf", "f"),
+    "tennis racket": ("raqueta de tenis", "f"),
+    "bottle": ("botella", "f"),
+    "wine glass": ("copa de vino", "f"),
+    "cup": ("taza", "f"),
+    "fork": ("tenedor", "m"),
+    "knife": ("cuchillo", "m"),
+    "spoon": ("cuchara", "f"),
+    "bowl": ("tazón", "m"),
+    "banana": ("banana", "f"),
+    "apple": ("manzana", "f"),
+    "sandwich": ("sándwich", "m"),
+    "orange": ("naranja", "f"),
+    "broccoli": ("brócoli", "m"),
+    "carrot": ("zanahoria", "f"),
+    "hot dog": ("perro caliente", "m"),
+    "pizza": ("pizza", "f"),
+    "donut": ("dona", "f"),
+    "cake": ("pastel", "m"),
+    "chair": ("silla", "f"),
+    "couch": ("sofá", "m"),
+    "potted plant": ("planta en maceta", "f"),
+    "bed": ("cama", "f"),
+    "dining table": ("mesa de comedor", "f"),
+    "toilet": ("inodoro", "m"),
+    "tv": ("televisor", "m"),
+    "laptop": ("computadora portátil", "f"),
+    "mouse": ("ratón de computadora", "m"),
+    "remote": ("control remoto", "m"),
+    "keyboard": ("teclado", "m"),
+    "cell phone": ("teléfono celular", "m"),
+    "microwave": ("microondas", "m"),
+    "oven": ("horno", "m"),
+    "toaster": ("tostadora", "f"),
+    "sink": ("lavabo", "m"),
+    "refrigerator": ("refrigerador", "m"),
+    "book": ("libro", "m"),
+    "clock": ("reloj", "m"),
+    "vase": ("jarrón", "m"),
+    "scissors": ("tijeras", "f"),
+    "teddy bear": ("oso de peluche", "m"),
+    "hair drier": ("secador de pelo", "m"),
+    "toothbrush": ("cepillo de dientes", "m"),
 }
+
+# Lookup rápido de género por nombre en español
+GENDER_MAP = {name_es: gender for (name_es, gender) in COCO_CLASSES_ES.values()}
 
 
 class ObjectDetectionService:
@@ -179,27 +182,28 @@ class ObjectDetectionService:
     def detect_objects(
         self,
         image: np.ndarray,
-        confidence_threshold: Optional[float] = None
+        confidence_threshold: Optional[float] = None,
+        depth_map: Optional[np.ndarray] = None
     ) -> Dict:
         """
-        Detecta objetos en una imagen.
+        Detecta objetos en una imagen con estimación de profundidad.
 
         Proceso:
-        1. Ejecutar inferencia del modelo
+        1. Ejecutar inferencia YOLO
         2. Filtrar detecciones por confianza
         3. Traducir nombres a español
-        4. Generar resumen textual
+        4. Estimar profundidad (Depth Anything o heurística bbox)
+        5. Clasificar en zonas: muy_cerca / cerca / lejos
+        6. Generar resumen textual
 
         Args:
             image: Imagen en formato OpenCV (numpy array BGR)
             confidence_threshold: Umbral de confianza (0.0-1.0)
-                                  Si no se especifica, usa el default
+            depth_map: Mapa de profundidad pre-calculado (opcional).
+                       Si no se provee, se calcula internamente.
 
         Returns:
-            Diccionario con:
-            - objects: Lista de objetos detectados
-            - object_count: Número de objetos
-            - summary: Resumen en español
+            Diccionario con objects, object_count, summary, raw_depths
         """
         if self.model is None:
             return {
@@ -212,12 +216,28 @@ class ObjectDetectionService:
         threshold = confidence_threshold or self.confidence_threshold
 
         try:
-            # Ejecutar inferencia
-            # verbose=False evita que YOLO imprima en consola
+            img_height, img_width = image.shape[:2]
+            img_area = img_width * img_height
+            img_shape = (img_height, img_width)
+
+            # Obtener mapa de profundidad si no fue proporcionado
+            if depth_map is None:
+                try:
+                    from app.services.depth_estimation_service import (
+                        get_depth_estimation_service,
+                    )
+                    depth_service = get_depth_estimation_service()
+                    depth_map = depth_service.estimate_depth_map(image)
+                except Exception as e:
+                    logger.debug(f"Depth estimation no disponible: {e}")
+
+            # Ejecutar inferencia YOLO
             results = self.model(image, verbose=False)
 
-            # Procesar resultados
-            detected_objects = self._process_results(results, threshold)
+            # Procesar resultados con depth map
+            detected_objects, raw_depths = self._process_results(
+                results, threshold, img_area, depth_map, img_shape
+            )
 
             # Generar resumen en español
             summary = self._generate_summary(detected_objects)
@@ -225,7 +245,8 @@ class ObjectDetectionService:
             return {
                 "objects": detected_objects,
                 "object_count": len(detected_objects),
-                "summary": summary
+                "summary": summary,
+                "raw_depths": raw_depths,
             }
 
         except Exception as e:
@@ -240,73 +261,135 @@ class ObjectDetectionService:
     def _process_results(
         self,
         results,
-        threshold: float
-    ) -> List[DetectedObject]:
+        threshold: float,
+        img_area: float,
+        depth_map: Optional[np.ndarray],
+        img_shape: tuple
+    ) -> tuple:
         """
-        Procesa los resultados crudos de YOLO.
+        Procesa los resultados crudos de YOLO con estimación de profundidad.
 
         Args:
-            results: Resultados de YOLO (objeto Results)
+            results: Resultados de YOLO
             threshold: Umbral de confianza mínima
+            img_area: Área de la imagen en píxeles
+            depth_map: Mapa de profundidad [H,W] normalizado, o None
+            img_shape: (height, width) de la imagen original
 
         Returns:
-            Lista de objetos DetectedObject
+            Tupla (detected_objects, raw_depths)
+            raw_depths: {name_es: max_depth_value} para smoothing en WebSocket
         """
-        detected_objects = []
+        from app.services.depth_estimation_service import (
+            DepthEstimationService,
+            ZONE_LABELS,
+        )
 
-        # YOLO puede devolver múltiples resultados (uno por imagen)
-        # Como procesamos una imagen a la vez, tomamos el primero
+        detected_objects = []
+        # raw_depths guarda el depth más alto (más cercano) por clase
+        raw_depths: Dict[str, float] = {}
+
         for result in results:
             boxes = result.boxes
-
             if boxes is None:
                 continue
 
-            # Iterar sobre cada detección
             for i in range(len(boxes)):
-                # Obtener confianza
                 confidence = float(boxes.conf[i])
-
-                # Filtrar por umbral
                 if confidence < threshold:
                     continue
 
-                # Obtener clase
                 class_id = int(boxes.cls[i])
                 class_name = result.names[class_id]
 
-                # Obtener bounding box
-                # xyxy = [x_min, y_min, x_max, y_max]
                 bbox = boxes.xyxy[i].cpu().numpy()
+                x_min, y_min, x_max, y_max = (
+                    int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+                )
 
                 # Traducir nombre al español
-                name_es = COCO_CLASSES_ES.get(class_name, class_name)
+                class_info = COCO_CLASSES_ES.get(class_name)
+                name_es = class_info[0] if class_info else class_name
 
-                # Crear objeto de detección
+                # Estimar profundidad → zona
+                if depth_map is not None:
+                    depth_value = DepthEstimationService.get_object_depth(
+                        depth_map,
+                        (x_min, y_min, x_max, y_max),
+                        img_shape
+                    )
+                    zone = DepthEstimationService.depth_to_zone(depth_value)
+                else:
+                    # Fallback: heurística de bounding box
+                    bbox_area = (x_max - x_min) * (y_max - y_min)
+                    zone = DepthEstimationService.bbox_heuristic_zone(
+                        bbox_area, img_area
+                    )
+                    depth_value = {
+                        "muy_cerca": 0.85, "cerca": 0.5, "lejos": 0.15
+                    }.get(zone, 0.15)
+
+                label = ZONE_LABELS.get(zone, zone)
+
+                # Guardar depth más alto (más cercano) por clase
+                if name_es not in raw_depths or depth_value > raw_depths[name_es]:
+                    raw_depths[name_es] = depth_value
+
                 detected_obj = DetectedObject(
                     name=class_name,
                     name_es=name_es,
                     confidence=round(confidence, 3),
                     bounding_box=BoundingBox(
-                        x_min=int(bbox[0]),
-                        y_min=int(bbox[1]),
-                        x_max=int(bbox[2]),
-                        y_max=int(bbox[3])
-                    )
+                        x_min=x_min, y_min=y_min,
+                        x_max=x_max, y_max=y_max
+                    ),
+                    distance_zone=zone,
+                    distance_estimate=label,
                 )
                 detected_objects.append(detected_obj)
 
-        # Ordenar por confianza (mayor primero)
         detected_objects.sort(key=lambda x: x.confidence, reverse=True)
+        return detected_objects, raw_depths
 
-        return detected_objects
+    @staticmethod
+    def _get_article(name_es: str, count: int) -> str:
+        """
+        Retorna el artículo correcto según género y número.
+
+        Args:
+            name_es: Nombre del objeto en español
+            count: Cantidad de objetos
+
+        Returns:
+            Artículo apropiado ("un", "una", etc.)
+        """
+        gender = GENDER_MAP.get(name_es, "m")
+        if count == 1:
+            return "una" if gender == "f" else "un"
+        return ""
+
+    @staticmethod
+    def _pluralize(name: str) -> str:
+        """Pluraliza un nombre en español."""
+        if name.endswith("a"):
+            return name[:-1] + "as"
+        elif name.endswith("o"):
+            return name[:-1] + "os"
+        elif name.endswith(("ón", "or", "és")):
+            return name + "es"
+        elif name.endswith("z"):
+            return name[:-1] + "ces"
+        elif name.endswith("s"):
+            return name  # ya es plural (paraguas, microondas, tijeras)
+        else:
+            return name + "s"
 
     def _generate_summary(self, objects: List[DetectedObject]) -> str:
         """
-        Genera un resumen textual de los objetos detectados.
+        Genera un resumen textual con zonas de distancia.
 
-        Diseñado para ser leído por Text-to-Speech, por lo que
-        usa lenguaje natural y evita tecnicismos.
+        Formato: "Se detectó un gato muy cerca y una silla lejos.
+                  Precaución, gato muy cerca."
 
         Args:
             objects: Lista de objetos detectados
@@ -317,38 +400,52 @@ class ObjectDetectionService:
         if not objects:
             return "No se detectaron objetos en la imagen."
 
-        # Contar objetos por tipo
-        object_counts = {}
+        ZONE_PRIORITY = {"muy_cerca": 3, "cerca": 2, "lejos": 1}
+
+        # Contar objetos y trackear la zona más cercana por tipo
+        object_counts: Dict[str, int] = {}
+        closest_zone: Dict[str, str] = {}
         for obj in objects:
             name = obj.name_es
             object_counts[name] = object_counts.get(name, 0) + 1
+            zone = obj.distance_zone or "lejos"
+            if name not in closest_zone:
+                closest_zone[name] = zone
+            elif ZONE_PRIORITY.get(zone, 0) > ZONE_PRIORITY.get(closest_zone[name], 0):
+                closest_zone[name] = zone
 
-        # Construir descripción
+        # Construir descripciones: "un gato muy cerca", "2 sillas lejos"
+        from app.services.depth_estimation_service import ZONE_LABELS
         descriptions = []
         for name, count in object_counts.items():
-            if count == 1:
-                descriptions.append(f"una {name}")
-            else:
-                # Pluralización simple (no perfecta para todos los casos)
-                if name.endswith("a"):
-                    plural = name[:-1] + "as"
-                elif name.endswith("o"):
-                    plural = name[:-1] + "os"
-                elif name.endswith(("ón", "or")):
-                    plural = name + "es"
-                else:
-                    plural = name + "s"
-                descriptions.append(f"{count} {plural}")
+            article = self._get_article(name, count)
+            zone = closest_zone.get(name, "lejos")
+            zone_label = ZONE_LABELS.get(zone, "")
 
-        # Formatear como oración
+            if count == 1:
+                desc = f"{article} {name} {zone_label}".strip()
+            else:
+                plural = self._pluralize(name)
+                desc = f"{count} {plural} {zone_label}".strip()
+            descriptions.append(desc)
+
         if len(descriptions) == 1:
             summary = f"Se detectó {descriptions[0]}."
         elif len(descriptions) == 2:
             summary = f"Se detectaron {descriptions[0]} y {descriptions[1]}."
         else:
-            # Última coma antes de "y"
             last = descriptions.pop()
             summary = f"Se detectaron {', '.join(descriptions)} y {last}."
+
+        # Alerta de peligro para objetos muy cerca
+        danger_objects = [
+            name for name, zone in closest_zone.items() if zone == "muy_cerca"
+        ]
+        if danger_objects:
+            if len(danger_objects) == 1:
+                summary += f" Precaución, {danger_objects[0]} muy cerca."
+            else:
+                summary += " Precaución, objetos muy cerca."
 
         return summary
 

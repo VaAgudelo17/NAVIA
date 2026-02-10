@@ -71,9 +71,24 @@ class Settings(BaseSettings):
     # Modelo YOLOv8 a utilizar
     # Opciones: yolov8n (nano/rápido), yolov8s (small), yolov8m (medium)
     # Usamos 'nano' para equilibrar velocidad y precisión en desarrollo
-    YOLO_MODEL: str = "yolov8n.pt"
-    # Umbral de confianza: solo reportar detecciones con >50% confianza
-    YOLO_CONFIDENCE_THRESHOLD: float = 0.5
+    YOLO_MODEL: str = "yolov8s.pt"
+    # Umbral de confianza: solo reportar detecciones con >35% confianza
+    # Modelo Small (yolov8s) es más preciso que Nano con buen rendimiento
+    YOLO_CONFIDENCE_THRESHOLD: float = 0.35
+
+    # --- CONFIGURACIÓN WEBSOCKET TIEMPO REAL ---
+    WS_MAX_FRAME_SIZE: int = 5 * 1024 * 1024  # 5 MB máximo por frame
+    WS_REALTIME_MAX_DIMENSION: int = 640       # Redimensionar frames para velocidad
+    WS_REALTIME_CONFIDENCE_THRESHOLD: float = 0.45  # Umbral más bajo para tiempo real
+
+    # --- CONFIGURACIÓN DE PROFUNDIDAD (DEPTH ANYTHING V2) ---
+    DEPTH_MODEL: str = "depth-anything/Depth-Anything-V2-Small-hf"
+    # Umbrales de zona (sobre depth normalizado [0,1], mayor = más cerca)
+    DEPTH_ZONE_MUY_CERCA: float = 0.7    # > 0.7 = peligro
+    DEPTH_ZONE_CERCA: float = 0.35        # > 0.35 = cerca
+    # Suavizado exponencial para tiempo real
+    DEPTH_SMOOTHING_ALPHA: float = 0.3    # Peso de nueva observación (0-1)
+    DEPTH_ZONE_PERSISTENCE: int = 3       # Frames para confirmar cambio de zona
 
     # --- CONFIGURACIÓN CORS ---
     # CORS permite que la app móvil se comunique con el backend

@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useRef, useCallback, useEffect } from "react"
-import { Camera, Upload, Volume2, VolumeX, Loader2, Eye, FileText, Box, RefreshCw, Settings, X } from "lucide-react"
+import { Camera, Upload, Volume2, VolumeX, Loader2, Eye, FileText, Box, RefreshCw, X, Radio, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
@@ -15,12 +15,13 @@ import {
   type OCRResponse,
   type ObjectDetectionResponse
 } from "@/lib/api"
+import { useRealtimeDetection } from "@/hooks/useRealtimeDetection"
 
 // Estados posibles de la aplicación
-type AppState = "idle" | "camera" | "capturing" | "processing" | "results" | "error"
+type AppState = "idle" | "camera" | "capturing" | "processing" | "results" | "error" | "realtime"
 
 // Modos de análisis
-type AnalysisMode = "scene" | "text" | "objects"
+type AnalysisMode = "scene" | "text" | "objects" | "realtime"
 
 export function NaviaApp() {
   // Estados principales
@@ -47,6 +48,15 @@ export function NaviaApp() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
+
+  // Detección en tiempo real
+  const [realtimeActive, setRealtimeActive] = useState(false)
+  const { wsStatus, latestResult } = useRealtimeDetection({
+    videoRef,
+    canvasRef,
+    enabled: realtimeActive,
+    ttsEnabled,
+  })
 
   // Verificar conexión con el backend al iniciar
   useEffect(() => {
@@ -96,8 +106,15 @@ export function NaviaApp() {
       if (videoRef.current) {
         videoRef.current.srcObject = stream
         streamRef.current = stream
-        setAppState("camera")
-        speak("Cámara activada. Toca el botón central para capturar.")
+
+        if (analysisMode === "realtime") {
+          setAppState("realtime")
+          setRealtimeActive(true)
+          speak("Modo tiempo real activado. Apunta la cámara para detectar objetos.")
+        } else {
+          setAppState("camera")
+          speak("Cámara activada. Toca el botón central para capturar.")
+        }
       }
     } catch (err) {
       setError("No se pudo acceder a la cámara. Por favor, permite el acceso.")
@@ -215,6 +232,7 @@ export function NaviaApp() {
 
   // Reiniciar aplicación
   const reset = () => {
+    setRealtimeActive(false)
     stopCamera()
     stopSpeaking()
     setAppState("idle")
@@ -282,33 +300,31 @@ export function NaviaApp() {
                   Captura una imagen para obtener una descripción de lo que hay en ella
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Selector de modo */}
-                <div className="flex gap-2 justify-center">
-                  <Button
-                    variant={analysisMode === "scene" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setAnalysisMode("scene")}
-                  >
-                    <Eye className="h-4 w-4 mr-1" />
-                    Escena
-                  </Button>
-                  <Button
-                    variant={analysisMode === "text" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setAnalysisMode("text")}
-                  >
-                    <FileText className="h-4 w-4 mr-1" />
-                    Texto
-                  </Button>
-                  <Button
-                    variant={analysisMode === "objects" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setAnalysisMode("objects")}
-                  >
-                    <Box className="h-4 w-4 mr-1" />
-                    Objetos
-                  </Button>
+              <CardContent className="space-y-5">
+                {/* Selector de modo - grid 2x2 en móvil, 4 en desktop */}
+                <div
+                  className="grid grid-cols-2 gap-2"
+                  role="radiogroup"
+                  aria-label="Modo de análisis"
+                >
+                  {([
+                    { mode: "scene" as AnalysisMode, label: "Escena", Icon: Eye },
+                    { mode: "text" as AnalysisMode, label: "Texto", Icon: FileText },
+                    { mode: "objects" as AnalysisMode, label: "Objetos", Icon: Box },
+                    { mode: "realtime" as AnalysisMode, label: "En Vivo", Icon: Radio },
+                  ]).map(({ mode, label, Icon }) => (
+                    <Button
+                      key={mode}
+                      variant={analysisMode === mode ? "default" : "outline"}
+                      onClick={() => setAnalysisMode(mode)}
+                      role="radio"
+                      aria-checked={analysisMode === mode}
+                      className="h-12 text-sm px-3 w-full"
+                    >
+                      <Icon className="h-4 w-4 shrink-0 mr-1.5" />
+                      {label}
+                    </Button>
+                  ))}
                 </div>
 
                 {/* Botones principales */}
@@ -317,9 +333,10 @@ export function NaviaApp() {
                     size="xl"
                     onClick={startCamera}
                     disabled={isBackendConnected === false}
-                    className="w-full"
+                    className="w-full min-h-[56px]"
+                    aria-label="Abrir cámara para capturar imagen"
                   >
-                    <Camera className="h-6 w-6 mr-2" />
+                    <Camera className="h-6 w-6 mr-2 shrink-0" />
                     Abrir Cámara
                   </Button>
 
@@ -328,9 +345,10 @@ export function NaviaApp() {
                     size="lg"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isBackendConnected === false}
-                    className="w-full"
+                    className="w-full min-h-[48px]"
+                    aria-label="Subir imagen desde galería"
                   >
-                    <Upload className="h-5 w-5 mr-2" />
+                    <Upload className="h-5 w-5 mr-2 shrink-0" />
                     Subir Imagen
                   </Button>
 
@@ -371,7 +389,7 @@ export function NaviaApp() {
               </div>
             </div>
 
-            <div className="flex gap-3 justify-center">
+            <div className="flex gap-3 justify-center items-center">
               <Button
                 variant="outline"
                 size="icon-lg"
@@ -379,6 +397,7 @@ export function NaviaApp() {
                   stopCamera()
                   setAppState("idle")
                 }}
+                aria-label="Cancelar y volver"
               >
                 <X className="h-6 w-6" />
               </Button>
@@ -387,6 +406,7 @@ export function NaviaApp() {
                 size="icon-xl"
                 onClick={captureImage}
                 className="animate-pulse-glow"
+                aria-label="Capturar foto"
               >
                 <Camera className="h-8 w-8" />
               </Button>
@@ -395,6 +415,7 @@ export function NaviaApp() {
                 variant="outline"
                 size="icon-lg"
                 onClick={() => fileInputRef.current?.click()}
+                aria-label="Subir imagen desde galería"
               >
                 <Upload className="h-6 w-6" />
               </Button>
@@ -481,14 +502,30 @@ export function NaviaApp() {
 
                     {objectsResult.objects.length > 0 && (
                       <ul className="space-y-2">
-                        {objectsResult.objects.map((obj, idx) => (
-                          <li key={idx} className="flex justify-between items-center p-2 bg-secondary rounded">
-                            <span>{obj.name_es}</span>
-                            <span className="text-sm text-muted-foreground">
-                              {(obj.confidence * 100).toFixed(0)}%
-                            </span>
-                          </li>
-                        ))}
+                        {objectsResult.objects.map((obj, idx) => {
+                          const zoneColor =
+                            obj.distance_zone === 'muy_cerca' ? 'bg-red-500' :
+                            obj.distance_zone === 'cerca' ? 'bg-amber-500' : 'bg-green-500';
+                          const textColor =
+                            obj.distance_zone === 'muy_cerca' ? 'text-red-500' :
+                            obj.distance_zone === 'cerca' ? 'text-amber-500' : 'text-green-500';
+                          return (
+                            <li key={idx} className="flex justify-between items-center p-2 bg-secondary rounded">
+                              <div className="flex items-start gap-2">
+                                <div className={cn("w-2 h-2 rounded-full mt-1.5 shrink-0", zoneColor)} />
+                                <div>
+                                  <span>{obj.name_es}</span>
+                                  {obj.distance_estimate && (
+                                    <p className={cn("text-xs mt-0.5", textColor)}>{obj.distance_estimate}</p>
+                                  )}
+                                </div>
+                              </div>
+                              <span className="text-sm text-muted-foreground">
+                                {(obj.confidence * 100).toFixed(0)}%
+                              </span>
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                   </div>
@@ -497,15 +534,119 @@ export function NaviaApp() {
             </Card>
 
             {/* Botones de acción */}
-            <div className="flex gap-3 justify-center">
-              <Button variant="outline" size="lg" onClick={reset}>
-                <RefreshCw className="h-5 w-5 mr-2" />
+            <div className="grid grid-cols-2 gap-3">
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={reset}
+                className="min-h-[48px]"
+                aria-label="Tomar nueva imagen"
+              >
+                <RefreshCw className="h-5 w-5 mr-2 shrink-0" />
                 Nueva Imagen
               </Button>
 
-              <Button size="lg" onClick={repeatResult} disabled={isSpeaking}>
-                <Volume2 className="h-5 w-5 mr-2" />
+              <Button
+                size="lg"
+                onClick={repeatResult}
+                disabled={isSpeaking}
+                className="min-h-[48px]"
+                aria-label={isSpeaking ? "Hablando resultado" : "Repetir resultado en voz"}
+              >
+                <Volume2 className="h-5 w-5 mr-2 shrink-0" />
                 {isSpeaking ? "Hablando..." : "Repetir"}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Estado: Realtime - Detección en tiempo real */}
+        {appState === "realtime" && (
+          <div className="w-full max-w-md space-y-4">
+            <div className="relative rounded-lg overflow-hidden bg-black aspect-[4/3]">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+              />
+              {/* Overlay con indicador de estado */}
+              <div className="absolute top-0 left-0 right-0 flex items-center justify-between p-3 bg-black/50">
+                <div className="flex items-center gap-2">
+                  <div className={cn(
+                    "w-3 h-3 rounded-full",
+                    wsStatus === "connected" ? "bg-green-500 animate-pulse" : "bg-yellow-500"
+                  )} />
+                  <span className="text-white text-sm font-medium">
+                    {wsStatus === "connected" ? "En vivo" : "Conectando..."}
+                  </span>
+                </div>
+                {latestResult && (
+                  <span className="text-white/70 text-xs">
+                    {latestResult.processing_time_ms}ms
+                  </span>
+                )}
+              </div>
+
+              {/* Resumen de detección */}
+              <div className="absolute bottom-0 left-0 right-0 p-3 bg-black/70">
+                <p className="text-white text-lg font-medium">
+                  {latestResult?.summary || "Apunta la cámara para detectar..."}
+                </p>
+                {latestResult && latestResult.object_count > 0 && (
+                  <p className="text-primary text-sm mt-1">
+                    {latestResult.object_count} objeto(s) detectado(s)
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Lista de objetos detectados */}
+            {latestResult && latestResult.objects.length > 0 && (
+              <Card>
+                <CardContent className="py-3">
+                  <ul className="space-y-1">
+                    {latestResult.objects.slice(0, 5).map((obj, idx) => {
+                      const zoneColor =
+                        obj.distance_zone === 'muy_cerca' ? 'bg-red-500' :
+                        obj.distance_zone === 'cerca' ? 'bg-amber-500' : 'bg-green-500';
+                      const textColor =
+                        obj.distance_zone === 'muy_cerca' ? 'text-red-500' :
+                        obj.distance_zone === 'cerca' ? 'text-amber-500' : 'text-green-500';
+                      return (
+                        <li key={idx} className="flex justify-between items-center p-2 bg-secondary rounded text-sm">
+                          <div className="flex items-start gap-2">
+                            <div className={cn("w-2 h-2 rounded-full mt-1 shrink-0", zoneColor)} />
+                            <div>
+                              <span>{obj.name_es}</span>
+                              {obj.distance_estimate && (
+                                <p className={cn("text-xs mt-0.5", textColor)}>{obj.distance_estimate}</p>
+                              )}
+                            </div>
+                          </div>
+                          <span className="text-muted-foreground">
+                            {(obj.confidence * 100).toFixed(0)}%
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Botón para detener */}
+            <div className="flex justify-center">
+              <Button
+                variant="destructive"
+                size="lg"
+                onClick={reset}
+                className="w-full min-h-[48px]"
+                aria-label="Detener detección en tiempo real"
+              >
+                <Square className="h-5 w-5 mr-2 shrink-0" />
+                Detener
               </Button>
             </div>
           </div>
@@ -520,7 +661,7 @@ export function NaviaApp() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <p>{error}</p>
-                <Button onClick={reset} className="w-full">
+                <Button onClick={reset} className="w-full min-h-[48px]" aria-label="Intentar de nuevo">
                   Intentar de nuevo
                 </Button>
               </CardContent>

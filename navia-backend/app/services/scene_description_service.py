@@ -29,7 +29,7 @@ from typing import Dict, Optional
 import logging
 
 from app.services.ocr_service import get_ocr_service
-from app.services.object_detection_service import get_object_detection_service
+from app.services.object_detection_service import get_object_detection_service, GENDER_MAP
 from app.models.schemas import SceneDescriptionResponse, DetectedObject
 from app.utils.image_utils import get_image_info
 
@@ -272,7 +272,9 @@ class SceneDescriptionService:
                 location = pos_h
 
             name = obj.name_es if hasattr(obj, 'name_es') else obj.name
-            descriptions.append(f"La {name} está {location}")
+            gender = GENDER_MAP.get(name, "m")
+            article = "La" if gender == "f" else "El"
+            descriptions.append(f"{article} {name} está {location}")
 
         if descriptions:
             return ". ".join(descriptions) + "."

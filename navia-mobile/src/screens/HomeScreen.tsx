@@ -25,10 +25,11 @@ import { COLORS, ANALYSIS_MODES, AnalysisMode } from '../constants/config';
 import { analyzeScene, extractText, detectObjects, checkHealth } from '../services/api';
 import { speak, stop, speakProcessing, speakError } from '../services/tts';
 import { SceneDescriptionResponse, OCRResponse, ObjectDetectionResponse } from '../types/api';
+import { useRealtimeDetection } from '../hooks/useRealtimeDetection';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-type AppState = 'home' | 'camera' | 'processing' | 'results' | 'error';
+type AppState = 'home' | 'camera' | 'processing' | 'results' | 'error' | 'realtime';
 
 export function HomeScreen() {
   // Estados principales
@@ -50,6 +51,14 @@ export function HomeScreen() {
   // Cámara
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
+
+  // Detección en tiempo real
+  const [realtimeActive, setRealtimeActive] = useState(false);
+  const { wsStatus, latestResult } = useRealtimeDetection({
+    cameraRef,
+    enabled: realtimeActive,
+    ttsEnabled,
+  });
 
   // Verificar conexión con el backend al iniciar
   useEffect(() => {
@@ -74,9 +83,18 @@ export function HomeScreen() {
         return;
       }
     }
-    setAppState('camera');
-    if (ttsEnabled) {
-      speak('Cámara activada. Toca el botón central para capturar.');
+
+    if (analysisMode === ANALYSIS_MODES.REALTIME) {
+      setAppState('realtime');
+      setRealtimeActive(true);
+      if (ttsEnabled) {
+        speak('Modo tiempo real activado. Apunta la cámara para detectar objetos.');
+      }
+    } else {
+      setAppState('camera');
+      if (ttsEnabled) {
+        speak('Cámara activada. Toca el botón central para capturar.');
+      }
     }
   };
 
@@ -174,6 +192,7 @@ export function HomeScreen() {
   // Reiniciar app
   const handleReset = () => {
     stop();
+    setRealtimeActive(false);
     setAppState('home');
     setCapturedImage(null);
     setSceneResult(null);
@@ -209,6 +228,8 @@ export function HomeScreen() {
     switch (appState) {
       case 'camera':
         return renderCamera();
+      case 'realtime':
+        return renderRealtime();
       case 'processing':
         return renderProcessing();
       case 'results':
@@ -253,40 +274,54 @@ export function HomeScreen() {
         </Text>
       </View>
 
-      {/* Selector de modo */}
+      {/* Selector de modo - grid 2x2 */}
       <View style={styles.modeSelector}>
         <Text style={styles.modeLabel}>Modo de análisis:</Text>
         <View style={styles.modeButtons}>
-          {Object.entries(ANALYSIS_MODES).map(([key, value]) => (
-            <TouchableOpacity
-              key={key}
-              style={[
-                styles.modeButton,
-                analysisMode === value && styles.modeButtonActive,
-              ]}
-              onPress={() => setAnalysisMode(value)}
-            >
-              <Ionicons
-                name={
-                  value === 'scene'
-                    ? 'eye'
-                    : value === 'text'
-                    ? 'document-text'
-                    : 'cube'
-                }
-                size={20}
-                color={analysisMode === value ? COLORS.background : COLORS.primary}
-              />
-              <Text
+          {Object.entries(ANALYSIS_MODES).map(([key, value]) => {
+            const label = value === 'scene'
+              ? 'Escena'
+              : value === 'text'
+              ? 'Texto'
+              : value === 'realtime'
+              ? 'En Vivo'
+              : 'Objetos';
+            return (
+              <TouchableOpacity
+                key={key}
                 style={[
-                  styles.modeButtonText,
-                  analysisMode === value && styles.modeButtonTextActive,
+                  styles.modeButton,
+                  analysisMode === value && styles.modeButtonActive,
                 ]}
+                onPress={() => setAnalysisMode(value)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: analysisMode === value }}
+                accessibilityLabel={`Modo ${label}`}
               >
-                {value === 'scene' ? 'Escena' : value === 'text' ? 'Texto' : 'Objetos'}
-              </Text>
-            </TouchableOpacity>
-          ))}
+                <Ionicons
+                  name={
+                    value === 'scene'
+                      ? 'eye'
+                      : value === 'text'
+                      ? 'document-text'
+                      : value === 'realtime'
+                      ? 'radio'
+                      : 'cube'
+                  }
+                  size={20}
+                  color={analysisMode === value ? COLORS.background : COLORS.primary}
+                />
+                <Text
+                  style={[
+                    styles.modeButtonText,
+                    analysisMode === value && styles.modeButtonTextActive,
+                  ]}
+                >
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
       </View>
 
@@ -316,6 +351,9 @@ export function HomeScreen() {
       <TouchableOpacity
         style={styles.ttsToggle}
         onPress={() => setTtsEnabled(!ttsEnabled)}
+        accessibilityLabel={ttsEnabled ? 'Desactivar voz' : 'Activar voz'}
+        accessibilityRole="switch"
+        accessibilityState={{ checked: ttsEnabled }}
       >
         <Ionicons
           name={ttsEnabled ? 'volume-high' : 'volume-mute'}
@@ -326,6 +364,82 @@ export function HomeScreen() {
           {ttsEnabled ? 'Voz activada' : 'Voz desactivada'}
         </Text>
       </TouchableOpacity>
+    </View>
+  );
+
+  // Vista de tiempo real
+  const renderRealtime = () => (
+    <View style={styles.cameraContainer}>
+      <CameraView
+        ref={cameraRef}
+        style={styles.camera}
+        facing="back"
+      >
+        {/* Overlay con resultados de detección */}
+        <View style={styles.realtimeOverlay}>
+          {/* Barra de estado superior */}
+          <View style={styles.realtimeStatusBar}>
+            <View style={styles.realtimeStatusLeft}>
+              <View
+                style={[
+                  styles.connectionDot,
+                  { backgroundColor: wsStatus === 'connected' ? COLORS.success : COLORS.warning },
+                ]}
+              />
+              <Text style={styles.realtimeStatusText}>
+                {wsStatus === 'connected' ? 'En vivo' : 'Conectando...'}
+              </Text>
+            </View>
+            {latestResult && (
+              <Text style={styles.realtimeStatusText}>
+                {latestResult.processing_time_ms}ms
+              </Text>
+            )}
+          </View>
+
+          {/* Resumen de detección en la parte inferior */}
+          <View style={styles.realtimeSummaryContainer}>
+            <View style={styles.realtimeSummary}>
+              <Text style={styles.realtimeSummaryText}>
+                {latestResult?.summary || 'Apunta la cámara para detectar...'}
+              </Text>
+              {latestResult && latestResult.objects.length > 0 && (
+                <View style={styles.realtimeObjectList}>
+                  {latestResult.objects.slice(0, 5).map((obj, idx) => {
+                    const zoneColor =
+                      obj.distance_zone === 'muy_cerca' ? '#EF4444' :
+                      obj.distance_zone === 'cerca' ? '#F59E0B' : '#22C55E';
+                    return (
+                      <View key={idx} style={styles.realtimeObjectItem}>
+                        <View style={styles.realtimeObjLeft}>
+                          <View style={[styles.zoneDot, { backgroundColor: zoneColor }]} />
+                          <Text style={styles.realtimeObjectName}>{obj.name_es}</Text>
+                        </View>
+                        <Text style={[styles.realtimeObjectDistance, { color: zoneColor }]}>
+                          {obj.distance_estimate || `${(obj.confidence * 100).toFixed(0)}%`}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          </View>
+        </View>
+      </CameraView>
+
+      {/* Controles */}
+      <View style={styles.realtimeControls}>
+        <TouchableOpacity
+          style={styles.stopRealtimeButton}
+          onPress={handleReset}
+          accessibilityLabel="Detener detección en tiempo real"
+          accessibilityRole="button"
+        >
+          <Ionicons name="stop" size={28} color={COLORS.text} />
+          <Text style={styles.stopRealtimeText}>Detener</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
@@ -343,15 +457,30 @@ export function HomeScreen() {
       </CameraView>
 
       <View style={styles.cameraControls}>
-        <TouchableOpacity style={styles.cameraButton} onPress={handleReset}>
+        <TouchableOpacity
+          style={styles.cameraButton}
+          onPress={handleReset}
+          accessibilityLabel="Cancelar y volver"
+          accessibilityRole="button"
+        >
           <Ionicons name="close" size={32} color={COLORS.text} />
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.captureButton} onPress={handleCapture}>
+        <TouchableOpacity
+          style={styles.captureButton}
+          onPress={handleCapture}
+          accessibilityLabel="Capturar foto"
+          accessibilityRole="button"
+        >
           <View style={styles.captureButtonInner} />
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.cameraButton} onPress={handlePickImage}>
+        <TouchableOpacity
+          style={styles.cameraButton}
+          onPress={handlePickImage}
+          accessibilityLabel="Subir imagen desde galería"
+          accessibilityRole="button"
+        >
           <Ionicons name="images" size={32} color={COLORS.text} />
         </TouchableOpacity>
       </View>
@@ -414,14 +543,29 @@ export function HomeScreen() {
         {objectsResult && (
           <View>
             <Text style={styles.resultDescription}>{objectsResult.summary}</Text>
-            {objectsResult.objects.map((obj, idx) => (
-              <View key={idx} style={styles.objectItem}>
-                <Text style={styles.objectName}>{obj.name_es}</Text>
-                <Text style={styles.objectConfidence}>
-                  {(obj.confidence * 100).toFixed(0)}%
-                </Text>
-              </View>
-            ))}
+            {objectsResult.objects.map((obj, idx) => {
+              const zoneColor =
+                obj.distance_zone === 'muy_cerca' ? '#EF4444' :
+                obj.distance_zone === 'cerca' ? '#F59E0B' : '#22C55E';
+              return (
+                <View key={idx} style={styles.objectItem}>
+                  <View style={styles.objectInfo}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <View style={[styles.zoneDot, { backgroundColor: zoneColor }]} />
+                      <Text style={styles.objectName}>{obj.name_es}</Text>
+                    </View>
+                    {obj.distance_estimate && (
+                      <Text style={[styles.objectDistance, { color: zoneColor }]}>
+                        {obj.distance_estimate}
+                      </Text>
+                    )}
+                  </View>
+                  <Text style={styles.objectConfidence}>
+                    {(obj.confidence * 100).toFixed(0)}%
+                  </Text>
+                </View>
+              );
+            })}
           </View>
         )}
       </View>
@@ -433,6 +577,7 @@ export function HomeScreen() {
           variant="outline"
           size="large"
           icon={<Ionicons name="refresh" size={20} color={COLORS.primary} />}
+          style={styles.resultActionButton}
         />
         <Button
           title={isSpeaking ? 'Detener' : 'Repetir'}
@@ -445,6 +590,7 @@ export function HomeScreen() {
               color={COLORS.background}
             />
           }
+          style={styles.resultActionButton}
         />
       </View>
     </ScrollView>
@@ -521,14 +667,18 @@ const styles = StyleSheet.create({
   },
   modeButtons: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'center',
     gap: 8,
   },
   modeButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    justifyContent: 'center',
+    width: '47%',
+    minHeight: 48,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: COLORS.primary,
@@ -559,6 +709,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 32,
+    minHeight: 48,
     gap: 8,
   },
   ttsToggleText: {
@@ -616,6 +767,101 @@ const styles = StyleSheet.create({
     height: 64,
     borderRadius: 32,
     backgroundColor: COLORS.text,
+  },
+  // Realtime
+  realtimeOverlay: {
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  realtimeStatusBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 60,
+    paddingHorizontal: 20,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    paddingBottom: 12,
+  },
+  realtimeStatusLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  realtimeStatusText: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  realtimeSummaryContainer: {
+    padding: 20,
+    paddingBottom: 100,
+  },
+  realtimeSummary: {
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderRadius: 16,
+    padding: 16,
+  },
+  realtimeSummaryText: {
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: '500',
+    lineHeight: 26,
+  },
+  realtimeObjectList: {
+    marginTop: 8,
+    gap: 4,
+  },
+  realtimeObjectItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  realtimeObjLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  zoneDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  realtimeObjectName: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  realtimeObjectDistance: {
+    color: COLORS.primary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  realtimeControls: {
+    position: 'absolute',
+    bottom: 40,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  stopRealtimeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.error,
+    paddingHorizontal: 40,
+    paddingVertical: 16,
+    borderRadius: 30,
+    minHeight: 52,
+    gap: 8,
+  },
+  stopRealtimeText: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '600',
   },
   // Processing
   processingContainer: {
@@ -706,9 +952,18 @@ const styles = StyleSheet.create({
     padding: 12,
     marginTop: 8,
   },
+  objectInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
   objectName: {
     fontSize: 14,
     color: COLORS.text,
+  },
+  objectDistance: {
+    fontSize: 12,
+    color: COLORS.primary,
+    marginTop: 2,
   },
   objectConfidence: {
     fontSize: 14,
@@ -717,6 +972,10 @@ const styles = StyleSheet.create({
   resultActions: {
     flexDirection: 'row',
     gap: 12,
+  },
+  resultActionButton: {
+    flex: 1,
+    minHeight: 52,
   },
   // Error
   errorContainer: {
