@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { cn } from "@/lib/utils"
+import { AnimatedEye } from "@/components/navia/AnimatedEye"
 import {
   analyzeScene,
   extractText,
@@ -260,7 +261,7 @@ export function NaviaApp() {
       {/* Header */}
       <header className="p-4 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Eye className="h-8 w-8 text-primary" />
+          <AnimatedEye className="h-8 w-8 text-primary" />
           <h1 className="text-2xl font-bold">NAVIA</h1>
         </div>
         <div className="flex items-center gap-2">
