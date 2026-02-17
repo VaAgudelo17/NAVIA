@@ -22,6 +22,8 @@ export interface BoundingBox {
 
 export type DistanceZone = 'muy_cerca' | 'cerca' | 'lejos'
 
+export type SemanticPriority = 'high' | 'medium' | 'low'
+
 export interface DetectedObject {
   name: string
   name_es: string
@@ -29,6 +31,7 @@ export interface DetectedObject {
   bounding_box: BoundingBox
   distance_zone?: DistanceZone
   distance_estimate?: string
+  priority?: SemanticPriority
 }
 
 export interface OCRResponse {
@@ -54,12 +57,15 @@ export interface SceneDescriptionResponse {
   description: string
   detected_text: string
   has_text: boolean
+  caption?: string
   objects: DetectedObject[]
   object_count: number
   processing_details?: {
     ocr_confidence: number | null
     ocr_word_count: number
     image_dimensions: string
+    captioning_enabled?: boolean
+    has_caption?: boolean
   }
 }
 
@@ -77,6 +83,47 @@ export interface APIError {
   detail?: string
 }
 
+// ============================================================================
+// NUEVOS MODOS
+// ============================================================================
+
+export type NaviaMode = 'navegacion' | 'exploracion' | 'lectura' | 'riesgo'
+
+export interface NavigationResponse {
+  success: boolean
+  message: string
+  instruction: string
+  obstacles: DetectedObject[]
+  path_clear: boolean
+  object_count: number
+}
+
+export interface ExplorationResponse {
+  success: boolean
+  message: string
+  description: string
+  detected_text: string
+  has_text: boolean
+  objects: DetectedObject[]
+  object_count: number
+}
+
+export interface RiskAlert {
+  object_name: string
+  danger_level: string
+  distance_zone: string
+  position: string
+}
+
+export interface RiskResponse {
+  success: boolean
+  message: string
+  has_danger: boolean
+  priority: string
+  alert_text: string
+  dangers: RiskAlert[]
+}
+
 // Resultado de detección en tiempo real (WebSocket)
 export interface RealtimeDetectionResult {
   type: 'detection'
@@ -86,6 +133,10 @@ export interface RealtimeDetectionResult {
   summary: string
   processing_time_ms: number
   timestamp: number
+  tracked_count?: number
+  mode?: string
+  has_danger?: boolean
+  priority?: string
   changes?: {
     appeared: string[]
     disappeared: string[]
@@ -93,6 +144,7 @@ export interface RealtimeDetectionResult {
     smoothed_zones: Record<string, DistanceZone>
     has_significant_change: boolean
     current_objects: string[]
+    tracked_count?: number
   }
 }
 
@@ -225,6 +277,56 @@ export async function quickAnalysis(imageFile: File): Promise<{
     throw error
   }
 }
+
+// ============================================================================
+// NUEVOS MODOS - Funciones API
+// ============================================================================
+
+async function postImage<T>(endpoint: string, imageFile: File, errorMsg: string): Promise<T> {
+  const formData = new FormData()
+  formData.append('image', imageFile)
+
+  try {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'POST',
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.detail || errorMsg)
+    }
+
+    return await response.json()
+  } catch (error) {
+    console.error(`Error: ${errorMsg}:`, error)
+    throw error
+  }
+}
+
+/** Modo Navegación: instrucciones cortas de navegación */
+export async function analyzeNavigation(imageFile: File): Promise<NavigationResponse> {
+  return postImage<NavigationResponse>('/api/v1/analyze/navegacion', imageFile, 'Error en navegación')
+}
+
+/** Modo Exploración: descripción estructurada del entorno */
+export async function analyzeExploration(imageFile: File): Promise<ExplorationResponse> {
+  return postImage<ExplorationResponse>('/api/v1/analyze/exploracion', imageFile, 'Error en exploración')
+}
+
+/** Modo Lectura: OCR puro */
+export async function analyzeReading(imageFile: File): Promise<OCRResponse> {
+  return postImage<OCRResponse>('/api/v1/analyze/lectura', imageFile, 'Error en lectura')
+}
+
+/** Modo Riesgo: detección de peligros */
+export async function analyzeRisk(imageFile: File): Promise<RiskResponse> {
+  return postImage<RiskResponse>('/api/v1/analyze/riesgo', imageFile, 'Error en evaluación de riesgo')
+}
+
+// ============================================================================
+// UTILIDADES
+// ============================================================================
 
 /**
  * Convierte un Blob de imagen a File

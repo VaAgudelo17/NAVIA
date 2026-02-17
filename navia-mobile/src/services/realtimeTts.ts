@@ -1,18 +1,21 @@
 /**
  * TTS inteligente para modos tiempo real (Navegación y Riesgo)
  *
+ * Delega al ttsManager singleton para evitar conflictos de audio.
+ *
  * Modo Navegación:
- * - Usa el summary del backend directamente (ya formateado como instrucción)
+ * - Usa el summary del backend (ya formateado como instrucción)
  * - Mínimo 3 segundos entre frases
+ * - Prioridad LOW (se descarta si algo está sonando)
  *
  * Modo Riesgo:
  * - Solo habla si has_danger === true
- * - Alertas critical bypassean el cooldown de 3s
- * - Interrumpe speech actual para alertas critical
+ * - Alertas critical usan INTERRUPT (interrumpen todo)
+ * - Alertas high usan HIGH (se encolan)
  */
 
-import * as Speech from 'expo-speech';
-import { TTS_CONFIG, REALTIME_CONFIG } from '../constants/config';
+import { ttsManager, TtsPriority } from './ttsManager';
+import { REALTIME_CONFIG } from '../constants/config';
 import { NaviaMode } from '../types/api';
 
 interface RealtimeChanges {
@@ -30,7 +33,6 @@ interface RiskData {
 
 export class RealtimeTtsManager {
   private lastSpeakTime = 0;
-  private isSpeaking = false;
   private mode: NaviaMode = 'navegacion';
   private lastSummary = '';
 
@@ -40,84 +42,61 @@ export class RealtimeTtsManager {
 
   /**
    * Procesa resultado de detección según el modo activo.
-   * summary: texto del backend (instrucción de navegación o alerta de riesgo)
    */
-  async speakResult(
+  speakResult(
     summary: string,
     changes?: RealtimeChanges,
     riskData?: RiskData,
-  ): Promise<void> {
+  ): void {
     if (this.mode === 'riesgo') {
-      return this.speakRiskAlert(riskData);
+      this.speakRiskAlert(riskData);
+      return;
     }
-
-    // Modo navegación: usa el summary del backend
-    return this.speakNavigationSummary(summary, changes);
+    this.speakNavigationSummary(summary, changes);
   }
 
-  private async speakNavigationSummary(
+  private speakNavigationSummary(
     summary: string,
     changes?: RealtimeChanges,
-  ): Promise<void> {
+  ): void {
     // Solo hablar si hay cambio significativo o summary cambió
     if (!changes?.has_significant_change && summary === this.lastSummary) return;
     if (!summary) return;
 
     const now = Date.now();
     if (now - this.lastSpeakTime < REALTIME_CONFIG.ttsMinInterval) return;
-    if (this.isSpeaking) return;
+    if (ttsManager.isSpeaking()) return;
 
     this.lastSummary = summary;
-    await this.doSpeak(summary);
+    this.lastSpeakTime = now;
+    // Prioridad LOW: no interrumpe resultados de análisis en curso
+    ttsManager.speak(summary, TtsPriority.LOW);
   }
 
-  private async speakRiskAlert(riskData?: RiskData): Promise<void> {
+  private speakRiskAlert(riskData?: RiskData): void {
     if (!riskData?.has_danger || !riskData.alert_text) return;
 
     const now = Date.now();
 
     if (riskData.priority === 'critical') {
-      // Critical: interrumpe todo y habla inmediatamente
-      await Speech.stop();
-      this.isSpeaking = false;
+      // INTERRUPT: peligro crítico debe oírse AHORA
+      this.lastSpeakTime = now;
+      ttsManager.speak(riskData.alert_text, TtsPriority.INTERRUPT);
     } else {
-      // High: respeta el cooldown
+      // HIGH: respeta cooldown, se encola
       if (now - this.lastSpeakTime < REALTIME_CONFIG.ttsMinInterval) return;
-      if (this.isSpeaking) return;
-    }
-
-    await this.doSpeak(riskData.alert_text);
-  }
-
-  private async doSpeak(text: string): Promise<void> {
-    this.isSpeaking = true;
-    this.lastSpeakTime = Date.now();
-
-    try {
-      await Speech.stop();
-      await new Promise<void>((resolve) => {
-        Speech.speak(text, {
-          language: TTS_CONFIG.language,
-          pitch: TTS_CONFIG.pitch,
-          rate: 1.1,
-          onDone: () => resolve(),
-          onError: () => resolve(),
-        });
-      });
-    } catch {
-      // Ignorar errores TTS en modo tiempo real
-    } finally {
-      this.isSpeaking = false;
+      if (ttsManager.isSpeaking()) return;
+      this.lastSpeakTime = now;
+      ttsManager.speak(riskData.alert_text, TtsPriority.HIGH);
     }
   }
 
   stop(): void {
-    Speech.stop();
-    this.isSpeaking = false;
+    ttsManager.stop();
   }
 
   reset(): void {
-    this.stop();
+    ttsManager.stop();
     this.lastSpeakTime = 0;
     this.lastSummary = '';
   }

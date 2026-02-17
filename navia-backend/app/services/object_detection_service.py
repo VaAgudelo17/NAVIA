@@ -1,35 +1,25 @@
 """
 ============================================================================
-NAVIA Backend - Servicio de Detección de Objetos
+NAVIA Backend - Servicio de Detección de Objetos (YOLO-World)
 ============================================================================
-Este módulo implementa detección de objetos usando YOLOv8.
+Este módulo implementa detección de objetos usando YOLO-World, un detector
+open-vocabulary que puede identificar cualquier objeto especificado por texto.
 
-¿Qué es YOLO?
-- "You Only Look Once" - arquitectura de detección de objetos en tiempo real
-- A diferencia de otros métodos que analizan la imagen múltiples veces,
-  YOLO procesa toda la imagen en una sola pasada (de ahí el nombre)
-- Creado por Joseph Redmon en 2015, YOLOv8 es la versión más reciente
+¿Por qué YOLO-World en vez de YOLOv8 estándar?
+- YOLOv8 estándar solo detecta 80 clases del dataset COCO
+- YOLO-World puede detectar CUALQUIER objeto que se le indique
+- Ideal para asistencia visual: lámparas, juguetes, zapatos, espejos, etc.
+- Misma librería ultralytics, misma interfaz de resultados
 
-¿Por qué YOLOv8?
-- Balance óptimo entre precisión y velocidad
-- Modelo preentrenado en COCO dataset (80 clases de objetos comunes)
-- Fácil de usar con la librería ultralytics
-- Puede correr en CPU (sin GPU) con rendimiento aceptable
-
-Clases detectables (COCO dataset):
-- Personas, vehículos (carro, bicicleta, moto)
-- Animales (perro, gato, pájaro)
-- Objetos cotidianos (silla, mesa, teléfono, laptop)
-- Alimentos, utensilios, y más
-
-Limitaciones:
-- Solo detecta las 80 clases del dataset COCO
-- Objetos pequeños o parcialmente ocultos tienen menor precisión
-- No identifica texto ni lee contenido
+¿Cómo funciona?
+1. Se define una lista de objetos a detectar (set_classes)
+2. YOLO-World codifica los nombres como embeddings de texto
+3. Durante inferencia, compara regiones de la imagen contra esos embeddings
+4. Retorna detecciones con la misma estructura que YOLO estándar
 ============================================================================
 """
 
-from ultralytics import YOLO
+from ultralytics import YOLOWorld
 import numpy as np
 from typing import List, Dict, Optional
 import logging
@@ -42,101 +32,353 @@ from app.models.schemas import DetectedObject, BoundingBox
 logger = logging.getLogger(__name__)
 
 
-# Diccionario de traducción: inglés → (español, género)
+# ============================================================================
+# Diccionario de clases: inglés → (español, género)
 # género: "m" = masculino (un), "f" = femenino (una)
-COCO_CLASSES_ES = {
+#
+# Organizado por categorías relevantes para personas con discapacidad visual.
+# YOLO-World detectará SOLO los objetos listados aquí.
+# ============================================================================
+
+WORLD_CLASSES_ES = {
+    # ===================== PERSONAS =====================
     "person": ("persona", "f"),
-    "bicycle": ("bicicleta", "f"),
-    "car": ("carro", "m"),
-    "motorcycle": ("motocicleta", "f"),
-    "airplane": ("avión", "m"),
-    "bus": ("autobús", "m"),
-    "train": ("tren", "m"),
-    "truck": ("camión", "m"),
-    "boat": ("bote", "m"),
-    "traffic light": ("semáforo", "m"),
-    "fire hydrant": ("hidrante", "m"),
-    "stop sign": ("señal de pare", "f"),
-    "parking meter": ("parquímetro", "m"),
-    "bench": ("banco", "m"),
-    "bird": ("pájaro", "m"),
-    "cat": ("gato", "m"),
+    "child": ("niño", "m"),
+    "baby": ("bebé", "m"),
+    "wheelchair user": ("persona en silla de ruedas", "f"),
+
+    # ===================== ANIMALES =====================
     "dog": ("perro", "m"),
-    "horse": ("caballo", "m"),
-    "sheep": ("oveja", "f"),
-    "cow": ("vaca", "f"),
-    "elephant": ("elefante", "m"),
-    "bear": ("oso", "m"),
-    "zebra": ("cebra", "f"),
-    "giraffe": ("jirafa", "f"),
-    "backpack": ("mochila", "f"),
-    "umbrella": ("paraguas", "m"),
-    "handbag": ("bolso", "m"),
-    "tie": ("corbata", "f"),
-    "suitcase": ("maleta", "f"),
-    "frisbee": ("frisbee", "m"),
-    "skis": ("esquís", "m"),
-    "snowboard": ("tabla de nieve", "f"),
-    "sports ball": ("pelota", "f"),
-    "kite": ("cometa", "f"),
-    "baseball bat": ("bate de béisbol", "m"),
-    "baseball glove": ("guante de béisbol", "m"),
-    "skateboard": ("patineta", "f"),
-    "surfboard": ("tabla de surf", "f"),
-    "tennis racket": ("raqueta de tenis", "f"),
-    "bottle": ("botella", "f"),
+    "cat": ("gato", "m"),
+    "bird": ("pájaro", "m"),
+    "fish in tank": ("pez", "m"),
+    "rabbit": ("conejo", "m"),
+    "hamster": ("hámster", "m"),
+    "turtle": ("tortuga", "f"),
+    "insect": ("insecto", "m"),
+    "spider": ("araña", "f"),
+    "butterfly": ("mariposa", "f"),
+
+    # ===================== MUEBLES =====================
+    "chair": ("silla", "f"),
+    "wooden table": ("mesa", "f"),
+    "office desk": ("escritorio", "m"),
+    "sofa": ("sofá", "m"),
+    "armchair": ("sillón", "m"),
+    "bed with mattress": ("cama", "f"),
+    "bunk bed": ("litera", "f"),
+    "crib": ("cuna", "f"),
+    "bookshelf": ("estante", "m"),
+    "wooden cabinet": ("gabinete", "m"),
+    "chest of drawers": ("cómoda", "f"),
+    "wardrobe closet": ("armario", "m"),
+    "nightstand": ("mesa de noche", "f"),
+    "stool": ("taburete", "m"),
+    "park bench": ("banco", "m"),
+    "kitchen counter": ("mostrador", "m"),
+    "coffee table": ("mesa de centro", "f"),
+    "dining table": ("mesa de comedor", "f"),
+    "rocking chair": ("mecedora", "f"),
+    "ottoman": ("puf", "m"),
+    "tv stand": ("mueble de televisor", "m"),
+
+    # ===================== HOGAR / NAVEGACIÓN INTERIOR =====================
+    # Prompts específicos para evitar confusiones entre objetos similares
+    "table lamp": ("lámpara de mesa", "f"),
+    "floor lamp": ("lámpara de pie", "f"),
+    "ceiling light fixture": ("luz de techo", "f"),
+    "chandelier": ("candelabro", "m"),
+    "wall mirror": ("espejo", "m"),         # "wall mirror" no se confunde con ventana
+    "window with glass": ("ventana", "f"),   # "window with glass" no se confunde con espejo
+    "wooden door": ("puerta", "f"),          # "wooden door" más específico
+    "sliding door": ("puerta corrediza", "f"),
+    "curtain on window": ("cortina", "f"),   # "curtain on window" evita confusión con toalla
+    "window blind": ("persiana", "f"),
+    "ceiling fan": ("ventilador de techo", "m"),
+    "standing fan": ("ventilador de pie", "m"),
+    "air conditioner unit": ("aire acondicionado", "m"),
+    "radiator heater": ("calentador", "m"),
+    "area rug on floor": ("alfombra", "f"),  # "on floor" lo diferencia de toalla
+    "doormat": ("tapete", "m"),
+    "trash can with lid": ("papelera", "f"),
+    "recycling bin": ("contenedor de reciclaje", "m"),
+    "wicker basket": ("cesta", "f"),
+    "cardboard box": ("caja de cartón", "f"),
+    "storage container": ("contenedor", "m"),
+    "bed pillow": ("almohada", "f"),         # "bed pillow" no se confunde con cojín
+    "sofa cushion": ("cojín", "m"),          # "sofa cushion" específico
+    "blanket on bed": ("cobija", "f"),       # "on bed" evita confusión con toalla
+    "bedsheet": ("sábana", "f"),
+    "candle": ("vela", "f"),
+    "framed picture on wall": ("cuadro", "m"),   # MUY específico para evitar confusión
+    "wall poster": ("póster", "m"),               # separado de cuadro
+    "painting on wall": ("pintura", "f"),
+    "wall clock": ("reloj de pared", "m"),
+    "alarm clock on table": ("despertador", "m"),
+    "flower vase": ("jarrón", "m"),
+    "potted plant": ("planta en maceta", "f"),
+    "flower bouquet": ("ramo de flores", "m"),
+    "broom": ("escoba", "f"),
+    "mop": ("trapeador", "m"),
+    "vacuum cleaner": ("aspiradora", "f"),
+    "clothes hanger": ("gancho de ropa", "m"),
+    "clothes rack": ("perchero", "m"),
+    "ironing board": ("tabla de planchar", "f"),
+    "iron appliance": ("plancha", "f"),
+    "staircase": ("escaleras", "f"),
+    "stair handrail": ("pasamanos", "m"),
+    "elevator door": ("ascensor", "m"),
+    "escalator": ("escalera mecánica", "f"),
+    "light switch on wall": ("interruptor de luz", "m"),
+    "electrical outlet": ("toma de corriente", "f"),
+    "tissue box": ("caja de pañuelos", "f"),
+    "paper towel roll": ("rollo de papel", "m"),
+    "plastic bag": ("bolsa plástica", "f"),
+    "fire alarm on wall": ("alarma de incendio", "f"),
+
+    # ===================== COCINA =====================
+    "dinner plate": ("plato", "m"),
+    "drinking glass": ("vaso", "m"),
+    "coffee cup": ("taza", "f"),
+    "coffee mug": ("taza de café", "f"),
+    "cooking pot": ("olla", "f"),
+    "frying pan": ("sartén", "f"),
+    "tea kettle": ("tetera", "f"),
+    "kitchen blender": ("licuadora", "f"),
+    "cutting board": ("tabla de cortar", "f"),
+    "serving tray": ("bandeja", "f"),
+    "glass jar": ("frasco", "m"),
+    "tin can": ("lata", "f"),
+    "water bottle": ("botella de agua", "f"),
+    "wine bottle": ("botella de vino", "f"),
+    "soup bowl": ("tazón", "m"),
+    "dinner fork": ("tenedor", "m"),
+    "kitchen knife": ("cuchillo", "m"),
+    "eating spoon": ("cuchara", "f"),
+    "napkin": ("servilleta", "f"),
+    "salt shaker": ("salero", "m"),
+    "coffee maker machine": ("cafetera", "f"),
+    "food container": ("recipiente de comida", "m"),
+    "plastic cup": ("vaso plástico", "m"),
     "wine glass": ("copa de vino", "f"),
-    "cup": ("taza", "f"),
-    "fork": ("tenedor", "m"),
-    "knife": ("cuchillo", "m"),
-    "spoon": ("cuchara", "f"),
-    "bowl": ("tazón", "m"),
+    "thermos bottle": ("termo", "m"),
+    "kitchen sink": ("fregadero", "m"),
+    "dish sponge": ("esponja", "f"),
+    "kitchen towel hanging": ("paño de cocina", "m"),  # "hanging" diferencia de toalla de baño
+
+    # ===================== ELECTRÓNICA =====================
+    "television screen": ("televisor", "m"),
+    "remote control": ("control remoto", "m"),
+    "cell phone": ("teléfono celular", "m"),
+    "laptop computer": ("computadora portátil", "f"),
+    "desktop computer monitor": ("monitor de computadora", "m"),
+    "computer tower": ("torre de computadora", "f"),
+    "tablet device": ("tableta", "f"),
+    "over ear headphones": ("audífonos", "m"),
+    "wireless earbuds": ("auriculares", "m"),
+    "bluetooth speaker": ("parlante", "m"),
+    "phone charger cable": ("cargador", "m"),
+    "computer keyboard": ("teclado", "m"),
+    "computer mouse": ("ratón de computadora", "m"),
+    "power strip with plugs": ("regleta", "f"),
+    "wifi router": ("router", "m"),
+    "printer machine": ("impresora", "f"),
+    "camera": ("cámara", "f"),
+    "usb flash drive": ("memoria USB", "f"),
+    "power bank": ("batería portátil", "f"),
+    "smart watch": ("reloj inteligente", "m"),
+    "video game controller": ("control de videojuegos", "m"),
+
+    # ===================== ROPA Y OBJETOS PERSONALES =====================
+    "shoe": ("zapato", "m"),
+    "sneaker": ("tenis", "m"),
+    "high heel shoe": ("tacón", "m"),
+    "boot": ("bota", "f"),
+    "sandal": ("sandalia", "f"),
+    "slipper": ("pantufla", "f"),
+    "hat": ("sombrero", "m"),
+    "baseball cap": ("gorra", "f"),
+    "eyeglasses": ("lentes", "m"),
+    "sunglasses": ("lentes de sol", "m"),
+    "wrist watch": ("reloj de pulsera", "m"),
+    "leather wallet": ("billetera", "f"),
+    "metal key": ("llave", "f"),
+    "key chain": ("llavero", "m"),
+    "handbag": ("bolso", "m"),
+    "backpack": ("mochila", "f"),
+    "purse": ("cartera", "f"),
+    "umbrella": ("paraguas", "m"),
+    "travel suitcase": ("maleta", "f"),
+    "jacket": ("chaqueta", "f"),
+    "winter coat": ("abrigo", "m"),
+    "scarf": ("bufanda", "f"),
+    "gloves": ("guantes", "m"),
+    "belt": ("cinturón", "m"),
+    "necktie": ("corbata", "f"),
+    "dress": ("vestido", "m"),
+    "shirt on hanger": ("camisa", "f"),
+    "pair of pants": ("pantalón", "m"),
+    "skirt": ("falda", "f"),
+    "hair brush": ("cepillo de pelo", "m"),
+    "comb": ("peine", "m"),
+    "makeup bag": ("estuche de maquillaje", "m"),
+    "perfume bottle": ("perfume", "m"),
+    "jewelry box": ("joyero", "m"),
+    "necklace": ("collar", "m"),
+    "ring": ("anillo", "m"),
+
+    # ===================== VEHÍCULOS Y CALLE =====================
+    "car": ("carro", "m"),
+    "bus": ("autobús", "m"),
+    "truck": ("camión", "m"),
+    "motorcycle": ("motocicleta", "f"),
+    "bicycle": ("bicicleta", "f"),
+    "electric scooter": ("scooter eléctrico", "m"),
+    "taxi cab": ("taxi", "m"),
+    "ambulance vehicle": ("ambulancia", "f"),
+    "police car": ("patrulla", "f"),
+    "traffic light": ("semáforo", "m"),
+    "stop sign": ("señal de pare", "f"),
+    "crosswalk on road": ("paso peatonal", "m"),
+    "street pole": ("poste", "m"),
+    "metal fence": ("cerca", "f"),
+    "entrance gate": ("portón", "m"),
+    "tree": ("árbol", "m"),
+    "bush": ("arbusto", "m"),
+    "fire hydrant": ("hidrante", "m"),
+    "parking meter": ("parquímetro", "m"),
+    "street lamp post": ("farola", "f"),
+    "traffic cone": ("cono de tráfico", "m"),
+    "road barrier": ("barrera vial", "f"),
+    "speed bump": ("reductor de velocidad", "m"),
+    "manhole cover": ("tapa de alcantarilla", "f"),
+    "sidewalk curb": ("borde de acera", "m"),
+    "mailbox": ("buzón", "m"),
+    "garbage dumpster": ("contenedor de basura", "m"),
+    "shopping cart": ("carrito de compras", "m"),
+    "baby stroller": ("cochecito de bebé", "m"),
+    "wheelchair": ("silla de ruedas", "f"),
+    "parking sign": ("señal de estacionamiento", "f"),
+    "construction sign": ("señal de construcción", "f"),
+
+    # ===================== COMIDA =====================
+    "fruit": ("fruta", "f"),
     "banana": ("banana", "f"),
     "apple": ("manzana", "f"),
+    "orange fruit": ("naranja", "f"),
     "sandwich": ("sándwich", "m"),
-    "orange": ("naranja", "f"),
-    "broccoli": ("brócoli", "m"),
-    "carrot": ("zanahoria", "f"),
-    "hot dog": ("perro caliente", "m"),
     "pizza": ("pizza", "f"),
-    "donut": ("dona", "f"),
-    "cake": ("pastel", "m"),
-    "chair": ("silla", "f"),
-    "couch": ("sofá", "m"),
-    "potted plant": ("planta en maceta", "f"),
-    "bed": ("cama", "f"),
-    "dining table": ("mesa de comedor", "f"),
+    "birthday cake": ("pastel", "m"),
+    "loaf of bread": ("pan", "m"),
+    "rice on plate": ("arroz", "m"),
+    "egg": ("huevo", "m"),
+    "cheese": ("queso", "m"),
+    "chicken meat": ("pollo", "m"),
+    "salad bowl": ("ensalada", "f"),
+    "candy": ("dulce", "m"),
+    "ice cream": ("helado", "m"),
+    "cereal box": ("caja de cereal", "f"),
+    "milk carton": ("cartón de leche", "m"),
+    "juice box": ("jugo", "m"),
+    "snack bag": ("bolsa de snacks", "f"),
+    "cookie": ("galleta", "f"),
+
+    # ===================== BAÑO =====================
     "toilet": ("inodoro", "m"),
-    "tv": ("televisor", "m"),
-    "laptop": ("computadora portátil", "f"),
-    "mouse": ("ratón de computadora", "m"),
-    "remote": ("control remoto", "m"),
-    "keyboard": ("teclado", "m"),
-    "cell phone": ("teléfono celular", "m"),
-    "microwave": ("microondas", "m"),
-    "oven": ("horno", "m"),
-    "toaster": ("tostadora", "f"),
-    "sink": ("lavabo", "m"),
-    "refrigerator": ("refrigerador", "m"),
-    "book": ("libro", "m"),
-    "clock": ("reloj", "m"),
-    "vase": ("jarrón", "m"),
-    "scissors": ("tijeras", "f"),
-    "teddy bear": ("oso de peluche", "m"),
-    "hair drier": ("secador de pelo", "m"),
+    "bathroom sink": ("lavamanos", "m"),
+    "bathtub": ("bañera", "f"),
+    "shower head": ("ducha", "f"),
+    "bar of soap": ("jabón", "m"),
     "toothbrush": ("cepillo de dientes", "m"),
+    "toothpaste tube": ("pasta dental", "f"),
+    "toilet paper roll": ("papel higiénico", "m"),
+    "bath towel on rack": ("toalla de baño", "f"),  # "on rack" evita confusión con cortina
+    "hand towel": ("toalla de mano", "f"),
+    "shampoo bottle": ("champú", "m"),
+    "hair dryer": ("secador de pelo", "m"),
+    "bathroom scale": ("báscula", "f"),
+    "shower curtain": ("cortina de baño", "f"),
+    "soap dispenser": ("dispensador de jabón", "m"),
+    "bathroom mirror on wall": ("espejo de baño", "m"),
+
+    # ===================== ELECTRODOMÉSTICOS =====================
+    "refrigerator": ("refrigerador", "m"),
+    "microwave oven": ("microondas", "m"),
+    "kitchen oven": ("horno", "m"),
+    "kitchen stove": ("estufa", "f"),
+    "toaster": ("tostadora", "f"),
+    "washing machine": ("lavadora", "f"),
+    "clothes dryer machine": ("secadora", "f"),
+    "dishwasher machine": ("lavavajillas", "m"),
+    "water heater": ("calentador de agua", "m"),
+    "air purifier": ("purificador de aire", "m"),
+
+    # ===================== JUGUETES Y ENTRETENIMIENTO =====================
+    "toy": ("juguete", "m"),
+    "baby doll": ("muñeca", "f"),
+    "teddy bear": ("oso de peluche", "m"),
+    "stuffed animal toy": ("peluche", "m"),
+    "rubber ball": ("pelota", "f"),
+    "jigsaw puzzle": ("rompecabezas", "m"),
+    "board game box": ("juego de mesa", "m"),
+    "playing cards": ("cartas de juego", "f"),
+    "building blocks": ("bloques de construcción", "m"),
+    "action figure": ("figura de acción", "f"),
+    "toy car": ("carrito de juguete", "m"),
+    "bicycle helmet": ("casco de bicicleta", "m"),
+    "skateboard": ("patineta", "f"),
+    "jump rope": ("cuerda de saltar", "f"),
+    "kite": ("cometa", "f"),
+    "coloring book": ("libro de colorear", "m"),
+    "crayon": ("crayón", "m"),
+
+    # ===================== OFICINA Y ESCUELA =====================
+    "pen": ("bolígrafo", "m"),
+    "pencil": ("lápiz", "m"),
+    "notebook": ("cuaderno", "m"),
+    "sheet of paper": ("hoja de papel", "f"),
+    "folder": ("carpeta", "f"),
+    "stapler": ("grapadora", "f"),
+    "scissors": ("tijeras", "f"),
+    "ruler": ("regla", "f"),
+    "calculator": ("calculadora", "f"),
+    "whiteboard": ("pizarra", "f"),
+    "book": ("libro", "m"),
+    "magazine": ("revista", "f"),
+    "newspaper": ("periódico", "m"),
+    "envelope": ("sobre", "m"),
+    "tape dispenser": ("dispensador de cinta", "m"),
+    "desk organizer": ("organizador de escritorio", "m"),
+    "globe model": ("globo terráqueo", "m"),
+    "backpack bag": ("morral", "m"),
+
+    # ===================== SEGURIDAD Y SALUD =====================
+    "fire extinguisher": ("extintor", "m"),
+    "smoke detector on ceiling": ("detector de humo", "m"),
+    "exit sign": ("señal de salida", "f"),
+    "first aid kit": ("botiquín", "m"),
+    "medicine bottle": ("frasco de medicina", "m"),
+    "face mask": ("mascarilla", "f"),
+    "hand sanitizer bottle": ("gel antibacterial", "m"),
+    "safety helmet": ("casco de seguridad", "m"),
+    "safety goggles": ("gafas de seguridad", "f"),
+    "warning sign": ("señal de advertencia", "f"),
+    "wet floor sign": ("señal de piso mojado", "f"),
+    "security camera": ("cámara de seguridad", "f"),
+    "fire alarm pull": ("alarma contra incendios", "f"),
+    "thermometer": ("termómetro", "m"),
 }
 
 # Lookup rápido de género por nombre en español
-GENDER_MAP = {name_es: gender for (name_es, gender) in COCO_CLASSES_ES.values()}
+GENDER_MAP = {name_es: gender for (name_es, gender) in WORLD_CLASSES_ES.values()}
 
 
 class ObjectDetectionService:
     """
     Servicio para detección de objetos en imágenes.
 
-    Utiliza YOLOv8 para identificar y localizar objetos comunes
-    en imágenes, proporcionando nombres y ubicaciones.
+    Utiliza YOLO-World para identificar y localizar objetos en imágenes,
+    con vocabulario abierto (~298 clases relevantes para asistencia visual).
 
     Uso:
         service = ObjectDetectionService()
@@ -145,15 +387,10 @@ class ObjectDetectionService:
 
     def __init__(self):
         """
-        Inicializa el servicio cargando el modelo YOLO.
+        Inicializa el servicio cargando el modelo YOLO-World.
 
-        El modelo se descarga automáticamente la primera vez.
-        Versiones disponibles:
-        - yolov8n: Nano (más rápido, menos preciso)
-        - yolov8s: Small
-        - yolov8m: Medium
-        - yolov8l: Large
-        - yolov8x: Extra Large (más preciso, más lento)
+        El modelo se descarga automáticamente la primera vez (~30MB).
+        Después de cargar, se configuran las clases a detectar.
         """
         self.model = None
         self.confidence_threshold = settings.YOLO_CONFIDENCE_THRESHOLD
@@ -161,23 +398,33 @@ class ObjectDetectionService:
 
     def _load_model(self) -> None:
         """
-        Carga el modelo YOLO.
+        Carga el modelo YOLO-World y configura las clases a detectar.
 
-        El modelo se descarga de internet la primera vez (~6MB para nano).
-        Subsecuentes ejecuciones usan el modelo cacheado.
+        YOLO-World requiere set_classes() para definir qué objetos buscar.
+        Los nombres en inglés se usan como prompts de texto para el modelo.
         """
         try:
+            import ssl
+            # Evitar error SSL en macOS al descargar componentes del modelo
+            ssl._create_default_https_context = ssl._create_unverified_context
+
             model_name = settings.YOLO_MODEL
-            logger.info(f"Cargando modelo YOLO: {model_name}")
+            logger.info(f"Cargando modelo YOLO-World: {model_name}")
 
-            # YOLO descarga automáticamente el modelo si no existe
-            self.model = YOLO(model_name)
+            # Cargar modelo YOLO-World
+            self.model = YOLOWorld(model_name)
 
-            logger.info(f"Modelo YOLO cargado exitosamente")
+            # Configurar las clases que el modelo debe detectar
+            class_list = list(WORLD_CLASSES_ES.keys())
+            self.model.set_classes(class_list)
+
+            logger.info(
+                f"Modelo YOLO-World cargado con {len(class_list)} clases"
+            )
 
         except Exception as e:
-            logger.error(f"Error cargando modelo YOLO: {e}")
-            raise RuntimeError(f"No se pudo cargar el modelo YOLO: {e}")
+            logger.error(f"Error cargando modelo YOLO-World: {e}")
+            raise RuntimeError(f"No se pudo cargar el modelo YOLO-World: {e}")
 
     def detect_objects(
         self,
@@ -189,7 +436,7 @@ class ObjectDetectionService:
         Detecta objetos en una imagen con estimación de profundidad.
 
         Proceso:
-        1. Ejecutar inferencia YOLO
+        1. Ejecutar inferencia YOLO-World
         2. Filtrar detecciones por confianza
         3. Traducir nombres a español
         4. Estimar profundidad (Depth Anything o heurística bbox)
@@ -210,7 +457,7 @@ class ObjectDetectionService:
                 "objects": [],
                 "object_count": 0,
                 "summary": "Error: Modelo no cargado",
-                "error": "Modelo YOLO no inicializado"
+                "error": "Modelo YOLO-World no inicializado"
             }
 
         threshold = confidence_threshold or self.confidence_threshold
@@ -231,7 +478,7 @@ class ObjectDetectionService:
                 except Exception as e:
                     logger.debug(f"Depth estimation no disponible: {e}")
 
-            # Ejecutar inferencia YOLO
+            # Ejecutar inferencia YOLO-World
             results = self.model(image, verbose=False)
 
             # Procesar resultados con depth map
@@ -267,10 +514,10 @@ class ObjectDetectionService:
         img_shape: tuple
     ) -> tuple:
         """
-        Procesa los resultados crudos de YOLO con estimación de profundidad.
+        Procesa los resultados crudos de YOLO-World con estimación de profundidad.
 
         Args:
-            results: Resultados de YOLO
+            results: Resultados de YOLO-World
             threshold: Umbral de confianza mínima
             img_area: Área de la imagen en píxeles
             depth_map: Mapa de profundidad [H,W] normalizado, o None
@@ -308,7 +555,7 @@ class ObjectDetectionService:
                 )
 
                 # Traducir nombre al español
-                class_info = COCO_CLASSES_ES.get(class_name)
+                class_info = WORLD_CLASSES_ES.get(class_name)
                 name_es = class_info[0] if class_info else class_name
 
                 # Estimar profundidad → zona
@@ -462,7 +709,7 @@ class ObjectDetectionService:
         return {
             "status": "loaded",
             "model_name": settings.YOLO_MODEL,
-            "num_classes": len(self.model.names),
+            "num_classes": len(WORLD_CLASSES_ES),
             "confidence_threshold": self.confidence_threshold
         }
 

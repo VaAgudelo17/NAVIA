@@ -1,71 +1,42 @@
 /**
  * Servicio de Text-to-Speech para NAVIA
- * Usa expo-speech para convertir texto a voz
+ *
+ * Wrapper de compatibilidad sobre ttsManager.
+ * Todas las llamadas delegan al singleton ttsManager
+ * que maneja la cola de prioridades y evita cancelaciones.
  */
 
-import * as Speech from 'expo-speech';
-import { TTS_CONFIG } from '../constants/config';
+import { ttsManager, TtsPriority } from './ttsManager';
 
-/**
- * Habla el texto proporcionado
- */
-export async function speak(text: string): Promise<void> {
-  if (!text || text.trim() === '') {
-    return;
-  }
-
-  // Detener cualquier reproducción anterior
-  await stop();
-
-  return new Promise((resolve, reject) => {
-    Speech.speak(text, {
-      language: TTS_CONFIG.language,
-      pitch: TTS_CONFIG.pitch,
-      rate: TTS_CONFIG.rate,
-      onDone: () => resolve(),
-      onError: (error) => reject(error),
-    });
-  });
+/** Habla el texto proporcionado (prioridad HIGH) */
+export function speak(text: string): void {
+  ttsManager.speak(text, TtsPriority.HIGH);
 }
 
-/**
- * Detiene la reproducción actual
- */
-export async function stop(): Promise<void> {
-  await Speech.stop();
+/** Detiene la reproducción actual y limpia la cola */
+export function stop(): void {
+  ttsManager.stop();
 }
 
-/**
- * Verifica si está hablando actualmente
- */
-export async function isSpeaking(): Promise<boolean> {
-  return await Speech.isSpeakingAsync();
+/** Verifica si está hablando actualmente */
+export function isSpeaking(): boolean {
+  return ttsManager.isSpeaking();
 }
 
-/**
- * Obtiene las voces disponibles
- */
-export async function getVoices(): Promise<Speech.Voice[]> {
-  return await Speech.getAvailableVoicesAsync();
+/** Habla un mensaje de bienvenida */
+export function speakWelcome(): void {
+  ttsManager.speak(
+    'Bienvenido a NAVIA, tu asistente visual. Selecciona un modo y toca Iniciar Cámara.',
+    TtsPriority.HIGH,
+  );
 }
 
-/**
- * Habla un mensaje de bienvenida
- */
-export async function speakWelcome(): Promise<void> {
-  await speak('Bienvenido a NAVIA, tu asistente visual. Toca el botón central para capturar una imagen.');
+/** Habla un mensaje de error (prioridad INTERRUPT - interrumpe todo) */
+export function speakError(message: string): void {
+  ttsManager.speak(`Error: ${message}`, TtsPriority.INTERRUPT);
 }
 
-/**
- * Habla un mensaje de error
- */
-export async function speakError(message: string): Promise<void> {
-  await speak(`Error: ${message}`);
-}
-
-/**
- * Habla un mensaje de procesamiento
- */
-export async function speakProcessing(): Promise<void> {
-  await speak('Procesando imagen, por favor espera.');
+/** Habla un mensaje de procesamiento */
+export function speakProcessing(): void {
+  ttsManager.speak('Procesando imagen, por favor espera.', TtsPriority.HIGH);
 }

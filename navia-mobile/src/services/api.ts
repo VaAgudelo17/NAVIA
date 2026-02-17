@@ -60,7 +60,7 @@ async function postImage<T>(endpoint: string, imageUri: string, errorMsg: string
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'POST',
       body: formData,
-      headers: { 'Content-Type': 'multipart/form-data' },
+      // NO establecer Content-Type manualmente - fetch auto-genera el boundary correcto
     });
 
     if (!response.ok) {

@@ -1,79 +1,97 @@
 /**
- * TTS inteligente para modo tiempo real (Web)
+ * TTS inteligente para modos tiempo real (Web)
  *
- * Solo narra cambios significativos usando Web Speech API:
- * - Objetos que aparecen/desaparecen
- * - Alertas de zona: cuando un objeto entra en "muy cerca" (peligro)
+ * Delega toda la síntesis de voz al ttsManager central.
  *
- * Mínimo 3 segundos entre frases.
+ * Modo Navegación:
+ * - Usa el summary del backend directamente (ya formateado como instrucción)
+ * - Mínimo 3 segundos entre frases
+ *
+ * Modo Riesgo:
+ * - Solo habla si has_danger === true
+ * - Alertas critical bypassean el cooldown de 3s
+ * - Interrumpe speech actual para alertas critical
  */
 
-interface ZoneChange {
-  name: string
-  from_zone: string
-  to_zone: string
-}
+import { type NaviaMode } from './api'
+import { ttsManager, TtsPriority } from './ttsManager'
 
 interface RealtimeChanges {
   appeared: string[]
   disappeared: string[]
-  zone_changes: ZoneChange[]
+  zone_changes: Array<{ name: string; from_zone: string; to_zone: string }>
   has_significant_change: boolean
+}
+
+interface RiskData {
+  has_danger: boolean
+  priority: string
+  alert_text: string
 }
 
 export class RealtimeTtsManager {
   private lastSpeakTime = 0
   private minIntervalMs = 3000
+  private mode: NaviaMode = 'navegacion'
+  private lastSummary = ''
 
-  speakChanges(changes: RealtimeChanges): void {
-    if (!changes.has_significant_change) return
+  setMode(mode: NaviaMode): void {
+    this.mode = mode
+  }
+
+  speakResult(
+    summary: string,
+    changes?: RealtimeChanges,
+    riskData?: RiskData,
+  ): void {
+    if (this.mode === 'riesgo') {
+      this.speakRiskAlert(riskData)
+      return
+    }
+
+    this.speakNavigationSummary(summary, changes)
+  }
+
+  private speakNavigationSummary(
+    summary: string,
+    changes?: RealtimeChanges,
+  ): void {
+    if (!changes?.has_significant_change && summary === this.lastSummary) return
+    if (!summary) return
 
     const now = Date.now()
     if (now - this.lastSpeakTime < this.minIntervalMs) return
-    if (window.speechSynthesis.speaking) return
+    if (ttsManager.isSpeakingNow()) return
 
-    let text = ''
+    this.lastSummary = summary
+    this.lastSpeakTime = Date.now()
+    ttsManager.speak(summary, TtsPriority.LOW)
+  }
 
-    // Prioridad 1: Alertas de zona "muy cerca" (peligro)
-    const dangerAlerts = (changes.zone_changes || []).filter(
-      (zc) => zc.to_zone === 'muy_cerca'
-    )
-    if (dangerAlerts.length > 0) {
-      const names = dangerAlerts.map((z) => z.name).join(', ')
-      text = `Precaución, ${names} muy cerca`
-    }
-    // Prioridad 2: Objetos que aparecen
-    else if (changes.appeared.length > 0 && changes.disappeared.length === 0) {
-      const items = changes.appeared.join(', ')
-      text = changes.appeared.length === 1
-        ? `Nuevo: ${items}`
-        : `Nuevos: ${items}`
-    }
-    // Prioridad 3: Objetos que desaparecen
-    else if (changes.disappeared.length > 0 && changes.appeared.length === 0) {
-      text = `${changes.disappeared.join(', ')} ya no visible`
-    }
-    // Prioridad 4: Ambos
-    else if (changes.appeared.length > 0 && changes.disappeared.length > 0) {
-      text = `Ahora: ${changes.appeared.join(', ')}`
-    }
+  private speakRiskAlert(riskData?: RiskData): void {
+    if (!riskData?.has_danger || !riskData.alert_text) return
 
-    if (!text) return
+    const now = Date.now()
 
-    window.speechSynthesis.cancel()
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.lang = 'es-ES'
-    utterance.rate = 1.1
-    window.speechSynthesis.speak(utterance)
-    this.lastSpeakTime = now
+    if (riskData.priority === 'critical') {
+      this.lastSpeakTime = Date.now()
+      ttsManager.speak(riskData.alert_text, TtsPriority.INTERRUPT)
+    } else {
+      if (now - this.lastSpeakTime < this.minIntervalMs) return
+      if (ttsManager.isSpeakingNow()) return
+
+      this.lastSpeakTime = Date.now()
+      ttsManager.speak(riskData.alert_text, TtsPriority.HIGH)
+    }
   }
 
   stop(): void {
-    window.speechSynthesis.cancel()
+    ttsManager.stop()
   }
 
   reset(): void {
-    this.stop()
+    ttsManager.stop()
     this.lastSpeakTime = 0
+    this.lastSummary = ''
   }
 }

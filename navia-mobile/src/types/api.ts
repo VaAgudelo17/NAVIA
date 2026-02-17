@@ -17,6 +17,9 @@ export interface BoundingBox {
 // Zonas de distancia
 export type DistanceZone = 'muy_cerca' | 'cerca' | 'lejos';
 
+// Prioridad semántica para asistencia visual
+export type SemanticPriority = 'high' | 'medium' | 'low';
+
 // Objeto detectado en la imagen
 export interface DetectedObject {
   name: string;           // Nombre en inglés
@@ -25,6 +28,7 @@ export interface DetectedObject {
   bounding_box: BoundingBox;
   distance_zone?: DistanceZone;    // Zona: muy_cerca, cerca, lejos
   distance_estimate?: string;       // Etiqueta legible: "muy cerca", "cerca", "lejos"
+  priority?: SemanticPriority;     // Prioridad semántica: high (obstáculos), medium (muebles), low (decoración)
 }
 
 // Respuesta del health check
@@ -61,12 +65,15 @@ export interface SceneDescriptionResponse {
   description: string;
   detected_text: string;
   has_text: boolean;
+  caption?: string;         // Caption generado por Florence-2
   objects: DetectedObject[];
   object_count: number;
   processing_details?: {
     ocr_confidence: number | null;
     ocr_word_count: number;
     image_dimensions: string;
+    captioning_enabled?: boolean;
+    has_caption?: boolean;
   };
 }
 
@@ -142,6 +149,7 @@ export interface RealtimeDetectionResult {
   summary: string;
   processing_time_ms: number;
   timestamp: number;
+  tracked_count?: number;   // Número de objetos con tracking activo (ByteTrack)
   changes?: {
     appeared: string[];
     disappeared: string[];
@@ -149,6 +157,7 @@ export interface RealtimeDetectionResult {
     smoothed_zones: Record<string, DistanceZone>;
     has_significant_change: boolean;
     current_objects: string[];
+    tracked_count?: number;
   };
   // Campos específicos del modo Riesgo
   has_danger?: boolean;

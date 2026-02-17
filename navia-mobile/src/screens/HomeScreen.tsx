@@ -6,6 +6,10 @@
  * - Exploración: foto, descripción estructurada del entorno
  * - Lectura: foto, OCR puro
  * - Riesgo: tiempo real, alertas de peligro
+ *
+ * TTS: Usa ttsManager con cola de prioridades para evitar
+ * que las voces se cancelen entre sí. Cada interacción tiene
+ * feedback de audio para usuarios ciegos.
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -36,7 +40,7 @@ import {
   analyzeRisk,
   checkHealth,
 } from '../services/api';
-import { speak, stop, speakProcessing, speakError } from '../services/tts';
+import { ttsManager, TtsPriority } from '../services/ttsManager';
 import {
   NavigationResponse,
   ExplorationResponse,
@@ -72,7 +76,7 @@ export function HomeScreen() {
   const [riskResult, setRiskResult] = useState<RiskResponse | null>(null);
 
   // Estados de TTS
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isSpeakingState, setIsSpeakingState] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(true);
 
   // Cámara
@@ -90,9 +94,19 @@ export function HomeScreen() {
 
   const isRealtimeMode = REALTIME_MODES.includes(analysisMode);
 
-  // Verificar conexión con el backend al iniciar
+  // Sincronizar ttsEnabled con ttsManager
+  useEffect(() => {
+    ttsManager.setEnabled(ttsEnabled);
+  }, [ttsEnabled]);
+
+  // Verificar conexión con el backend + bienvenida al iniciar
   useEffect(() => {
     checkBackendConnection();
+    // Bienvenida: el usuario ciego necesita saber que la app abrió
+    ttsManager.speak(
+      'Bienvenido a NAVIA, tu asistente visual. Selecciona un modo y toca Iniciar Cámara.',
+      TtsPriority.HIGH,
+    );
   }, []);
 
   const checkBackendConnection = async () => {
@@ -101,6 +115,8 @@ export function HomeScreen() {
       setIsBackendConnected(true);
     } catch {
       setIsBackendConnected(false);
+      // Informar al usuario ciego que no hay conexión
+      ttsManager.speak('Sin conexión al servidor. Verifica tu conexión.', TtsPriority.HIGH);
     }
   };
 
@@ -109,25 +125,23 @@ export function HomeScreen() {
     if (!permission?.granted) {
       const result = await requestPermission();
       if (!result.granted) {
+        ttsManager.speak(
+          'Permiso de cámara denegado. NAVIA necesita la cámara para funcionar.',
+          TtsPriority.INTERRUPT,
+        );
         Alert.alert('Permiso denegado', 'Se necesita acceso a la cámara.');
         return;
       }
     }
 
     if (isRealtimeMode) {
-      // Navegación y Riesgo: entran directo a modo realtime
       setAppState('realtime');
       setRealtimeActive(true);
       const modeLabel = MODE_CONFIG[analysisMode].label;
-      if (ttsEnabled) {
-        speak(`Modo ${modeLabel} activado. Apunta la cámara.`);
-      }
+      ttsManager.speak(`Modo ${modeLabel} activado. Apunta la cámara.`, TtsPriority.LOW);
     } else {
-      // Exploración y Lectura: capturan foto
       setAppState('camera');
-      if (ttsEnabled) {
-        speak('Cámara activada. Toca el botón central para capturar.');
-      }
+      ttsManager.speak('Cámara activada. Toca el botón central para capturar.', TtsPriority.LOW);
     }
   };
 
@@ -145,17 +159,18 @@ export function HomeScreen() {
       if (photo?.uri) {
         setCapturedImage(photo.uri);
         setAppState('processing');
+        ttsManager.speak('Foto capturada.', TtsPriority.LOW);
         await processImage(photo.uri);
       }
-    } catch (error) {
-      console.error('Error capturing photo:', error);
+    } catch (err) {
+      console.error('Error capturing photo:', err);
       handleError('No se pudo capturar la foto');
     }
   };
 
   // Seleccionar imagen de la galería
   const handlePickImage = async () => {
-    if (ttsEnabled) speak('Abriendo galería');
+    ttsManager.speak('Abriendo galería.', TtsPriority.LOW);
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       quality: 0.8,
@@ -170,53 +185,51 @@ export function HomeScreen() {
 
   // Procesar imagen según el modo
   const processImage = async (imageUri: string) => {
-    if (ttsEnabled) await speakProcessing();
+    ttsManager.speak('Procesando imagen, por favor espera.', TtsPriority.HIGH);
 
     try {
       switch (analysisMode) {
         case 'navegacion': {
           const result = await analyzeNavigation(imageUri);
           setNavResult(result);
-          if (ttsEnabled) await speak(result.instruction);
+          ttsManager.speakFromBackend(result.instruction, TtsPriority.HIGH);
           break;
         }
         case 'exploracion': {
           const result = await analyzeExploration(imageUri);
           setExplorationResult(result);
-          if (ttsEnabled) await speak(result.description);
+          ttsManager.speakFromBackend(result.description, TtsPriority.HIGH);
           break;
         }
         case 'lectura': {
           const result = await analyzeReading(imageUri);
           setOcrResult(result);
-          if (ttsEnabled) {
-            await speak(result.has_text ? `Texto: ${result.text}` : 'No se detectó texto.');
-          }
+          const text = result.has_text ? `Texto detectado: ${result.text}` : 'No se detectó texto en la imagen.';
+          ttsManager.speakFromBackend(text, TtsPriority.HIGH);
           break;
         }
         case 'riesgo': {
           const result = await analyzeRisk(imageUri);
           setRiskResult(result);
-          if (ttsEnabled) {
-            await speak(result.has_danger ? result.alert_text : 'Sin peligros detectados.');
-          }
+          const text = result.has_danger ? result.alert_text : 'Sin peligros detectados.';
+          ttsManager.speakFromBackend(text, TtsPriority.HIGH);
           break;
         }
       }
       setAppState('results');
-    } catch (error: any) {
-      handleError(error.message || 'Error procesando la imagen');
+    } catch (err: any) {
+      handleError(err.message || 'Error procesando la imagen');
     }
   };
 
   const handleError = (message: string) => {
     setError(message);
     setAppState('error');
-    if (ttsEnabled) speakError(message);
+    ttsManager.speak(`Error: ${message}`, TtsPriority.INTERRUPT);
   };
 
   const handleReset = () => {
-    stop();
+    ttsManager.stop();
     setRealtimeActive(false);
     setAppState('home');
     setCapturedImage(null);
@@ -229,20 +242,23 @@ export function HomeScreen() {
 
   // Repetir resultado por TTS
   const handleRepeat = async () => {
-    if (isSpeaking) {
-      await stop();
-      setIsSpeaking(false);
+    if (isSpeakingState) {
+      ttsManager.stop();
+      setIsSpeakingState(false);
       return;
     }
 
-    setIsSpeaking(true);
+    setIsSpeakingState(true);
     try {
-      if (navResult) await speak(navResult.instruction);
-      else if (explorationResult) await speak(explorationResult.description);
-      else if (ocrResult?.has_text) await speak(ocrResult.text);
-      else if (riskResult) await speak(riskResult.has_danger ? riskResult.alert_text : 'Sin peligros.');
+      if (navResult) ttsManager.speakFromBackend(navResult.instruction, TtsPriority.HIGH);
+      else if (explorationResult) ttsManager.speakFromBackend(explorationResult.description, TtsPriority.HIGH);
+      else if (ocrResult?.has_text) ttsManager.speakFromBackend(ocrResult.text, TtsPriority.HIGH);
+      else if (riskResult) {
+        const text = riskResult.has_danger ? riskResult.alert_text : 'Sin peligros.';
+        ttsManager.speakFromBackend(text, TtsPriority.HIGH);
+      }
     } finally {
-      setIsSpeaking(false);
+      setIsSpeakingState(false);
     }
   };
 
@@ -305,7 +321,7 @@ export function HomeScreen() {
                 ]}
                 onPress={() => {
                   setAnalysisMode(value);
-                  if (ttsEnabled) speak(`Modo ${config.label}`);
+                  ttsManager.speak(`Modo ${config.label}. ${config.description}.`, TtsPriority.LOW);
                 }}
                 accessibilityRole="radio"
                 accessibilityState={{ selected: analysisMode === value }}
@@ -359,8 +375,17 @@ export function HomeScreen() {
         style={styles.ttsToggle}
         onPress={() => {
           const newValue = !ttsEnabled;
-          speak(newValue ? 'Voz activada' : 'Voz desactivada');
           setTtsEnabled(newValue);
+          // INTERRUPT: confirmar cambio de voz siempre debe oírse
+          // Temporalmente activar para que se escuche el mensaje
+          if (!newValue) {
+            ttsManager.setEnabled(true);
+            ttsManager.speak('Voz desactivada.', TtsPriority.INTERRUPT);
+            // Desactivar después de que termine de hablar
+            setTimeout(() => ttsManager.setEnabled(false), 2000);
+          } else {
+            ttsManager.speak('Voz activada.', TtsPriority.INTERRUPT);
+          }
         }}
         accessibilityLabel={ttsEnabled ? 'Desactivar voz' : 'Activar voz'}
         accessibilityRole="switch"
@@ -403,6 +428,7 @@ export function HomeScreen() {
               {latestResult && (
                 <Text style={styles.realtimeStatusText}>
                   {latestResult.processing_time_ms}ms
+                  {latestResult.tracked_count != null ? ` | ${latestResult.tracked_count} obj` : ''}
                 </Text>
               )}
             </View>
@@ -443,15 +469,34 @@ export function HomeScreen() {
                 {/* Lista de objetos solo en modo Navegación */}
                 {!isRiskMode && latestResult && latestResult.objects.length > 0 && (
                   <View style={styles.realtimeObjectList}>
-                    {latestResult.objects.slice(0, 5).map((obj, idx) => {
+                    {[...latestResult.objects]
+                      .sort((a, b) => {
+                        const order = { high: 0, medium: 1, low: 2 };
+                        return (order[a.priority ?? 'low'] ?? 2) - (order[b.priority ?? 'low'] ?? 2);
+                      })
+                      .slice(0, 5)
+                      .map((obj, idx) => {
                       const zoneColor =
                         obj.distance_zone === 'muy_cerca' ? '#EF4444' :
                         obj.distance_zone === 'cerca' ? '#F59E0B' : '#22C55E';
+                      const priorityIcon =
+                        obj.priority === 'high' ? 'alert-circle' :
+                        obj.priority === 'medium' ? 'remove-circle' : null;
                       return (
                         <View key={idx} style={styles.realtimeObjectItem}>
                           <View style={styles.realtimeObjLeft}>
                             <View style={[styles.zoneDot, { backgroundColor: zoneColor }]} />
-                            <Text style={styles.realtimeObjectName}>{obj.name_es}</Text>
+                            {priorityIcon && (
+                              <Ionicons
+                                name={priorityIcon as any}
+                                size={12}
+                                color={obj.priority === 'high' ? '#EF4444' : '#F59E0B'}
+                              />
+                            )}
+                            <Text style={[
+                              styles.realtimeObjectName,
+                              obj.priority === 'high' && { fontWeight: '700' },
+                            ]}>{obj.name_es}</Text>
                           </View>
                           <Text style={[styles.realtimeObjectDistance, { color: zoneColor }]}>
                             {obj.distance_estimate || `${(obj.confidence * 100).toFixed(0)}%`}
@@ -472,7 +517,7 @@ export function HomeScreen() {
             style={styles.stopRealtimeButton}
             onPress={() => {
               handleReset();
-              if (ttsEnabled) speak('Detenido');
+              ttsManager.speak('Detenido.', TtsPriority.LOW);
             }}
             accessibilityLabel="Detener"
             accessibilityRole="button"
@@ -499,7 +544,7 @@ export function HomeScreen() {
           style={styles.cameraButton}
           onPress={() => {
             handleReset();
-            if (ttsEnabled) speak('Cancelado');
+            ttsManager.speak('Cancelado.', TtsPriority.LOW);
           }}
           accessibilityLabel="Cancelar y volver"
           accessibilityRole="button"
@@ -683,7 +728,7 @@ export function HomeScreen() {
           title="Nueva Imagen"
           onPress={() => {
             handleReset();
-            if (ttsEnabled) speak('Nueva captura');
+            ttsManager.speak('Nueva captura.', TtsPriority.LOW);
           }}
           variant="outline"
           size="large"
@@ -691,12 +736,12 @@ export function HomeScreen() {
           style={styles.resultActionButton}
         />
         <Button
-          title={isSpeaking ? 'Detener' : 'Repetir'}
+          title={isSpeakingState ? 'Detener' : 'Repetir'}
           onPress={handleRepeat}
           size="large"
           icon={
             <Ionicons
-              name={isSpeaking ? 'stop' : 'volume-high'}
+              name={isSpeakingState ? 'stop' : 'volume-high'}
               size={20}
               color={COLORS.background}
             />
@@ -717,7 +762,7 @@ export function HomeScreen() {
         title="Intentar de nuevo"
         onPress={() => {
           handleReset();
-          if (ttsEnabled) speak('Volviendo al inicio');
+          ttsManager.speak('Volviendo al inicio.', TtsPriority.LOW);
         }}
         size="large"
       />

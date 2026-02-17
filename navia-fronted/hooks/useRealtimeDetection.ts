@@ -2,7 +2,7 @@
  * Hook para detección en tiempo real (Web)
  *
  * Extrae frames del video via canvas y los envía al backend
- * por WebSocket para detección con YOLOv8.
+ * por WebSocket. Soporta modos Navegación y Riesgo.
  */
 
 "use client"
@@ -10,13 +10,14 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { RealtimeWebSocket } from '@/lib/websocket'
 import { RealtimeTtsManager } from '@/lib/realtimeTts'
-import { type RealtimeDetectionResult } from '@/lib/api'
+import { type RealtimeDetectionResult, type NaviaMode } from '@/lib/api'
 
 interface UseRealtimeDetectionOptions {
   videoRef: React.RefObject<HTMLVideoElement | null>
   canvasRef: React.RefObject<HTMLCanvasElement | null>
   enabled: boolean
   ttsEnabled: boolean
+  mode: NaviaMode
   targetFps?: number
 }
 
@@ -25,6 +26,7 @@ export function useRealtimeDetection({
   canvasRef,
   enabled,
   ttsEnabled,
+  mode,
   targetFps = 5,
 }: UseRealtimeDetectionOptions) {
   const [wsStatus, setWsStatus] = useState<string>('disconnected')
@@ -35,13 +37,26 @@ export function useRealtimeDetection({
   const animFrameRef = useRef<number | null>(null)
   const lastCaptureTime = useRef(0)
 
+  // Actualizar modo del TTS manager cuando cambie
+  useEffect(() => {
+    ttsManagerRef.current.setMode(mode)
+  }, [mode])
+
   const handleDetection = useCallback((data: RealtimeDetectionResult) => {
     setLatestResult(data)
 
-    if (ttsEnabled && data.changes) {
-      ttsManagerRef.current.speakChanges(data.changes)
+    if (ttsEnabled) {
+      ttsManagerRef.current.speakResult(
+        data.summary,
+        data.changes as any,
+        mode === 'riesgo' ? {
+          has_danger: data.has_danger ?? false,
+          priority: data.priority ?? 'none',
+          alert_text: data.summary,
+        } : undefined,
+      )
     }
-  }, [ttsEnabled])
+  }, [ttsEnabled, mode])
 
   useEffect(() => {
     if (!enabled) {
@@ -58,8 +73,8 @@ export function useRealtimeDetection({
       return
     }
 
-    // Conectar WebSocket
-    wsRef.current = new RealtimeWebSocket(handleDetection, setWsStatus)
+    // Conectar WebSocket con modo
+    wsRef.current = new RealtimeWebSocket(handleDetection, setWsStatus, mode)
     wsRef.current.connect()
 
     const intervalMs = 1000 / targetFps
@@ -97,7 +112,7 @@ export function useRealtimeDetection({
       wsRef.current = null
       ttsManagerRef.current.stop()
     }
-  }, [enabled, targetFps, handleDetection, videoRef, canvasRef])
+  }, [enabled, targetFps, handleDetection, mode, videoRef, canvasRef])
 
   return { wsStatus, latestResult }
 }

@@ -2,16 +2,18 @@
 ============================================================================
 NAVIA Backend - Endpoint WebSocket para Detección en Tiempo Real
 ============================================================================
-Recibe frames de cámara via WebSocket, procesa con YOLOv8 + Depth Anything,
+Recibe frames de cámara via WebSocket, procesa con YOLO-World + Depth Anything,
 y devuelve resultados con zonas de distancia suavizadas.
 
 Pipeline por frame:
 1. Decodificar base64 → imagen OpenCV
-2. YOLO v8s → detección de objetos
+2. YOLO-World v2 → detección de objetos (vocabulario abierto)
 3. Depth Anything V2 → mapa de profundidad
-4. Clasificar objetos en zonas (muy_cerca / cerca / lejos)
-5. Exponential smoothing + zone persistence
-6. Solo hablar si zona persiste varios frames
+4. ByteTrack → tracking espacial (IoU + Kalman filter)
+5. Clasificar objetos en zonas (muy_cerca / cerca / lejos)
+6. Exponential smoothing + zone persistence
+7. Prioridad semántica (high/medium/low)
+8. Solo hablar si zona persiste varios frames
 
 Protocolo:
 - Cliente envía: {"type": "frame", "data": "<base64 JPEG>", "frame_id": N}
@@ -32,6 +34,8 @@ from app.utils.image_utils import bytes_to_cv2_image, resize_image_if_needed
 from app.services.object_detection_service import get_object_detection_service
 from app.services.realtime_detection_service import RealtimeSessionState
 from app.services.depth_estimation_service import ZONE_LABELS
+from app.services.navigation_service import get_navigation_service
+from app.services.risk_service import get_risk_service
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +63,11 @@ async def realtime_detection(websocket: WebSocket):
     frame_event = asyncio.Event()
     connection_alive = True
     config = {
-        "confidence_threshold": settings.WS_REALTIME_CONFIDENCE_THRESHOLD
+        "confidence_threshold": settings.WS_REALTIME_CONFIDENCE_THRESHOLD,
+        "mode": "navegacion",
     }
+    nav_service = get_navigation_service()
+    risk_service = get_risk_service()
 
     async def receive_loop():
         """Recibe frames y configuración del cliente."""
@@ -86,6 +93,9 @@ async def realtime_detection(websocket: WebSocket):
                 elif msg.get("type") == "config":
                     if "confidence_threshold" in msg:
                         config["confidence_threshold"] = msg["confidence_threshold"]
+                    if "mode" in msg and msg["mode"] in ("navegacion", "riesgo"):
+                        config["mode"] = msg["mode"]
+                        logger.info(f"Modo WebSocket cambiado a: {msg['mode']}")
 
                 elif msg.get("type") == "ping":
                     await websocket.send_json({"type": "pong"})
@@ -140,11 +150,13 @@ async def realtime_detection(websocket: WebSocket):
 
                     processing_time = int((time.time() - start_time) * 1000)
 
-                    # Calcular cambios con smoothing de profundidad
+                    # Calcular cambios con smoothing de profundidad + tracking
                     raw_depths = result.get("raw_depths", {})
+                    h, w = cv2_image.shape[:2]
                     changes = session_state.compute_changes(
                         result["objects"],
                         raw_depths=raw_depths,
+                        img_shape=(h, w),
                     )
 
                     # Aplicar zonas suavizadas a los objetos
@@ -158,7 +170,7 @@ async def realtime_detection(websocket: WebSocket):
                         )
                         label = ZONE_LABELS.get(zone, zone)
 
-                        objects_data.append({
+                        obj_data = {
                             "name": obj.name,
                             "name_es": obj.name_es,
                             "confidence": obj.confidence,
@@ -170,18 +182,42 @@ async def realtime_detection(websocket: WebSocket):
                             },
                             "distance_zone": zone,
                             "distance_estimate": label,
-                        })
+                        }
+                        # Incluir prioridad si está disponible
+                        if obj.priority:
+                            obj_data["priority"] = obj.priority
+                        objects_data.append(obj_data)
+
+                    # Generar summary según el modo activo
+                    mode = config.get("mode", "navegacion")
 
                     response = {
                         "type": "detection",
+                        "mode": mode,
                         "frame_id": frame_id,
                         "objects": objects_data,
                         "object_count": result["object_count"],
-                        "summary": result["summary"],
                         "processing_time_ms": processing_time,
                         "timestamp": int(time.time() * 1000),
                         "changes": changes,
+                        "tracked_count": changes.get("tracked_count"),
                     }
+
+                    if mode == "navegacion":
+                        nav_result = nav_service.generate_navigation_summary(
+                            result["objects"], w, h
+                        )
+                        response["summary"] = nav_result["instruction"]
+                    elif mode == "riesgo":
+                        risk_result = risk_service.evaluate_risk(
+                            result["objects"], w
+                        )
+                        response["summary"] = risk_result["alert_text"]
+                        response["has_danger"] = risk_result["has_danger"]
+                        response["priority"] = risk_result["priority"]
+                    else:
+                        response["summary"] = result["summary"]
+
                     await websocket.send_json(response)
 
                 except Exception as e:

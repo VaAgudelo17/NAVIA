@@ -30,18 +30,29 @@ numpy>=2.0.0
 # pytesseract: Wrapper de Python para Tesseract OCR.
 pytesseract>=0.3.13
 
-# --- DETECCIÓN DE OBJETOS ---
-# Ultralytics: Librería oficial de YOLOv8.
+# --- DETECCIÓN DE OBJETOS Y TRACKING ---
+# Ultralytics: YOLO-World (detección) + ByteTrack (tracking).
 ultralytics>=8.3.0
 
 # --- WEBSOCKET ---
 # websockets: Soporte WebSocket para detección en tiempo real.
 websockets>=12.0
 
-# --- ESTIMACIÓN DE PROFUNDIDAD ---
+# --- MODELOS DE IA (Hugging Face) ---
 # Transformers: Librería de Hugging Face para modelos de deep learning.
-# Usamos Depth Anything V2 Small para estimación de profundidad monocular.
+# Usamos: Depth Anything V2 (profundidad), Florence-2 (captioning),
+# CLIP (filtrado semántico opcional).
 transformers>=4.41.0
+
+# --- FLORENCE-2 (CAPTIONING) ---
+# Dependencias requeridas por Florence-2 para captioning de escenas.
+einops>=0.7.0
+timm>=0.9.0
+
+# --- TTS (PIPER) ---
+# Piper TTS: síntesis de voz offline con modelos VITS (ONNX).
+# Genera audio WAV en español para la app móvil.
+piper-tts>=1.2.0
 
 # --- UTILIDADES ---
 # Pydantic: Validación de datos y configuración.

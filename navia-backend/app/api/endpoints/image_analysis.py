@@ -26,6 +26,9 @@ from app.models.schemas import (
     OCRResponse,
     ObjectDetectionResponse,
     SceneDescriptionResponse,
+    NavigationResponse,
+    ExplorationResponse,
+    RiskResponse,
     ErrorResponse,
     DetectedObject
 )
@@ -38,6 +41,8 @@ from app.utils.image_utils import (
 from app.services.ocr_service import get_ocr_service
 from app.services.object_detection_service import get_object_detection_service
 from app.services.scene_description_service import get_scene_description_service
+from app.services.navigation_service import get_navigation_service
+from app.services.risk_service import get_risk_service
 
 # Configurar logging
 logger = logging.getLogger(__name__)
@@ -411,3 +416,160 @@ async def quick_analysis(
             status_code=500,
             detail=f"Error procesando imagen: {str(e)}"
         )
+
+
+# ============================================================================
+# NUEVOS MODOS DE NAVIA
+# ============================================================================
+
+@router.post(
+    "/navegacion",
+    response_model=NavigationResponse,
+    summary="Modo Navegación - instrucciones de navegación",
+    description="""
+    Detecta obstáculos y genera instrucciones cortas de navegación.
+    Ejemplo: "Camino libre al frente. Silla cerca a la izquierda."
+    """
+)
+async def analyze_navigation(
+    image: UploadFile = File(..., description="Imagen para navegación")
+) -> NavigationResponse:
+    """Modo Navegación: detección de obstáculos + instrucciones espaciales."""
+    try:
+        await validate_image(image)
+        await image.seek(0)
+
+        content = await image.read()
+        cv2_image = bytes_to_cv2_image(content)
+        cv2_image = resize_image_if_needed(cv2_image)
+
+        # Detectar objetos
+        detector = get_object_detection_service()
+        result = detector.detect_objects(cv2_image)
+
+        if "error" in result:
+            return NavigationResponse(
+                success=False,
+                message=f"Error: {result['error']}",
+                instruction="Error al analizar la imagen.",
+            )
+
+        # Generar instrucciones de navegación
+        h, w = cv2_image.shape[:2]
+        nav_service = get_navigation_service()
+        nav_result = nav_service.generate_navigation_summary(
+            result["objects"], w, h
+        )
+
+        return NavigationResponse(
+            success=True,
+            message="Navegación analizada",
+            instruction=nav_result["instruction"],
+            obstacles=nav_result["obstacles"],
+            path_clear=nav_result["path_clear"],
+            object_count=result["object_count"],
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en navegación: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/exploracion",
+    response_model=ExplorationResponse,
+    summary="Modo Exploración - descripción del entorno",
+    description="""
+    Genera una descripción estructurada del entorno.
+    Ejemplo: "Hay una mesa frente a ti y una silla a la izquierda."
+    """
+)
+async def analyze_exploration(
+    image: UploadFile = File(..., description="Imagen para exploración")
+) -> ExplorationResponse:
+    """Modo Exploración: descripción estructurada del entorno."""
+    try:
+        await validate_image(image)
+        await image.seek(0)
+
+        content = await image.read()
+        cv2_image = bytes_to_cv2_image(content)
+        cv2_image = resize_image_if_needed(cv2_image)
+
+        scene_service = get_scene_description_service()
+        return scene_service.describe_exploration(cv2_image)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en exploración: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/lectura",
+    response_model=OCRResponse,
+    summary="Modo Lectura - extracción de texto",
+    description="""
+    OCR puro para leer documentos, etiquetas y señales.
+    """
+)
+async def analyze_reading(
+    image: UploadFile = File(..., description="Imagen con texto a leer")
+) -> OCRResponse:
+    """Modo Lectura: OCR puro."""
+    return await extract_text(image)
+
+
+@router.post(
+    "/riesgo",
+    response_model=RiskResponse,
+    summary="Modo Riesgo - detección de peligros",
+    description="""
+    Evalúa peligros en la imagen y genera alertas.
+    Ejemplo: "Peligro. Vehículo muy cerca a la izquierda."
+    """
+)
+async def analyze_risk(
+    image: UploadFile = File(..., description="Imagen para evaluar riesgo")
+) -> RiskResponse:
+    """Modo Riesgo: clasificación de peligros y alertas."""
+    try:
+        await validate_image(image)
+        await image.seek(0)
+
+        content = await image.read()
+        cv2_image = bytes_to_cv2_image(content)
+        cv2_image = resize_image_if_needed(cv2_image)
+
+        # Detectar objetos
+        detector = get_object_detection_service()
+        result = detector.detect_objects(cv2_image)
+
+        if "error" in result:
+            return RiskResponse(
+                success=False,
+                message=f"Error: {result['error']}",
+            )
+
+        # Evaluar riesgo
+        h, w = cv2_image.shape[:2]
+        risk_service = get_risk_service()
+        risk_result = risk_service.evaluate_risk(result["objects"], w)
+
+        return RiskResponse(
+            success=True,
+            message="Riesgo evaluado",
+            has_danger=risk_result["has_danger"],
+            priority=risk_result["priority"],
+            alert_text=risk_result["alert_text"],
+            dangers=risk_result["dangers"],
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en evaluación de riesgo: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

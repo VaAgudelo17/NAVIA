@@ -10,6 +10,7 @@ export const API_BASE_URL = 'http://192.168.1.21:8000';
 // Endpoints de la API
 export const API_ENDPOINTS = {
   HEALTH: '/api/v1/health',
+  TTS: '/api/v1/tts',
   // Nuevos modos
   NAVEGACION: '/api/v1/analyze/navegacion',
   EXPLORACION: '/api/v1/analyze/exploracion',
