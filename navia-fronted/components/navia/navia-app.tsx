@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useRef, useCallback, useEffect } from "react"
-import { Camera, Upload, Volume2, VolumeX, Loader2, Eye, FileText, Compass, AlertTriangle, RefreshCw, X, Square } from "lucide-react"
+import { Camera, Upload, Volume2, VolumeX, Loader2, Eye, FileText, Compass, AlertTriangle, RefreshCw, X, Square, Zap, List, DollarSign, Clock, Trash2, ArrowLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
@@ -16,14 +16,17 @@ import {
   type NaviaMode,
   type NavigationResponse,
   type ExplorationResponse,
-  type OCRResponse,
   type RiskResponse,
+  type SmartReadingResponse,
+  type ReadingMode,
 } from "@/lib/api"
 import { useRealtimeDetection } from "@/hooks/useRealtimeDetection"
 import { ttsManager, TtsPriority } from "@/lib/ttsManager"
+import { usePreferences } from "@/context/PreferencesContext"
+import { getHistory, clearHistory, type HistoryItem } from "@/lib/api"
 
 // Estados posibles de la aplicación
-type AppState = "idle" | "camera" | "capturing" | "processing" | "results" | "error" | "realtime"
+type AppState = "idle" | "camera" | "capturing" | "processing" | "results" | "error" | "realtime" | "history"
 
 // Configuración de modos
 const MODE_CONFIG: Record<NaviaMode, { label: string; Icon: typeof Compass; description: string }> = {
@@ -37,21 +40,32 @@ const MODE_CONFIG: Record<NaviaMode, { label: string; Icon: typeof Compass; desc
 const REALTIME_MODES: NaviaMode[] = ['navegacion', 'riesgo']
 
 export function NaviaApp() {
+  // Preferencias persistentes (desde Context + localStorage)
+  const {
+    analysisMode,
+    readingMode,
+    ttsEnabled,
+    setAnalysisMode,
+    setReadingMode,
+    setTtsEnabled,
+  } = usePreferences()
+
   // Estados principales
   const [appState, setAppState] = useState<AppState>("idle")
-  const [analysisMode, setAnalysisMode] = useState<NaviaMode>("navegacion")
   const [error, setError] = useState<string | null>(null)
   const [isBackendConnected, setIsBackendConnected] = useState<boolean | null>(null)
 
   // Estados de resultados
   const [navResult, setNavResult] = useState<NavigationResponse | null>(null)
   const [explorationResult, setExplorationResult] = useState<ExplorationResponse | null>(null)
-  const [ocrResult, setOcrResult] = useState<OCRResponse | null>(null)
+  const [smartResult, setSmartResult] = useState<SmartReadingResponse | null>(null)
   const [riskResult, setRiskResult] = useState<RiskResponse | null>(null)
 
   // Estados de TTS (Text-to-Speech)
   const [isSpeaking, setIsSpeaking] = useState(false)
-  const [ttsEnabled, setTtsEnabled] = useState(true)
+
+  // Historial
+  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([])
 
   // Estados de imagen
   const [capturedImage, setCapturedImage] = useState<string | null>(null)
@@ -222,15 +236,11 @@ export function NaviaApp() {
         }
 
         case "lectura": {
-          const result = await analyzeReading(file)
-          setOcrResult(result)
+          const result = await analyzeReading(file, readingMode)
+          setSmartResult(result)
           setProcessingProgress(100)
           setAppState("results")
-          if (result.has_text) {
-            ttsManager.speakFromBackend(`Texto encontrado: ${result.text}`, TtsPriority.HIGH)
-          } else {
-            ttsManager.speak("No se detectó texto en la imagen.", TtsPriority.HIGH)
-          }
+          ttsManager.speakFromBackend(result.narrative, TtsPriority.HIGH)
           break
         }
 
@@ -261,7 +271,7 @@ export function NaviaApp() {
     setCapturedImage(null)
     setNavResult(null)
     setExplorationResult(null)
-    setOcrResult(null)
+    setSmartResult(null)
     setRiskResult(null)
     setError(null)
     setProcessingProgress(0)
@@ -273,8 +283,8 @@ export function NaviaApp() {
       ttsManager.speakFromBackend(navResult.instruction, TtsPriority.HIGH)
     } else if (explorationResult) {
       ttsManager.speakFromBackend(explorationResult.description, TtsPriority.HIGH)
-    } else if (ocrResult && ocrResult.has_text) {
-      ttsManager.speakFromBackend(ocrResult.text, TtsPriority.HIGH)
+    } else if (smartResult) {
+      ttsManager.speakFromBackend(smartResult.narrative, TtsPriority.HIGH)
     } else if (riskResult) {
       ttsManager.speakFromBackend(riskResult.alert_text, TtsPriority.HIGH)
     }
@@ -359,6 +369,36 @@ export function NaviaApp() {
                   ))}
                 </div>
 
+                {/* Sub-selector de modo lectura */}
+                {analysisMode === "lectura" && (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground text-center">Tipo de lectura:</p>
+                    <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Tipo de lectura">
+                      {([
+                        { key: "resumen" as ReadingMode, label: "Resumen", Icon: Zap },
+                        { key: "detallado" as ReadingMode, label: "Detallado", Icon: List },
+                        { key: "financiero" as ReadingMode, label: "Financiero", Icon: DollarSign },
+                      ]).map((mode) => (
+                        <Button
+                          key={mode.key}
+                          variant={readingMode === mode.key ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => {
+                            setReadingMode(mode.key)
+                            ttsManager.speak(`Lectura ${mode.label}`, TtsPriority.LOW)
+                          }}
+                          role="radio"
+                          aria-checked={readingMode === mode.key}
+                          className="h-9 text-xs"
+                        >
+                          <mode.Icon className="h-3.5 w-3.5 mr-1 shrink-0" />
+                          {mode.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Botones principales */}
                 <div className="flex flex-col gap-3">
                   <Button
@@ -398,6 +438,27 @@ export function NaviaApp() {
                     className="hidden"
                   />
                 </div>
+
+                {/* Botón Historial */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={async () => {
+                    ttsManager.speak("Abriendo historial", TtsPriority.LOW)
+                    try {
+                      const data = await getHistory(undefined, 1, 20)
+                      setHistoryItems(data.items)
+                    } catch {
+                      setHistoryItems([])
+                    }
+                    setAppState("history")
+                  }}
+                  className="w-full text-muted-foreground"
+                  aria-label="Ver historial de análisis"
+                >
+                  <Clock className="h-4 w-4 mr-2" />
+                  Ver Historial
+                </Button>
 
                 {/* Advertencia si no hay conexión */}
                 {isBackendConnected === false && (
@@ -565,19 +626,42 @@ export function NaviaApp() {
                   </div>
                 )}
 
-                {/* Resultado de Lectura (OCR) */}
-                {ocrResult && (
+                {/* Resultado de Lectura Inteligente */}
+                {smartResult && (
                   <div className="space-y-3">
-                    {ocrResult.has_text ? (
-                      <>
-                        <p className="text-lg leading-relaxed">{ocrResult.text}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {ocrResult.word_count} palabras • {ocrResult.confidence?.toFixed(0)}% confianza
+                    {/* Badge de tipo de documento */}
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-primary/10 text-primary rounded-full text-sm font-medium">
+                      <FileText className="h-3.5 w-3.5" />
+                      {smartResult.document_type_label}
+                    </div>
+
+                    {/* Narrativa principal */}
+                    <p className="text-lg leading-relaxed">{smartResult.narrative}</p>
+
+                    {/* Totales destacados */}
+                    {smartResult.extracted_fields.totals.length > 0 && (
+                      <div className="flex items-center gap-2 p-3 bg-amber-500/10 rounded-lg">
+                        <DollarSign className="h-4 w-4 text-amber-500 shrink-0" />
+                        <p className="text-sm font-semibold text-amber-500">
+                          {smartResult.extracted_fields.totals.join(" | ")}
                         </p>
-                      </>
-                    ) : (
-                      <p className="text-muted-foreground">No se detectó texto en la imagen.</p>
+                      </div>
                     )}
+
+                    {/* Caption visual */}
+                    {smartResult.visual_caption && (
+                      <div className="p-3 bg-secondary rounded-lg">
+                        <p className="text-sm text-muted-foreground mb-1">Descripción visual:</p>
+                        <p>{smartResult.visual_caption}</p>
+                      </div>
+                    )}
+
+                    {/* Stats */}
+                    <p className="text-sm text-muted-foreground">
+                      {smartResult.word_count} palabras
+                      {smartResult.ocr_confidence ? ` • ${smartResult.ocr_confidence.toFixed(0)}% confianza` : ""}
+                      {` • ${smartResult.reading_mode}`}
+                    </p>
                   </div>
                 )}
 
@@ -780,6 +864,101 @@ export function NaviaApp() {
                 <Button onClick={() => { reset(); ttsManager.speak("Volviendo al inicio", TtsPriority.LOW) }} className="w-full min-h-[48px]" aria-label="Intentar de nuevo">
                   Intentar de nuevo
                 </Button>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Estado: History - Historial de análisis */}
+        {appState === "history" && (
+          <div className="w-full max-w-md space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Clock className="h-5 w-5" />
+                  Historial de Análisis
+                </CardTitle>
+                <CardDescription>
+                  {historyItems.length} registro{historyItems.length !== 1 ? "s" : ""}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {historyItems.length === 0 && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Clock className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                    <p>Aún no hay análisis en tu historial.</p>
+                    <p className="text-sm mt-1">Usa cualquier modo para empezar.</p>
+                  </div>
+                )}
+
+                {historyItems.map((item) => {
+                  const date = new Date(item.created_at)
+                  const timeStr = date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })
+                  const dateStr = date.toLocaleDateString("es-ES", { day: "numeric", month: "short" })
+                  const modeConfig = MODE_CONFIG[item.mode as NaviaMode]
+
+                  return (
+                    <button
+                      key={item.id}
+                      className="w-full text-left p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors flex gap-3"
+                      onClick={() => {
+                        ttsManager.speakFromBackend(item.result_summary, TtsPriority.HIGH)
+                      }}
+                      aria-label={`${modeConfig?.label || item.mode}. ${item.result_summary}`}
+                    >
+                      <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                        {modeConfig && <modeConfig.Icon className="h-4 w-4 text-primary" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-sm font-medium text-primary">
+                            {modeConfig?.label || item.mode}
+                            {item.reading_mode ? ` · ${item.reading_mode}` : ""}
+                          </span>
+                          <span className="text-xs text-muted-foreground">{dateStr} {timeStr}</span>
+                        </div>
+                        <p className="text-sm text-foreground line-clamp-2">
+                          {item.result_summary || "Sin resumen disponible"}
+                        </p>
+                      </div>
+                    </button>
+                  )
+                })}
+
+                <div className="flex gap-2 pt-2">
+                  {historyItems.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          await clearHistory()
+                          setHistoryItems([])
+                          ttsManager.speak("Historial borrado", TtsPriority.LOW)
+                        } catch {
+                          ttsManager.speak("Error al borrar historial", TtsPriority.LOW)
+                        }
+                      }}
+                      className="flex-1 text-destructive"
+                      aria-label="Borrar historial"
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      Borrar
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      reset()
+                      ttsManager.speak("Volviendo al inicio", TtsPriority.LOW)
+                    }}
+                    className="flex-1"
+                    aria-label="Volver al inicio"
+                  >
+                    <ArrowLeft className="h-4 w-4 mr-1" />
+                    Volver
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           </div>

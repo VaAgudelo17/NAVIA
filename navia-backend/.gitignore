@@ -77,6 +77,10 @@ htmlcov/
 # --- Documentación generada ---
 docs/_build/
 
+# --- Base de datos SQLite ---
+*.db
+*.db-journal
+
 # --- Archivos temporales ---
 tmp/
 temp/

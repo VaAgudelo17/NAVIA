@@ -12,6 +12,8 @@ import {
   NavigationResponse,
   ExplorationResponse,
   RiskResponse,
+  SmartReadingResponse,
+  ReadingMode,
 } from '../types/api';
 
 /**
@@ -89,9 +91,13 @@ export async function analyzeExploration(imageUri: string): Promise<ExplorationR
   return postImage<ExplorationResponse>(API_ENDPOINTS.EXPLORACION, imageUri, 'Error en exploración');
 }
 
-/** Modo Lectura: OCR puro */
-export async function analyzeReading(imageUri: string): Promise<OCRResponse> {
-  return postImage<OCRResponse>(API_ENDPOINTS.LECTURA, imageUri, 'Error en lectura');
+/** Modo Lectura Inteligente: OCR + clasificación + narrativa */
+export async function analyzeReading(
+  imageUri: string,
+  readingMode: ReadingMode = 'detallado',
+): Promise<SmartReadingResponse> {
+  const endpoint = `${API_ENDPOINTS.LECTURA}?reading_mode=${readingMode}`;
+  return postImage<SmartReadingResponse>(endpoint, imageUri, 'Error en lectura');
 }
 
 /** Modo Riesgo: detección de peligros */
@@ -117,4 +123,61 @@ export async function analyzeScene(imageUri: string): Promise<SceneDescriptionRe
 
 export async function quickAnalysis(imageUri: string): Promise<QuickAnalysisResponse> {
   return postImage<QuickAnalysisResponse>(API_ENDPOINTS.QUICK, imageUri, 'Error en análisis rápido');
+}
+
+// ============================================================================
+// HISTORIAL Y PREFERENCIAS (Backend)
+// ============================================================================
+
+export interface HistoryItem {
+  id: string;
+  mode: string;
+  reading_mode?: string;
+  result_summary: string;
+  result_data: Record<string, unknown>;
+  processing_time_ms?: number;
+  object_count?: number;
+  has_text?: boolean;
+  has_danger?: boolean;
+  created_at: string;
+}
+
+export interface HistoryListResponse {
+  success: boolean;
+  items: HistoryItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+/** Obtiene el historial de analisis del backend */
+export async function getHistory(
+  mode?: string,
+  page: number = 1,
+  pageSize: number = 20,
+): Promise<HistoryListResponse> {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (mode) params.set('mode', mode);
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/history?${params}`);
+  if (!response.ok) throw new Error('Error obteniendo historial');
+  return response.json();
+}
+
+/** Obtiene las preferencias del backend */
+export async function getBackendPreferences(): Promise<Record<string, string>> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/preferences`);
+  if (!response.ok) throw new Error('Error obteniendo preferencias');
+  const data = await response.json();
+  return data.preferences;
+}
+
+/** Actualiza preferencias en el backend */
+export async function updateBackendPreferences(prefs: Record<string, string>): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/preferences`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ preferences: prefs }),
+  });
+  if (!response.ok) throw new Error('Error actualizando preferencias');
 }

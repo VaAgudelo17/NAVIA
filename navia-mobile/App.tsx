@@ -10,6 +10,7 @@ import { SafeAreaView, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Audio } from 'expo-av';
 import { HomeScreen } from './src/screens/HomeScreen';
+import { PreferencesProvider } from './src/context/PreferencesContext';
 import { COLORS } from './src/constants/config';
 
 export default function App() {
@@ -24,10 +25,12 @@ export default function App() {
   }, []);
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar style="light" backgroundColor={COLORS.background} />
-      <HomeScreen />
-    </SafeAreaView>
+    <PreferencesProvider>
+      <SafeAreaView style={styles.container}>
+        <StatusBar style="light" backgroundColor={COLORS.background} />
+        <HomeScreen />
+      </SafeAreaView>
+    </PreferencesProvider>
   );
 }
 

@@ -23,6 +23,8 @@ from app.api.endpoints.health import router as health_router
 from app.api.endpoints.image_analysis import router as image_router
 from app.api.endpoints.realtime_ws import router as realtime_router
 from app.api.endpoints.tts import router as tts_router
+from app.api.endpoints.history import router as history_router
+from app.api.endpoints.preferences import router as preferences_router
 
 # Crear router principal de la API
 # Todas las rutas tendrán el prefijo /api/v1
@@ -33,3 +35,5 @@ api_router.include_router(health_router)
 api_router.include_router(image_router)
 api_router.include_router(realtime_router)
 api_router.include_router(tts_router)
+api_router.include_router(history_router)
+api_router.include_router(preferences_router)

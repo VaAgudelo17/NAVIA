@@ -44,14 +44,17 @@ import { ttsManager, TtsPriority } from '../services/ttsManager';
 import {
   NavigationResponse,
   ExplorationResponse,
-  OCRResponse,
   RiskResponse,
+  SmartReadingResponse,
+  ReadingMode,
 } from '../types/api';
 import { useRealtimeDetection } from '../hooks/useRealtimeDetection';
+import { usePreferences } from '../context/PreferencesContext';
+import { saveToHistory, getHistory, clearHistory, HistoryEntry } from '../services/storage';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-type AppState = 'home' | 'camera' | 'processing' | 'results' | 'error' | 'realtime';
+type AppState = 'home' | 'camera' | 'processing' | 'results' | 'error' | 'realtime' | 'history';
 
 // Configuración de cada modo
 const MODE_CONFIG: Record<AnalysisMode, { label: string; icon: string; description: string }> = {
@@ -62,9 +65,18 @@ const MODE_CONFIG: Record<AnalysisMode, { label: string; icon: string; descripti
 };
 
 export function HomeScreen() {
+  // Preferencias persistentes (desde Context + AsyncStorage)
+  const {
+    analysisMode,
+    readingMode,
+    ttsEnabled,
+    setAnalysisMode,
+    setReadingMode,
+    setTtsEnabled,
+  } = usePreferences();
+
   // Estados principales
   const [appState, setAppState] = useState<AppState>('home');
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>(ANALYSIS_MODES.NAVEGACION);
   const [isBackendConnected, setIsBackendConnected] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,12 +84,14 @@ export function HomeScreen() {
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [navResult, setNavResult] = useState<NavigationResponse | null>(null);
   const [explorationResult, setExplorationResult] = useState<ExplorationResponse | null>(null);
-  const [ocrResult, setOcrResult] = useState<OCRResponse | null>(null);
+  const [smartResult, setSmartResult] = useState<SmartReadingResponse | null>(null);
   const [riskResult, setRiskResult] = useState<RiskResponse | null>(null);
 
   // Estados de TTS
   const [isSpeakingState, setIsSpeakingState] = useState(false);
-  const [ttsEnabled, setTtsEnabled] = useState(true);
+
+  // Historial local
+  const [historyItems, setHistoryItems] = useState<HistoryEntry[]>([]);
 
   // Cámara
   const [permission, requestPermission] = useCameraPermissions();
@@ -193,19 +207,35 @@ export function HomeScreen() {
           const result = await analyzeNavigation(imageUri);
           setNavResult(result);
           ttsManager.speakFromBackend(result.instruction, TtsPriority.HIGH);
+          // Guardar en historial local
+          saveToHistory({
+            mode: 'navegacion',
+            resultSummary: result.instruction,
+            resultData: result as unknown as Record<string, unknown>,
+          });
           break;
         }
         case 'exploracion': {
           const result = await analyzeExploration(imageUri);
           setExplorationResult(result);
           ttsManager.speakFromBackend(result.description, TtsPriority.HIGH);
+          saveToHistory({
+            mode: 'exploracion',
+            resultSummary: result.description?.substring(0, 200) || '',
+            resultData: result as unknown as Record<string, unknown>,
+          });
           break;
         }
         case 'lectura': {
-          const result = await analyzeReading(imageUri);
-          setOcrResult(result);
-          const text = result.has_text ? `Texto detectado: ${result.text}` : 'No se detectó texto en la imagen.';
-          ttsManager.speakFromBackend(text, TtsPriority.HIGH);
+          const result = await analyzeReading(imageUri, readingMode);
+          setSmartResult(result);
+          ttsManager.speakFromBackend(result.narrative, TtsPriority.HIGH);
+          saveToHistory({
+            mode: 'lectura',
+            readingMode,
+            resultSummary: result.narrative?.substring(0, 200) || '',
+            resultData: result as unknown as Record<string, unknown>,
+          });
           break;
         }
         case 'riesgo': {
@@ -213,6 +243,11 @@ export function HomeScreen() {
           setRiskResult(result);
           const text = result.has_danger ? result.alert_text : 'Sin peligros detectados.';
           ttsManager.speakFromBackend(text, TtsPriority.HIGH);
+          saveToHistory({
+            mode: 'riesgo',
+            resultSummary: text,
+            resultData: result as unknown as Record<string, unknown>,
+          });
           break;
         }
       }
@@ -235,7 +270,7 @@ export function HomeScreen() {
     setCapturedImage(null);
     setNavResult(null);
     setExplorationResult(null);
-    setOcrResult(null);
+    setSmartResult(null);
     setRiskResult(null);
     setError(null);
   };
@@ -252,7 +287,7 @@ export function HomeScreen() {
     try {
       if (navResult) ttsManager.speakFromBackend(navResult.instruction, TtsPriority.HIGH);
       else if (explorationResult) ttsManager.speakFromBackend(explorationResult.description, TtsPriority.HIGH);
-      else if (ocrResult?.has_text) ttsManager.speakFromBackend(ocrResult.text, TtsPriority.HIGH);
+      else if (smartResult) ttsManager.speakFromBackend(smartResult.narrative, TtsPriority.HIGH);
       else if (riskResult) {
         const text = riskResult.has_danger ? riskResult.alert_text : 'Sin peligros.';
         ttsManager.speakFromBackend(text, TtsPriority.HIGH);
@@ -273,6 +308,7 @@ export function HomeScreen() {
       case 'processing': return renderProcessing();
       case 'results': return renderResults();
       case 'error': return renderError();
+      case 'history': return renderHistory();
       default: return renderHome();
     }
   };
@@ -346,6 +382,49 @@ export function HomeScreen() {
         </View>
       </View>
 
+      {/* Sub-selector de modo lectura (solo visible cuando lectura está seleccionada) */}
+      {analysisMode === 'lectura' && (
+        <View style={styles.readingModeSelector}>
+          <Text style={styles.readingModeLabel}>Tipo de lectura:</Text>
+          <View style={styles.readingModeButtons}>
+            {([
+              { key: 'resumen' as ReadingMode, label: 'Resumen', icon: 'flash' },
+              { key: 'detallado' as ReadingMode, label: 'Detallado', icon: 'list' },
+              { key: 'financiero' as ReadingMode, label: 'Financiero', icon: 'cash' },
+            ]).map((mode) => (
+              <TouchableOpacity
+                key={mode.key}
+                style={[
+                  styles.readingModeButton,
+                  readingMode === mode.key && styles.readingModeButtonActive,
+                ]}
+                onPress={() => {
+                  setReadingMode(mode.key);
+                  ttsManager.speak(`Lectura ${mode.label}.`, TtsPriority.LOW);
+                }}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: readingMode === mode.key }}
+                accessibilityLabel={`Lectura modo ${mode.label}`}
+              >
+                <Ionicons
+                  name={mode.icon as any}
+                  size={16}
+                  color={readingMode === mode.key ? COLORS.background : COLORS.primary}
+                />
+                <Text
+                  style={[
+                    styles.readingModeButtonText,
+                    readingMode === mode.key && styles.readingModeButtonTextActive,
+                  ]}
+                >
+                  {mode.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      )}
+
       {/* Botones principales */}
       <View style={styles.mainButtons}>
         <Button
@@ -400,8 +479,137 @@ export function HomeScreen() {
           {ttsEnabled ? 'Voz activada' : 'Voz desactivada'}
         </Text>
       </TouchableOpacity>
+
+      {/* Botón Historial */}
+      <TouchableOpacity
+        style={styles.historyButton}
+        onPress={handleOpenHistory}
+        accessibilityLabel="Ver historial de análisis"
+        accessibilityRole="button"
+      >
+        <Ionicons name="time" size={20} color={COLORS.primary} />
+        <Text style={styles.historyButtonText}>Ver Historial</Text>
+      </TouchableOpacity>
     </View>
   );
+
+  // Abrir historial
+  const handleOpenHistory = async () => {
+    ttsManager.speak('Abriendo historial.', TtsPriority.LOW);
+    const items = await getHistory(20);
+    setHistoryItems(items);
+    setAppState('history');
+  };
+
+  // Limpiar historial
+  const handleClearHistory = async () => {
+    await clearHistory();
+    setHistoryItems([]);
+    ttsManager.speak('Historial borrado.', TtsPriority.LOW);
+  };
+
+  // Pantalla de Historial
+  const renderHistory = () => {
+    const modeLabels: Record<string, string> = {
+      navegacion: 'Navegación',
+      exploracion: 'Exploración',
+      lectura: 'Lectura',
+      riesgo: 'Riesgo',
+    };
+
+    const modeIcons: Record<string, string> = {
+      navegacion: 'compass',
+      exploracion: 'eye',
+      lectura: 'document-text',
+      riesgo: 'warning',
+    };
+
+    return (
+      <View style={styles.resultsContainer}>
+        <ScrollView contentContainerStyle={styles.resultsContent}>
+          {/* Header */}
+          <View style={styles.historyHeader}>
+            <Text style={styles.resultTitle}>Historial de Análisis</Text>
+            <Text style={styles.historySubtitle}>
+              {historyItems.length} registro{historyItems.length !== 1 ? 's' : ''}
+            </Text>
+          </View>
+
+          {/* Lista vacía */}
+          {historyItems.length === 0 && (
+            <View style={styles.historyEmpty}>
+              <Ionicons name="time-outline" size={48} color={COLORS.textSecondary} />
+              <Text style={styles.historyEmptyText}>
+                Aún no hay análisis en tu historial.
+              </Text>
+              <Text style={styles.historyEmptyHint}>
+                Usa cualquier modo para empezar.
+              </Text>
+            </View>
+          )}
+
+          {/* Lista de items */}
+          {historyItems.map((item) => {
+            const date = new Date(item.createdAt);
+            const timeStr = date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+            const dateStr = date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+
+            return (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.historyItem}
+                onPress={() => {
+                  ttsManager.speakFromBackend(item.resultSummary, TtsPriority.HIGH);
+                }}
+                accessibilityLabel={`${modeLabels[item.mode] || item.mode}. ${item.resultSummary}`}
+              >
+                <View style={styles.historyItemIcon}>
+                  <Ionicons
+                    name={(modeIcons[item.mode] || 'help-circle') as any}
+                    size={20}
+                    color={COLORS.primary}
+                  />
+                </View>
+                <View style={styles.historyItemContent}>
+                  <View style={styles.historyItemHeader}>
+                    <Text style={styles.historyItemMode}>
+                      {modeLabels[item.mode] || item.mode}
+                      {item.readingMode ? ` · ${item.readingMode}` : ''}
+                    </Text>
+                    <Text style={styles.historyItemDate}>{dateStr} {timeStr}</Text>
+                  </View>
+                  <Text style={styles.historyItemSummary} numberOfLines={2}>
+                    {item.resultSummary || 'Sin resumen disponible'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+
+          {/* Botones */}
+          <View style={styles.resultActions}>
+            {historyItems.length > 0 && (
+              <Button
+                title="Borrar Historial"
+                onPress={handleClearHistory}
+                variant="outline"
+                size="large"
+                icon={<Ionicons name="trash" size={20} color={COLORS.error} />}
+                style={styles.resultActionButton}
+              />
+            )}
+            <Button
+              title="Volver"
+              onPress={handleReset}
+              size="large"
+              icon={<Ionicons name="arrow-back" size={20} color={COLORS.background} />}
+              style={styles.resultActionButton}
+            />
+          </View>
+        </ScrollView>
+      </View>
+    );
+  };
 
   // Vista de tiempo real (Navegación y Riesgo)
   const renderRealtime = () => {
@@ -652,20 +860,44 @@ export function HomeScreen() {
           </View>
         )}
 
-        {/* Resultado de Lectura */}
-        {ocrResult && (
+        {/* Resultado de Lectura Inteligente */}
+        {smartResult && (
           <View>
-            {ocrResult.has_text ? (
-              <>
-                <Text style={styles.resultDescription}>{ocrResult.text}</Text>
-                <Text style={styles.confidence}>
-                  {ocrResult.word_count} palabras
-                  {ocrResult.confidence ? ` • ${ocrResult.confidence.toFixed(0)}% confianza` : ''}
+            {/* Badge de tipo de documento */}
+            <View style={[styles.statusBadge, { backgroundColor: COLORS.primary + '20' }]}>
+              <Ionicons name="document-text" size={16} color={COLORS.primary} />
+              <Text style={[styles.statusBadgeText, { color: COLORS.primary }]}>
+                {smartResult.document_type_label}
+              </Text>
+            </View>
+
+            {/* Narrativa principal */}
+            <Text style={styles.resultDescription}>{smartResult.narrative}</Text>
+
+            {/* Totales destacados (si hay) */}
+            {smartResult.extracted_fields.totals.length > 0 && (
+              <View style={styles.totalsHighlight}>
+                <Ionicons name="cash" size={16} color={COLORS.warning} />
+                <Text style={styles.totalsText}>
+                  {smartResult.extracted_fields.totals.join(' | ')}
                 </Text>
-              </>
-            ) : (
-              <Text style={styles.noResult}>No se detectó texto en la imagen.</Text>
+              </View>
             )}
+
+            {/* Caption visual (para imágenes con poco texto) */}
+            {smartResult.visual_caption && (
+              <View style={styles.textBox}>
+                <Text style={styles.textBoxLabel}>Descripción visual:</Text>
+                <Text style={styles.textBoxContent}>{smartResult.visual_caption}</Text>
+              </View>
+            )}
+
+            {/* Stats */}
+            <Text style={styles.confidence}>
+              {smartResult.word_count} palabras
+              {smartResult.ocr_confidence ? ` • ${smartResult.ocr_confidence.toFixed(0)}% confianza` : ''}
+              {` • ${smartResult.reading_mode}`}
+            </Text>
           </View>
         )}
 
@@ -856,6 +1088,42 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   modeButtonTextActive: {
+    color: COLORS.background,
+  },
+  readingModeSelector: {
+    marginBottom: 16,
+  },
+  readingModeLabel: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  readingModeButtons: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  readingModeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    gap: 4,
+  },
+  readingModeButtonActive: {
+    backgroundColor: COLORS.primary,
+  },
+  readingModeButtonText: {
+    color: COLORS.primary,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  readingModeButtonTextActive: {
     color: COLORS.background,
   },
   mainButtons: {
@@ -1131,6 +1399,21 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 12,
   },
+  totalsHighlight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.warning + '15',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12,
+    gap: 8,
+  },
+  totalsText: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.warning,
+  },
   confidence: {
     fontSize: 14,
     color: COLORS.textSecondary,
@@ -1170,6 +1453,82 @@ const styles = StyleSheet.create({
   resultActionButton: {
     flex: 1,
     minHeight: 52,
+  },
+  // Historial
+  historyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    marginTop: 8,
+  },
+  historyButtonText: {
+    fontSize: 15,
+    color: COLORS.primary,
+  },
+  historyHeader: {
+    marginBottom: 16,
+  },
+  historySubtitle: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    marginTop: 4,
+  },
+  historyEmpty: {
+    alignItems: 'center',
+    paddingVertical: 48,
+    gap: 12,
+  },
+  historyEmptyText: {
+    fontSize: 16,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+  },
+  historyEmptyHint: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  historyItem: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.surface,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    gap: 12,
+  },
+  historyItemIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary + '15',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  historyItemContent: {
+    flex: 1,
+  },
+  historyItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  historyItemMode: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
+  historyItemDate: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+  },
+  historyItemSummary: {
+    fontSize: 14,
+    color: COLORS.text,
+    lineHeight: 20,
   },
   // Error
   errorContainer: {

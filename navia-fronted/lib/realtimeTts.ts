@@ -65,6 +65,7 @@ export class RealtimeTtsManager {
 
     this.lastSummary = summary
     this.lastSpeakTime = Date.now()
+    // speak() usa Piper TTS (voz natural) por defecto con fallback a Web Speech
     ttsManager.speak(summary, TtsPriority.LOW)
   }
 

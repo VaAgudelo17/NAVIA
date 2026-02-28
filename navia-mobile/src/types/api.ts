@@ -131,6 +131,50 @@ export interface RiskResponse {
   dangers: RiskAlert[];
 }
 
+// ============================================================================
+// LECTURA INTELIGENTE
+// ============================================================================
+
+// Modos de lectura inteligente
+export type ReadingMode = 'resumen' | 'detallado' | 'financiero';
+
+// Tipos de documento reconocidos
+export type DocumentType =
+  | 'factura'
+  | 'recibo'
+  | 'carta'
+  | 'formulario'
+  | 'documento_informativo'
+  | 'imagen_visual'
+  | 'desconocido';
+
+// Campos extraídos del documento
+export interface ExtractedFields {
+  dates: string[];
+  amounts: string[];
+  emails: string[];
+  phones: string[];
+  ids: string[];
+  headers: string[];
+  totals: string[];
+}
+
+// Respuesta de lectura inteligente
+export interface SmartReadingResponse {
+  success: boolean;
+  message: string;
+  narrative: string;
+  document_type: DocumentType;
+  document_type_label: string;
+  reading_mode: ReadingMode;
+  raw_text: string;
+  has_text: boolean;
+  ocr_confidence: number | null;
+  word_count: number;
+  extracted_fields: ExtractedFields;
+  visual_caption: string | null;
+}
+
 // Error de la API
 export interface APIError {
   success: false;

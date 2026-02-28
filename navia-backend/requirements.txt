@@ -66,3 +66,15 @@ python-dotenv>=1.0.1
 
 # aiofiles: Manejo asíncrono de archivos.
 aiofiles>=24.1.0
+
+# --- BASE DE DATOS ---
+# SQLAlchemy: ORM para modelado y consultas a la base de datos.
+# Incluye soporte async para integración con FastAPI.
+sqlalchemy[asyncio]>=2.0.0
+
+# aiosqlite: Driver async para SQLite (desarrollo).
+# En producción se puede cambiar por asyncpg (PostgreSQL).
+aiosqlite>=0.20.0
+
+# Alembic: Herramienta de migraciones para SQLAlchemy.
+alembic>=1.13.0

@@ -84,6 +84,46 @@ export interface APIError {
 }
 
 // ============================================================================
+// LECTURA INTELIGENTE
+// ============================================================================
+
+export type ReadingMode = 'resumen' | 'detallado' | 'financiero'
+
+export type DocumentType =
+  | 'factura'
+  | 'recibo'
+  | 'carta'
+  | 'formulario'
+  | 'documento_informativo'
+  | 'imagen_visual'
+  | 'desconocido'
+
+export interface ExtractedFields {
+  dates: string[]
+  amounts: string[]
+  emails: string[]
+  phones: string[]
+  ids: string[]
+  headers: string[]
+  totals: string[]
+}
+
+export interface SmartReadingResponse {
+  success: boolean
+  message: string
+  narrative: string
+  document_type: DocumentType
+  document_type_label: string
+  reading_mode: ReadingMode
+  raw_text: string
+  has_text: boolean
+  ocr_confidence: number | null
+  word_count: number
+  extracted_fields: ExtractedFields
+  visual_caption: string | null
+}
+
+// ============================================================================
 // NUEVOS MODOS
 // ============================================================================
 
@@ -314,9 +354,9 @@ export async function analyzeExploration(imageFile: File): Promise<ExplorationRe
   return postImage<ExplorationResponse>('/api/v1/analyze/exploracion', imageFile, 'Error en exploración')
 }
 
-/** Modo Lectura: OCR puro */
-export async function analyzeReading(imageFile: File): Promise<OCRResponse> {
-  return postImage<OCRResponse>('/api/v1/analyze/lectura', imageFile, 'Error en lectura')
+/** Modo Lectura Inteligente: OCR + clasificación + narrativa */
+export async function analyzeReading(imageFile: File, readingMode: ReadingMode = 'detallado'): Promise<SmartReadingResponse> {
+  return postImage<SmartReadingResponse>(`/api/v1/analyze/lectura?reading_mode=${readingMode}`, imageFile, 'Error en lectura')
 }
 
 /** Modo Riesgo: detección de peligros */
@@ -327,6 +367,89 @@ export async function analyzeRisk(imageFile: File): Promise<RiskResponse> {
 // ============================================================================
 // UTILIDADES
 // ============================================================================
+
+// ============================================================================
+// HISTORIAL Y PREFERENCIAS
+// ============================================================================
+
+export interface HistoryItem {
+  id: string
+  mode: string
+  reading_mode?: string
+  result_summary: string
+  result_data: Record<string, unknown>
+  image_filename?: string
+  processing_time_ms?: number
+  object_count?: number
+  has_text?: boolean
+  has_danger?: boolean
+  created_at: string
+}
+
+export interface HistoryListResponse {
+  success: boolean
+  message: string
+  items: HistoryItem[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface PreferencesResponse {
+  success: boolean
+  message: string
+  preferences: Record<string, string>
+}
+
+/**
+ * Obtiene el historial de analisis del backend
+ */
+export async function getHistory(mode?: string, page: number = 1, pageSize: number = 20): Promise<HistoryListResponse> {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+  if (mode) params.set('mode', mode)
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/history?${params}`)
+  if (!response.ok) throw new Error('Error obteniendo historial')
+  return response.json()
+}
+
+/**
+ * Elimina un registro del historial
+ */
+export async function deleteHistoryItem(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/history/${id}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error('Error eliminando registro')
+}
+
+/**
+ * Limpia todo el historial
+ */
+export async function clearHistory(): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/history`, { method: 'DELETE' })
+  if (!response.ok) throw new Error('Error limpiando historial')
+}
+
+/**
+ * Obtiene las preferencias del backend
+ */
+export async function getPreferences(): Promise<PreferencesResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/preferences`)
+  if (!response.ok) throw new Error('Error obteniendo preferencias')
+  return response.json()
+}
+
+/**
+ * Actualiza preferencias en el backend
+ */
+export async function updatePreferences(prefs: Record<string, string>): Promise<PreferencesResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/preferences`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ preferences: prefs }),
+  })
+  if (!response.ok) throw new Error('Error actualizando preferencias')
+  return response.json()
+}
 
 /**
  * Convierte un Blob de imagen a File

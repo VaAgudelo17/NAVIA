@@ -1,9 +1,14 @@
+"use client"
+
 import { NaviaApp } from "@/components/navia/navia-app"
+import { PreferencesProvider } from "@/context/PreferencesContext"
 
 export default function Page() {
   return (
-    <main>
-      <NaviaApp />
-    </main>
+    <PreferencesProvider>
+      <main>
+        <NaviaApp />
+      </main>
+    </PreferencesProvider>
   )
 }

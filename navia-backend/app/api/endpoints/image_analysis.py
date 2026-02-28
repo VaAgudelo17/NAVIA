@@ -16,9 +16,10 @@ procesadas por la aplicación móvil cliente.
 ============================================================================
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, status
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query, status, BackgroundTasks
 from fastapi.responses import JSONResponse
 import numpy as np
+import time
 import logging
 
 from app.models.schemas import (
@@ -29,6 +30,7 @@ from app.models.schemas import (
     NavigationResponse,
     ExplorationResponse,
     RiskResponse,
+    SmartReadingResponse,
     ErrorResponse,
     DetectedObject
 )
@@ -43,6 +45,8 @@ from app.services.object_detection_service import get_object_detection_service
 from app.services.scene_description_service import get_scene_description_service
 from app.services.navigation_service import get_navigation_service
 from app.services.risk_service import get_risk_service
+from app.services.smart_reading_service import get_smart_reading_service
+from app.services.history_service import save_to_history
 
 # Configurar logging
 logger = logging.getLogger(__name__)
@@ -432,10 +436,13 @@ async def quick_analysis(
     """
 )
 async def analyze_navigation(
-    image: UploadFile = File(..., description="Imagen para navegación")
+    image: UploadFile = File(..., description="Imagen para navegación"),
+    background_tasks: BackgroundTasks = None,
 ) -> NavigationResponse:
     """Modo Navegación: detección de obstáculos + instrucciones espaciales."""
     try:
+        start_time = time.time()
+
         await validate_image(image)
         await image.seek(0)
 
@@ -461,7 +468,9 @@ async def analyze_navigation(
             result["objects"], w, h
         )
 
-        return NavigationResponse(
+        processing_time = (time.time() - start_time) * 1000
+
+        response = NavigationResponse(
             success=True,
             message="Navegación analizada",
             instruction=nav_result["instruction"],
@@ -469,6 +478,19 @@ async def analyze_navigation(
             path_clear=nav_result["path_clear"],
             object_count=result["object_count"],
         )
+
+        # Guardar en historial (background, no bloquea la respuesta)
+        if background_tasks:
+            background_tasks.add_task(
+                save_to_history,
+                mode="navegacion",
+                result_data=response.model_dump(),
+                result_summary=nav_result["instruction"][:200],
+                processing_time_ms=processing_time,
+                object_count=result["object_count"],
+            )
+
+        return response
 
     except HTTPException:
         raise
@@ -487,10 +509,13 @@ async def analyze_navigation(
     """
 )
 async def analyze_exploration(
-    image: UploadFile = File(..., description="Imagen para exploración")
+    image: UploadFile = File(..., description="Imagen para exploración"),
+    background_tasks: BackgroundTasks = None,
 ) -> ExplorationResponse:
     """Modo Exploración: descripción estructurada del entorno."""
     try:
+        start_time = time.time()
+
         await validate_image(image)
         await image.seek(0)
 
@@ -499,7 +524,23 @@ async def analyze_exploration(
         cv2_image = resize_image_if_needed(cv2_image)
 
         scene_service = get_scene_description_service()
-        return scene_service.describe_exploration(cv2_image)
+        response = scene_service.describe_exploration(cv2_image)
+
+        processing_time = (time.time() - start_time) * 1000
+
+        # Guardar en historial
+        if background_tasks:
+            background_tasks.add_task(
+                save_to_history,
+                mode="exploracion",
+                result_data=response.model_dump() if hasattr(response, 'model_dump') else response,
+                result_summary=response.description[:200] if hasattr(response, 'description') else "",
+                processing_time_ms=processing_time,
+                object_count=response.object_count if hasattr(response, 'object_count') else 0,
+                has_text=response.has_text if hasattr(response, 'has_text') else False,
+            )
+
+        return response
 
     except HTTPException:
         raise
@@ -510,17 +551,84 @@ async def analyze_exploration(
 
 @router.post(
     "/lectura",
-    response_model=OCRResponse,
-    summary="Modo Lectura - extracción de texto",
+    response_model=SmartReadingResponse,
+    summary="Modo Lectura Inteligente",
     description="""
-    OCR puro para leer documentos, etiquetas y señales.
+    Lectura inteligente de documentos. Identifica el tipo de documento,
+    extrae campos estructurados y genera una narrativa natural para TTS.
+
+    **Modos de lectura:**
+    - `resumen`: 1-2 oraciones con lo esencial
+    - `detallado`: Narrativa completa con todos los campos
+    - `financiero`: Prioriza montos y fechas
+
+    **Tipos detectados:** factura, recibo, carta, formulario, documento informativo, imagen visual
     """
 )
 async def analyze_reading(
-    image: UploadFile = File(..., description="Imagen con texto a leer")
-) -> OCRResponse:
-    """Modo Lectura: OCR puro."""
-    return await extract_text(image)
+    image: UploadFile = File(..., description="Imagen con texto a leer"),
+    reading_mode: str = Query(
+        default="detallado",
+        description="Modo de lectura: resumen, detallado, financiero"
+    ),
+    background_tasks: BackgroundTasks = None,
+) -> SmartReadingResponse:
+    """Modo Lectura Inteligente: OCR + clasificación + narrativa."""
+    try:
+        start_time = time.time()
+
+        await validate_image(image)
+        await image.seek(0)
+
+        content = await image.read()
+        cv2_image = bytes_to_cv2_image(content)
+        cv2_image = resize_image_if_needed(cv2_image)
+
+        # Validar modo de lectura
+        valid_modes = ("resumen", "detallado", "financiero")
+        if reading_mode not in valid_modes:
+            reading_mode = "detallado"
+
+        # Ejecutar lectura inteligente
+        smart_service = get_smart_reading_service()
+        result = smart_service.analyze(cv2_image, reading_mode=reading_mode)
+
+        processing_time = (time.time() - start_time) * 1000
+
+        response = SmartReadingResponse(
+            success=True,
+            message="Lectura inteligente completada",
+            narrative=result["narrative"],
+            document_type=result["document_type"],
+            document_type_label=result["document_type_label"],
+            reading_mode=result["reading_mode"],
+            raw_text=result["raw_text"],
+            has_text=result["has_text"],
+            ocr_confidence=result["ocr_confidence"],
+            word_count=result["word_count"],
+            extracted_fields=result["extracted_fields"],
+            visual_caption=result.get("visual_caption"),
+        )
+
+        # Guardar en historial
+        if background_tasks:
+            background_tasks.add_task(
+                save_to_history,
+                mode="lectura",
+                result_data=response.model_dump(),
+                result_summary=result["narrative"][:200],
+                reading_mode=reading_mode,
+                processing_time_ms=processing_time,
+                has_text=result["has_text"],
+            )
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en lectura inteligente: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post(
@@ -533,10 +641,13 @@ async def analyze_reading(
     """
 )
 async def analyze_risk(
-    image: UploadFile = File(..., description="Imagen para evaluar riesgo")
+    image: UploadFile = File(..., description="Imagen para evaluar riesgo"),
+    background_tasks: BackgroundTasks = None,
 ) -> RiskResponse:
     """Modo Riesgo: clasificación de peligros y alertas."""
     try:
+        start_time = time.time()
+
         await validate_image(image)
         await image.seek(0)
 
@@ -559,7 +670,9 @@ async def analyze_risk(
         risk_service = get_risk_service()
         risk_result = risk_service.evaluate_risk(result["objects"], w)
 
-        return RiskResponse(
+        processing_time = (time.time() - start_time) * 1000
+
+        response = RiskResponse(
             success=True,
             message="Riesgo evaluado",
             has_danger=risk_result["has_danger"],
@@ -567,6 +680,19 @@ async def analyze_risk(
             alert_text=risk_result["alert_text"],
             dangers=risk_result["dangers"],
         )
+
+        # Guardar en historial
+        if background_tasks:
+            background_tasks.add_task(
+                save_to_history,
+                mode="riesgo",
+                result_data=response.model_dump(),
+                result_summary=risk_result["alert_text"][:200],
+                processing_time_ms=processing_time,
+                has_danger=risk_result["has_danger"],
+            )
+
+        return response
 
     except HTTPException:
         raise

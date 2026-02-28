@@ -5,8 +5,9 @@
  * Singleton que gestiona TODA la síntesis de voz en la app web.
  * Previene cancelaciones con una cola de prioridades.
  *
- * Tier 1: Web Speech API (instantáneo, para feedback de UI)
- * Tier 2: Piper TTS en backend (voz VITS natural, para textos largos)
+ * Por defecto usa Piper TTS (voz natural VITS) para TODO el audio.
+ * Cae a Web Speech API si el backend no responde.
+ * Excepción: INTERRUPT siempre usa Web Speech API (latencia cero).
  *
  * Prioridades:
  * - INTERRUPT (0): Alertas de peligro, errores críticos
@@ -37,20 +38,25 @@ class TtsManager {
   private currentAudio: HTMLAudioElement | null = null
 
   /**
-   * Habla texto usando Web Speech API (instantáneo, para feedback de UI).
+   * Habla texto usando Piper TTS del backend por defecto (voz natural).
+   * Si el backend falla, cae a Web Speech API automáticamente.
+   * INTERRUPT siempre usa Web Speech API para respuesta instantánea.
    */
   speak(text: string, priority: TtsPriority = TtsPriority.HIGH): void {
     if (!this.enabled || !text) return
 
+    // INTERRUPT: siempre local (Web Speech) para latencia cero
+    const useBackend = priority !== TtsPriority.INTERRUPT
+
     if (priority === TtsPriority.INTERRUPT) {
       this.clearQueueAndStop()
-      this.enqueue({ text, priority, useBackend: false })
+      this.enqueue({ text, priority, useBackend })
     } else if (priority === TtsPriority.LOW) {
       // LOW se descarta si algo está sonando o hay cola
       if (this.isPlaying || this.queue.length > 0) return
-      this.enqueue({ text, priority, useBackend: false })
+      this.enqueue({ text, priority, useBackend })
     } else {
-      this.enqueue({ text, priority, useBackend: false })
+      this.enqueue({ text, priority, useBackend })
     }
   }
 

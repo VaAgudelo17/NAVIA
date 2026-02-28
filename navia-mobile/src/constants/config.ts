@@ -5,7 +5,7 @@
 // URL del backend - cambiar según el entorno
 // Para desarrollo local: usar la IP de tu computadora
 // Para producción: usar la URL del servidor
-export const API_BASE_URL = 'http://192.168.1.21:8000';
+export const API_BASE_URL = 'http://192.168.1.16:8000';
 
 // Endpoints de la API
 export const API_ENDPOINTS = {
@@ -16,6 +16,9 @@ export const API_ENDPOINTS = {
   EXPLORACION: '/api/v1/analyze/exploracion',
   LECTURA: '/api/v1/analyze/lectura',
   RIESGO: '/api/v1/analyze/riesgo',
+  // Historial y preferencias
+  HISTORY: '/api/v1/history',
+  PREFERENCES: '/api/v1/preferences',
   // Legacy (compatibilidad)
   OCR: '/api/v1/analyze/ocr',
   OBJECTS: '/api/v1/analyze/objects',

@@ -5,13 +5,14 @@
  * Resuelve los problemas de voces que se cancelan entre sí
  * usando una cola con prioridades.
  *
- * Tier 1: expo-speech (instantáneo) → feedback de UI
- * Tier 2: Piper TTS en backend (voz VITS) → descripciones largas
+ * Por defecto usa Piper TTS (voz natural VITS) para TODO el audio.
+ * Cae a expo-speech si el backend no responde.
+ * Excepción: INTERRUPT siempre usa expo-speech (latencia cero).
  */
 
 import * as Speech from 'expo-speech';
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
+import { File as ExpoFile, Paths } from 'expo-file-system';
 import { TTS_CONFIG, API_BASE_URL, API_ENDPOINTS } from '../constants/config';
 
 // ============================================================================
@@ -63,11 +64,14 @@ class TtsManager {
   // ==========================================================================
 
   /**
-   * Habla con expo-speech (instantáneo). Para feedback de UI y textos cortos.
+   * Habla usando Piper TTS del backend por defecto (voz natural).
+   * Cae a expo-speech automáticamente si el backend no responde.
+   * INTERRUPT siempre usa expo-speech para respuesta instantánea.
    */
   speak(text: string, priority: TtsPriority = TtsPriority.HIGH): void {
     if (!this.enabled || !text?.trim()) return;
-    this.enqueue(text.trim(), priority, false);
+    // INTERRUPT se fuerza a local en enqueue(), aquí marcamos backend para el resto
+    this.enqueue(text.trim(), priority, true);
   }
 
   /**
@@ -212,11 +216,14 @@ class TtsManager {
   // ==========================================================================
 
   private async playBackendTts(text: string): Promise<void> {
-    // Timeout de 8 segundos para el fetch
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const fileName = `navia_tts_${Date.now()}.wav`;
+    let tempFile: InstanceType<typeof ExpoFile> | null = null;
 
     try {
+      // 1. Fetch del audio WAV desde el backend (POST con JSON body)
+      const controller = new AbortController();
+      const fetchTimeout = setTimeout(() => controller.abort(), 8000);
+
       const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.TTS}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -224,39 +231,29 @@ class TtsManager {
         signal: controller.signal,
       });
 
-      clearTimeout(timeout);
+      clearTimeout(fetchTimeout);
 
       if (!response.ok) {
         throw new Error(`TTS backend error: ${response.status}`);
       }
 
-      // Leer el audio como base64
-      const blob = await response.blob();
-      const reader = new FileReader();
+      // 2. Leer respuesta como ArrayBuffer y escribir a disco con la nueva File API
+      const arrayBuffer = await response.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
 
-      const base64Data = await new Promise<string>((resolve, reject) => {
-        reader.onloadend = () => {
-          const result = reader.result as string;
-          // Extraer solo la parte base64 del data URI
-          const base64 = result.split(',')[1];
-          resolve(base64);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
+      if (bytes.length < 100) {
+        throw new Error('TTS response too small, likely empty');
+      }
 
-      // Guardar a archivo temporal
-      const tempPath = `${FileSystem.cacheDirectory}navia_tts_${Date.now()}.wav`;
-      await FileSystem.writeAsStringAsync(tempPath, base64Data, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      tempFile = new ExpoFile(Paths.cache, fileName);
+      tempFile.create({ overwrite: true });
+      tempFile.write(bytes);
 
-      // Reproducir con expo-av
-      const { sound } = await Audio.Sound.createAsync({ uri: tempPath });
+      // 3. Reproducir con expo-av
+      const { sound } = await Audio.Sound.createAsync({ uri: tempFile.uri });
       this.currentSound = sound;
 
       await new Promise<void>((resolve, reject) => {
-        // Safety timeout para audio largo (max 60s)
         const safetyTimeout = setTimeout(() => {
           console.warn('[TTS] Safety timeout en audio backend');
           resolve();
@@ -274,14 +271,14 @@ class TtsManager {
         });
       });
 
-      // Limpiar
+      // 4. Limpiar
       await sound.unloadAsync().catch(() => {});
       this.currentSound = null;
 
-      // Borrar archivo temporal
-      FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
+      try { tempFile.delete(); } catch {}
     } catch (error) {
-      clearTimeout(timeout);
+      // Limpiar archivo temporal si existe
+      try { if (tempFile?.exists) tempFile.delete(); } catch {}
       throw error; // El caller hará fallback a expo-speech
     }
   }

@@ -70,6 +70,7 @@ export class RealtimeTtsManager {
     this.lastSummary = summary;
     this.lastSpeakTime = now;
     // Prioridad LOW: no interrumpe resultados de análisis en curso
+    // speak() usa Piper TTS (voz natural) por defecto con fallback a expo-speech
     ttsManager.speak(summary, TtsPriority.LOW);
   }
 
