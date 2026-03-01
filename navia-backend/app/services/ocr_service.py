@@ -183,21 +183,28 @@ class OCRService:
             }
 
     def _is_better(self, candidate: Dict, current_best: Dict) -> bool:
-        """Compara dos resultados OCR y decide si el candidato es mejor."""
+        """
+        Compara dos resultados OCR y decide si el candidato es mejor.
+        Prioriza CONFIANZA sobre cantidad de palabras para evitar basura.
+        """
         c_wc = candidate.get("word_count", 0)
         b_wc = current_best.get("word_count", 0)
         c_conf = candidate.get("confidence", 0)
         b_conf = current_best.get("confidence", 0)
 
-        # Más palabras siempre gana (salvo que sea basura de baja confianza)
-        if c_wc > b_wc and c_conf > 15:
+        # Calcular un score combinado: confianza pesa más que cantidad
+        # Esto evita que 262 palabras al 55% gane sobre 100 palabras al 85%
+        c_score = c_wc * (c_conf / 100.0) ** 2
+        b_score = b_wc * (b_conf / 100.0) ** 2
+
+        # El candidato necesita un score claramente mejor
+        if c_score > b_score * 1.1 and c_conf > 30:
             return True
-        # Mismas palabras, mayor confianza gana
+
+        # Si misma cantidad, mayor confianza gana
         if c_wc == b_wc and c_conf > b_conf:
             return True
-        # Muchas más palabras con confianza razonable
-        if c_wc > b_wc * 1.5 and c_conf > 10:
-            return True
+
         return False
 
     def _process_ocr_results(self, data: Dict) -> Dict:
@@ -224,11 +231,24 @@ class OCRService:
             text = data['text'][i].strip()
             conf = int(data['conf'][i])
 
-            # Solo incluir texto con confianza > 0
-            # -1 significa que no hay texto en esa región
-            if conf > 0 and text:
-                words.append(text)
-                confidences.append(conf)
+            # Filtrar basura de Tesseract:
+            # - confianza mínima 30% (< 30% es casi siempre basura de iconos/UI)
+            # - ignorar "palabras" de 1 caracter suelto (excepto números y letras comunes)
+            # - ignorar secuencias de solo símbolos/puntuación
+            if conf < 30 or not text:
+                continue
+
+            # Permitir palabras de 1 char solo si son significativas
+            if len(text) == 1 and text not in 'aAeEiIoOuUyY0123456789':
+                continue
+
+            # Ignorar texto que es solo puntuación/símbolos
+            import re
+            if re.match(r'^[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑüÜ]+$', text):
+                continue
+
+            words.append(text)
+            confidences.append(conf)
 
         # Construir texto completo
         full_text = ' '.join(words)

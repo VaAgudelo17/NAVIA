@@ -59,6 +59,11 @@ timm>=0.9.0
 # Genera audio WAV en español para la app móvil.
 piper-tts>=1.2.0
 
+# --- GEMINI (GOOGLE AI) ---
+# Google Generative AI SDK: OCR avanzado con Gemini Vision
+# Gemini Flash: gratis, rapido, excelente para documentos
+google-genai>=1.0.0
+
 # --- UTILIDADES ---
 # Pydantic: Validación de datos y configuración.
 pydantic>=2.9.0
