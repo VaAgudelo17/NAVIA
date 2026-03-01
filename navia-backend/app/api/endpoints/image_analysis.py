@@ -554,44 +554,40 @@ async def analyze_exploration(
     response_model=SmartReadingResponse,
     summary="Modo Lectura Inteligente",
     description="""
-    Lectura inteligente de documentos. Identifica el tipo de documento,
-    extrae campos estructurados y genera una narrativa natural para TTS.
-
-    **Modos de lectura:**
-    - `resumen`: 1-2 oraciones con lo esencial
-    - `detallado`: Narrativa completa con todos los campos
-    - `financiero`: Prioriza montos y fechas
-
-    **Tipos detectados:** factura, recibo, carta, formulario, documento informativo, imagen visual
+    Lectura inteligente de documentos e imágenes con texto.
+    Detecta automáticamente el tipo de documento y genera la narrativa óptima.
+    
+    **Formatos soportados:** JPEG, PNG, WebP, PDF (primera página)
+    
+    **Tipos detectados:** factura, recibo, carta, formulario, documento informativo, etiqueta, menú, tarjeta, imagen con texto, desconocido
     """
 )
 async def analyze_reading(
-    image: UploadFile = File(..., description="Imagen con texto a leer"),
-    reading_mode: str = Query(
-        default="detallado",
-        description="Modo de lectura: resumen, detallado, financiero"
-    ),
+    image: UploadFile = File(..., description="Imagen o PDF con texto a leer"),
     background_tasks: BackgroundTasks = None,
 ) -> SmartReadingResponse:
-    """Modo Lectura Inteligente: OCR + clasificación + narrativa."""
+    """Modo Lectura Inteligente: OCR + clasificación + narrativa automática."""
     try:
         start_time = time.time()
 
-        await validate_image(image)
-        await image.seek(0)
-
         content = await image.read()
-        cv2_image = bytes_to_cv2_image(content)
-        cv2_image = resize_image_if_needed(cv2_image)
+        
+        # Detectar tipo de archivo y procesar
+        if image.content_type == "application/pdf":
+            # Convertir PDF a imagen
+            from app.utils.pdf_utils import convert_pdf_first_page_to_image
+            cv2_image = convert_pdf_first_page_to_image(content)
+        else:
+            # Es imagen
+            await validate_image(image)
+            await image.seek(0)
+            cv2_image = bytes_to_cv2_image(content)
+        
+        # NO redimensionar aquí: el OCR service normaliza internamente
 
-        # Validar modo de lectura
-        valid_modes = ("resumen", "detallado", "financiero")
-        if reading_mode not in valid_modes:
-            reading_mode = "detallado"
-
-        # Ejecutar lectura inteligente
+        # Ejecutar lectura inteligente (modo automático basado en tipo de documento)
         smart_service = get_smart_reading_service()
-        result = smart_service.analyze(cv2_image, reading_mode=reading_mode)
+        result = smart_service.analyze(cv2_image)
 
         processing_time = (time.time() - start_time) * 1000
 
@@ -601,13 +597,14 @@ async def analyze_reading(
             narrative=result["narrative"],
             document_type=result["document_type"],
             document_type_label=result["document_type_label"],
-            reading_mode=result["reading_mode"],
+            reading_mode="auto",
             raw_text=result["raw_text"],
             has_text=result["has_text"],
             ocr_confidence=result["ocr_confidence"],
             word_count=result["word_count"],
             extracted_fields=result["extracted_fields"],
             visual_caption=result.get("visual_caption"),
+            image_quality=result.get("image_quality"),
         )
 
         # Guardar en historial
@@ -617,7 +614,7 @@ async def analyze_reading(
                 mode="lectura",
                 result_data=response.model_dump(),
                 result_summary=result["narrative"][:200],
-                reading_mode=reading_mode,
+                reading_mode="auto",
                 processing_time_ms=processing_time,
                 has_text=result["has_text"],
             )

@@ -91,13 +91,11 @@ export async function analyzeExploration(imageUri: string): Promise<ExplorationR
   return postImage<ExplorationResponse>(API_ENDPOINTS.EXPLORACION, imageUri, 'Error en exploración');
 }
 
-/** Modo Lectura Inteligente: OCR + clasificación + narrativa */
+/** Modo Lectura Inteligente: OCR + clasificación + narrativa automática */
 export async function analyzeReading(
   imageUri: string,
-  readingMode: ReadingMode = 'detallado',
 ): Promise<SmartReadingResponse> {
-  const endpoint = `${API_ENDPOINTS.LECTURA}?reading_mode=${readingMode}`;
-  return postImage<SmartReadingResponse>(endpoint, imageUri, 'Error en lectura');
+  return postImage<SmartReadingResponse>(API_ENDPOINTS.LECTURA, imageUri, 'Error en lectura');
 }
 
 /** Modo Riesgo: detección de peligros */

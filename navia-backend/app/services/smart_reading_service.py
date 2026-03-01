@@ -89,6 +89,48 @@ _CLASSIFICATION_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\bpublicado\b', re.IGNORECASE), 4),
         (re.compile(r'\boficial\b', re.IGNORECASE), 3),
     ],
+    # Etiquetas de productos (supermercado, medicamentos, etc.)
+    "etiqueta": [
+        (re.compile(r'\bingredientes\b', re.IGNORECASE), 10),
+        (re.compile(r'\bcontenido\b', re.IGNORECASE), 8),
+        (re.compile(r'\bpeso\b.*\bneto\b', re.IGNORECASE), 7),
+        (re.compile(r'\bvalor\s+nutricional\b', re.IGNORECASE), 10),
+        (re.compile(r'\bcalor[íi]as\b', re.IGNORECASE), 8),
+        (re.compile(r'\bprote[íi]nas\b', re.IGNORECASE), 7),
+        (re.compile(r'\bgrasas\b', re.IGNORECASE), 6),
+        (re.compile(r'\bcarbohidratos\b', re.IGNORECASE), 6),
+        (re.compile(r'\bfabricado\b', re.IGNORECASE), 6),
+        (re.compile(r'\bvencimiento\b', re.IGNORECASE), 8),
+        (re.compile(r'\blote\b', re.IGNORECASE), 5),
+        (re.compile(r'\bc[óo]digo\s+de\s+barras\b', re.IGNORECASE), 7),
+        (re.compile(r'\bprecio\b', re.IGNORECASE), 5),
+        (re.compile(r'\bdescuento\b', re.IGNORECASE), 5),
+    ],
+    # Menú de restaurante
+    "menu": [
+        (re.compile(r'\bmen[úu]\b', re.IGNORECASE), 10),
+        (re.compile(r'\bcarta\b', re.IGNORECASE), 8),
+        (re.compile(r'\bentrantes\b', re.IGNORECASE), 8),
+        (re.compile(r'\bplatos\b', re.IGNORECASE), 7),
+        (re.compile(r'\bpostres\b', re.IGNORECASE), 8),
+        (re.compile(r'\bbebidas\b', re.IGNORECASE), 7),
+        (re.compile(r'\bprecio\b.*\b\$\b', re.IGNORECASE), 6),
+        (re.compile(r'\b\$ ?\d+\b', re.IGNORECASE), 5),
+        (re.compile(r'\bpromoci[óo]n\b', re.IGNORECASE), 7),
+        (re.compile(r'\bcombo\b', re.IGNORECASE), 6),
+        (re.compile(r'\bincluye\b', re.IGNORECASE), 5),
+    ],
+    # Tarjetas de presentación
+    "tarjeta": [
+        (re.compile(r'\btarjeta\b', re.IGNORECASE), 8),
+        (re.compile(r'\bdirector\b', re.IGNORECASE), 7),
+        (re.compile(r'\bgerente\b', re.IGNORECASE), 6),
+        (re.compile(r'\bcoordinador\b', re.IGNORECASE), 6),
+        (re.compile(r'\bconsultor\b', re.IGNORECASE), 6),
+        (re.compile(r'\basespecialista\b', re.IGNORECASE), 7),
+        (re.compile(r'\bdepartamento\b', re.IGNORECASE), 6),
+        (re.compile(r'\bsucursal\b', re.IGNORECASE), 5),
+    ],
 }
 
 _IMAGE_INDICATORS = [
@@ -144,6 +186,9 @@ class DocumentClassifier:
             "documento_informativo": "Documento informativo",
             "imagen_visual": "Imagen con texto",
             "desconocido": "Documento",
+            "etiqueta": "Etiqueta de producto",
+            "menu": "Menú de restaurante",
+            "tarjeta": "Tarjeta de presentación",
         }
         return labels.get(doc_type, "Documento")
 
@@ -574,7 +619,17 @@ class NarrativeGenerator:
 # ============================================================================
 
 class ProsodyEnhancer:
-    """Mejora texto para prosodia natural en Piper TTS."""
+    """
+    Mejora texto para prosodia natural en Piper TTS.
+
+    Normaliza:
+    - Abreviaturas → texto expandido
+    - Teléfonos → dígito por dígito
+    - Fechas → "15 de marzo de 2026"
+    - Montos → "ciento cincuenta dólares"
+    - Emails → deletreo natural
+    - Oraciones largas → pausas en conjunciones
+    """
 
     _ABBREV = [
         (re.compile(r'\bRIF\b'), 'Erre-I-F'),
@@ -604,11 +659,69 @@ class ProsodyEnhancer:
         re.IGNORECASE
     )
 
+    # --- Patrones para normalización avanzada ---
+
+    # Teléfonos: +58-212-555-1234, 0212-555-1234, (0212) 555-1234, etc.
+    _PAT_PHONE_TTS = re.compile(
+        r'(?:\+?\d{1,3}[\s\-]?)?(?:\(?\d{3,4}\)?[\s\-]?)?\d{3}[\s\-]?\d{4}'
+    )
+
+    # Fechas numéricas: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
+    _PAT_DATE_NUMERIC = re.compile(
+        r'\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})\b'
+    )
+
+    # Montos: $150.00, Bs. 1.234,56, 150,00 dólares, etc.
+    _PAT_AMOUNT_TTS = re.compile(
+        r'([\$\€£])\s*([\d]{1,3}(?:[,\.\s]\d{3})*(?:[,\.]\d{1,2})?)'
+        r'|(\d{1,3}(?:[,\.\s]\d{3})*(?:[,\.]\d{1,2})?)\s*'
+        r'(bol[ií]vares|d[oó]lares|pesos(?:\s+colombianos|\s+mexicanos)?|euros)'
+    )
+
+    # Emails
+    _PAT_EMAIL_TTS = re.compile(
+        r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}'
+    )
+
+    # --- Tablas de conversión ---
+
+    _MONTHS = {
+        1: 'enero', 2: 'febrero', 3: 'marzo', 4: 'abril',
+        5: 'mayo', 6: 'junio', 7: 'julio', 8: 'agosto',
+        9: 'septiembre', 10: 'octubre', 11: 'noviembre', 12: 'diciembre',
+    }
+
+    _DIGIT_NAMES = {
+        '0': 'cero', '1': 'uno', '2': 'dos', '3': 'tres', '4': 'cuatro',
+        '5': 'cinco', '6': 'seis', '7': 'siete', '8': 'ocho', '9': 'nueve',
+    }
+
+    _CURRENCY_SYMBOL = {
+        '$': 'dólares', '€': 'euros', '£': 'libras',
+    }
+
+    # Unidades, decenas, centenas para conversión a palabras
+    _UNITS = ['', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve']
+    _TEENS = [
+        'diez', 'once', 'doce', 'trece', 'catorce', 'quince',
+        'dieciséis', 'diecisiete', 'dieciocho', 'diecinueve',
+    ]
+    _TENS = ['', 'diez', 'veinte', 'treinta', 'cuarenta', 'cincuenta',
+             'sesenta', 'setenta', 'ochenta', 'noventa']
+    _HUNDREDS = [
+        '', 'ciento', 'doscientos', 'trescientos', 'cuatrocientos',
+        'quinientos', 'seiscientos', 'setecientos', 'ochocientos', 'novecientos',
+    ]
+
     def enhance(self, text: str, doc_type: str) -> str:
         if not text:
             return text
 
         text = self._expand_abbreviations(text)
+        text = self._normalize_phones(text)
+        text = self._normalize_dates(text)
+        text = self._normalize_amounts(text)
+        text = self._normalize_emails(text)
         text = self._normalize_sentence_endings(text)
 
         if doc_type in ("factura", "recibo"):
@@ -628,9 +741,232 @@ class ProsodyEnhancer:
             text = pattern.sub(replacement, text)
         return text
 
+    # ---- TELÉFONOS ----
+
+    # Patrones que NO deben tratarse como teléfonos (IDs, RIF, NIT, etc.)
+    _PAT_ID_CONTEXT = re.compile(
+        r'(?:R\.?I\.?F\.?|N\.?I\.?T\.?|C\.?I\.?|[Cc][ée]dula|Erre-I-F|Ene-I-T)\s*[:\-]?\s*'
+        r'[VEJGvejg]?\-?\s*\d[\d\-]{5,15}',
+        re.IGNORECASE
+    )
+
+    def _normalize_phones(self, text: str) -> str:
+        """Convierte teléfonos a lectura dígito por dígito con pausas.
+        Evita tocar números que son IDs (RIF, NIT, cédula)."""
+
+        # Primero, proteger IDs reemplazándolos temporalmente
+        id_placeholders = {}
+        protected = text
+        for i, match in enumerate(self._PAT_ID_CONTEXT.finditer(text)):
+            placeholder = f"__ID_PLACEHOLDER_{i}__"
+            id_placeholders[placeholder] = match.group(0)
+            protected = protected.replace(match.group(0), placeholder, 1)
+
+        def phone_to_speech(match: re.Match) -> str:
+            raw = match.group(0)
+            # Verificar que no estamos dentro de un placeholder
+            if '__ID_PLACEHOLDER_' in raw:
+                return raw
+            digits = re.sub(r'\D', '', raw)
+            if len(digits) < 7 or len(digits) > 15:
+                return raw  # No es teléfono
+
+            # Agrupar dígitos en bloques para lectura natural
+            named = [self._DIGIT_NAMES.get(d, d) for d in digits]
+
+            groups = []
+            i = 0
+            while i < len(named):
+                chunk_size = 4 if i == 0 and len(named) > 10 else 3 if len(named) - i > 4 else len(named) - i
+                groups.append(' '.join(named[i:i + chunk_size]))
+                i += chunk_size
+
+            return ', '.join(groups)
+
+        result = self._PAT_PHONE_TTS.sub(phone_to_speech, protected)
+
+        # Restaurar IDs protegidos
+        for placeholder, original in id_placeholders.items():
+            result = result.replace(placeholder, original)
+
+        return result
+
+    # ---- FECHAS ----
+
+    def _normalize_dates(self, text: str) -> str:
+        """Convierte 15/03/2026 → 'quince de marzo de dos mil veintiséis'."""
+        def date_to_speech(match: re.Match) -> str:
+            day_s, month_s, year_s = match.group(1), match.group(2), match.group(3)
+            try:
+                day = int(day_s)
+                month = int(month_s)
+                year = int(year_s)
+
+                # Año de 2 dígitos
+                if year < 100:
+                    year += 2000 if year < 50 else 1900
+
+                month_name = self._MONTHS.get(month)
+                if not month_name or day < 1 or day > 31:
+                    return match.group(0)
+
+                day_word = self._number_to_words(day)
+                year_word = self._year_to_words(year)
+
+                return f"{day_word} de {month_name} de {year_word}"
+            except (ValueError, KeyError):
+                return match.group(0)
+
+        return self._PAT_DATE_NUMERIC.sub(date_to_speech, text)
+
+    # ---- MONTOS ----
+
+    def _normalize_amounts(self, text: str) -> str:
+        """Convierte $150.00 → 'ciento cincuenta dólares'."""
+        def amount_to_speech(match: re.Match) -> str:
+            try:
+                symbol = match.group(1)
+                if symbol:
+                    # Formato: $150.00
+                    amount_str = match.group(2)
+                    currency = self._CURRENCY_SYMBOL.get(symbol, symbol)
+                else:
+                    # Formato: 150,00 bolívares
+                    amount_str = match.group(3)
+                    currency = match.group(4)
+
+                # Parsear número: manejar formato latino (1.234,56) y anglosajón (1,234.56)
+                clean = amount_str.replace(' ', '')
+
+                # Detectar formato: si el último separador es coma, es decimal latino
+                if re.search(r',\d{1,2}$', clean):
+                    # Latino: 1.234,56
+                    integer_part = clean.rsplit(',', 1)[0].replace('.', '')
+                    decimal_part = clean.rsplit(',', 1)[1] if ',' in clean else ''
+                elif re.search(r'\.\d{1,2}$', clean):
+                    # Anglosajón: 1,234.56
+                    integer_part = clean.rsplit('.', 1)[0].replace(',', '')
+                    decimal_part = clean.rsplit('.', 1)[1] if '.' in clean else ''
+                else:
+                    # Sin decimales
+                    integer_part = clean.replace('.', '').replace(',', '')
+                    decimal_part = ''
+
+                num = int(integer_part) if integer_part else 0
+
+                # Solo convertir montos razonables (hasta 999,999,999)
+                if num > 999_999_999:
+                    return match.group(0)
+
+                words = self._number_to_words(num)
+
+                if decimal_part and int(decimal_part) > 0:
+                    dec_words = self._number_to_words(int(decimal_part))
+                    words += f" con {dec_words}"
+
+                return f"{words} {currency}"
+            except (ValueError, IndexError, AttributeError):
+                return match.group(0)
+
+        return self._PAT_AMOUNT_TTS.sub(amount_to_speech, text)
+
+    # ---- EMAILS ----
+
+    def _normalize_emails(self, text: str) -> str:
+        """Convierte emails a lectura natural: user@domain.com → 'user, arroba, domain, punto, com'."""
+        def email_to_speech(match: re.Match) -> str:
+            email = match.group(0)
+            parts = email.split('@')
+            if len(parts) != 2:
+                return email
+
+            local = parts[0]
+            domain = parts[1]
+
+            # Deletrear local part con separadores naturales
+            local_spoken = local.replace('.', ', punto, ').replace('_', ', guion bajo, ').replace('-', ', guion, ')
+
+            # Dominio: separar en partes
+            domain_parts = domain.split('.')
+            domain_spoken = ', punto, '.join(domain_parts)
+
+            return f"{local_spoken}, arroba, {domain_spoken}"
+
+        return self._PAT_EMAIL_TTS.sub(email_to_speech, text)
+
+    # ---- CONVERSIÓN NÚMEROS A PALABRAS ----
+
+    def _number_to_words(self, n: int) -> str:
+        """Convierte un entero (0-999,999,999) a palabras en español."""
+        if n == 0:
+            return 'cero'
+        if n == 100:
+            return 'cien'
+        if n < 0:
+            return f'menos {self._number_to_words(-n)}'
+
+        parts = []
+
+        # Millones
+        if n >= 1_000_000:
+            millions = n // 1_000_000
+            if millions == 1:
+                parts.append('un millón')
+            else:
+                parts.append(f'{self._number_to_words(millions)} millones')
+            n %= 1_000_000
+
+        # Miles
+        if n >= 1000:
+            thousands = n // 1000
+            if thousands == 1:
+                parts.append('mil')
+            else:
+                parts.append(f'{self._number_to_words(thousands)} mil')
+            n %= 1000
+
+        # Centenas
+        if n >= 100:
+            parts.append(self._HUNDREDS[n // 100])
+            n %= 100
+
+        # Decenas y unidades
+        if n >= 20:
+            ten = n // 10
+            unit = n % 10
+            if unit == 0:
+                parts.append(self._TENS[ten])
+            elif ten == 2:
+                # veinti-: veintiuno, veintidós, etc.
+                special = ['veintiuno', 'veintidós', 'veintitrés', 'veinticuatro',
+                           'veinticinco', 'veintiséis', 'veintisiete', 'veintiocho', 'veintinueve']
+                parts.append(special[unit - 1])
+            else:
+                parts.append(f'{self._TENS[ten]} y {self._UNITS[unit]}')
+        elif n >= 10:
+            parts.append(self._TEENS[n - 10])
+        elif n > 0:
+            parts.append(self._UNITS[n])
+
+        return ' '.join(parts)
+
+    def _year_to_words(self, year: int) -> str:
+        """Convierte año a palabras: 2026 → 'dos mil veintiséis'."""
+        if 2000 <= year <= 2099:
+            remainder = year - 2000
+            if remainder == 0:
+                return 'dos mil'
+            return f'dos mil {self._number_to_words(remainder)}'
+        if 1900 <= year <= 1999:
+            remainder = year - 1900
+            if remainder == 0:
+                return 'mil novecientos'
+            return f'mil novecientos {self._number_to_words(remainder)}'
+        return self._number_to_words(year)
+
+    # ---- UTILIDADES EXISTENTES (mejoradas) ----
+
     def _normalize_sentence_endings(self, text: str) -> str:
-        # Solo agregar punto cuando hay un salto de línea claro (párrafo)
-        # entre una línea que no termina en puntuación y la siguiente
         text = re.sub(r'([a-záéíóúñ0-9])\s*\n\s*([A-ZÁÉÍÓÚÑ])', r'\1. \2', text)
         return text
 
@@ -651,7 +987,6 @@ class ProsodyEnhancer:
             if len(words) <= max_words:
                 result.append(sentence)
             else:
-                # Insertar una pausa natural con coma en conjunciones
                 broken = re.sub(
                     r'\s+(y|pero|sin embargo|además|también|aunque)\s+',
                     r', \1 ',
@@ -697,17 +1032,65 @@ class SmartReadingService:
                 logger.warning(f"Captioning no disponible: {e}")
         return self._captioning
 
-    def analyze(self, image: np.ndarray, reading_mode: str = "detallado") -> dict:
-        """
-        Pipeline completo de lectura inteligente.
+    def _get_quality_analyzer(self):
+        if not hasattr(self, '_quality_analyzer') or self._quality_analyzer is None:
+            from app.utils.image_utils import get_image_quality_analyzer
+            self._quality_analyzer = get_image_quality_analyzer()
+        return self._quality_analyzer
 
+    def _auto_select_reading_mode(self, doc_type: str, extracted, word_count: int) -> str:
+        """
+        Selecciona automáticamente el modo de lectura óptimo según el tipo de documento.
+        
+        Lógica:
+        - facturas/recibos → financiero (prioriza montos)
+        - cartas/documentos informativos → detallado (prioriza contenido)
+        - etiquetas/menúes → resumido (lo esencial)
+        - formularios → detallado (para saber qué campos llenar)
+        - desconocido → resumido si hay poco texto, detallado si hay mucho
+        """
+        # Documentos financieros: siempre modo financiero
+        if doc_type in ("factura", "recibo"):
+            return "financiero"
+        
+        # Documentos de contenido: modo detallado
+        if doc_type in ("carta", "formulario", "documento_informativo"):
+            return "detallado"
+        
+        # Etiquetas y menús: resumen
+        if doc_type in ("etiqueta", "menu", "tarjeta"):
+            return "resumen"
+        
+        # Imagen visual: resumen (poco texto)
+        if doc_type == "imagen_visual":
+            return "resumen"
+        
+        # Desconocido: depends on content
+        if doc_type == "desconocido":
+            if word_count < 30:
+                return "resumen"
+            elif len(extracted.amounts) > 0 or len(extracted.totals) > 0:
+                return "financiero"
+            else:
+                return "detallado"
+        
+        return "detallado"  # Default
+
+    def analyze(self, image: np.ndarray, reading_mode: str = None) -> dict:
+        """
+        Pipeline completo de lectura inteligente con selección automática de modo.
+        
         Args:
             image: Imagen BGR (OpenCV)
-            reading_mode: "resumen" | "detallado" | "financiero"
+            reading_mode: Opcional. Si no se especifica, se selecciona automáticamente.
 
         Returns:
             dict compatible con SmartReadingResponse
         """
+        # 0. Analizar calidad de imagen ANTES del OCR
+        quality_analyzer = self._get_quality_analyzer()
+        quality_report = quality_analyzer.analyze(image)
+
         # 1. OCR
         ocr_result = self._get_ocr().extract_text(image)
         raw_text = ocr_result.get("text", "")
@@ -723,11 +1106,16 @@ class SmartReadingService:
         doc_type, cls_confidence = self._classifier.classify(raw_text, word_count)
         logger.info(f"[SmartReading] Clasificación: {doc_type} (conf={cls_confidence:.2f})")
 
-        # 3. Extraer campos
+        # 3. Extraer campos ANTES de decidir modo (necesario para la decisión)
         extracted = self._extractor.extract(raw_text)
         logger.info(f"[SmartReading] Campos: fechas={len(extracted.dates)}, montos={len(extracted.amounts)}, ids={len(extracted.ids)}, totales={len(extracted.totals)}")
 
-        # 4. Florence-2 para imagen_visual
+        # 4. AUTO-SELECT reading mode based on document type
+        if reading_mode is None:
+            reading_mode = self._auto_select_reading_mode(doc_type, extracted, word_count)
+            logger.info(f"[SmartReading] Modo automático seleccionado: {reading_mode}")
+
+        # 5. Florence-2 para imagen_visual
         visual_caption = None
         if doc_type == "imagen_visual":
             captioning = self._get_captioning()
@@ -739,7 +1127,7 @@ class SmartReadingService:
                 except Exception as e:
                     logger.debug(f"Florence-2 caption falló: {e}")
 
-        # 5. Generar narrativa
+        # 6. Generar narrativa
         narrative = self._generator.generate(
             doc_type=doc_type,
             reading_mode=reading_mode,
@@ -748,12 +1136,28 @@ class SmartReadingService:
             visual_caption=visual_caption,
         )
 
-        # 6. Mejorar prosodia
+        # 7. Mejorar prosodia
         narrative = self._enhancer.enhance(narrative, doc_type)
 
         logger.info(f"[SmartReading] Narrativa ({reading_mode}): {narrative[:150]}...")
 
-        # 7. Construir respuesta
+        # 8. Si la calidad es baja Y el OCR también, prepend feedback al narrative
+        if quality_report.feedback_text and (
+            not has_text or (confidence is not None and confidence < 50)
+        ):
+            narrative = quality_report.feedback_text + " " + narrative
+
+        # 9. Construir respuesta
+        quality_data = {
+            "overall_score": quality_report.overall_score,
+            "is_acceptable": quality_report.is_acceptable,
+            "issues": [
+                {"code": i.code, "severity": i.severity, "message": i.message_es}
+                for i in quality_report.issues
+            ],
+            "feedback_text": quality_report.feedback_text,
+        }
+
         return {
             "success": True,
             "message": "Documento analizado correctamente",
@@ -775,6 +1179,7 @@ class SmartReadingService:
                 "totals": extracted.totals,
             },
             "visual_caption": visual_caption,
+            "image_quality": quality_data,
         }
 
 

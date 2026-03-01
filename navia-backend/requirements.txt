@@ -30,6 +30,11 @@ numpy>=2.0.0
 # pytesseract: Wrapper de Python para Tesseract OCR.
 pytesseract>=0.3.13
 
+# --- PROCESAMIENTO DE PDF ---
+# PyMuPDF (fitz): Librería rápida para extraer contenido de PDFs.
+# Alternativa: pdf2image (más lenta, requiere poppler)
+pymupdf>=1.23.0
+
 # --- DETECCIÓN DE OBJETOS Y TRACKING ---
 # Ultralytics: YOLO-World (detección) + ByteTrack (tracking).
 ultralytics>=8.3.0

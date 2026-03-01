@@ -34,7 +34,8 @@ from app.core.config import settings
 from app.utils.image_utils import (
     preprocess_for_ocr,
     cv2_image_to_pil,
-    resize_image_if_needed
+    resize_image_if_needed,
+    normalize_image_for_ocr,
 )
 
 # Configurar logging
@@ -82,13 +83,17 @@ class OCRService:
         preprocess: bool = True
     ) -> Dict:
         """
-        Extrae texto de una imagen.
+        Extrae texto de una imagen, adaptándose a cualquier tamaño.
 
-        Proceso:
-        1. Redimensionar si es muy grande
-        2. Preprocesar (opcional pero recomendado)
-        3. Ejecutar OCR
-        4. Limpiar y estructurar resultados
+        Pipeline adaptativo multi-estrategia:
+        1. Normalizar tamaño al rango óptimo para OCR (upscale o downscale)
+        2. Preprocesar → obtener versión grayscale mejorada Y binaria
+        3. Probar OCR en este orden (escoger el mejor resultado):
+           a) Grayscale mejorada con PSM 3 (auto page segmentation)
+           b) Grayscale mejorada con PSM 6 (uniform text block)
+           c) Binaria con PSM 3
+           d) Binaria con PSM 6
+           e) Imagen a color original (sin preprocesamiento)
 
         Args:
             image: Imagen en formato OpenCV (numpy array BGR)
@@ -102,32 +107,70 @@ class OCRService:
             - has_text: Si se encontró texto
         """
         try:
-            # Paso 1: Redimensionar si es necesario
-            image = resize_image_if_needed(image)
+            h, w = image.shape[:2]
+            logger.info(f"[OCR] Imagen original: {w}x{h}")
 
-            # Paso 2: Preprocesar para mejorar OCR
+            # Paso 1: Normalizar tamaño (upscale pequeñas, downscale grandes)
+            normalized = normalize_image_for_ocr(image)
+
+            best_result = None
+
+            def _try_ocr(pil_img: Image.Image, psm: int, label: str) -> Optional[Dict]:
+                """Intenta OCR con una configuración dada."""
+                nonlocal best_result
+                config = f'--oem 3 --psm {psm}'
+                try:
+                    data = pytesseract.image_to_data(
+                        pil_img,
+                        lang=self.language,
+                        config=config,
+                        output_type=pytesseract.Output.DICT
+                    )
+                    result = self._process_ocr_results(data)
+                    wc = result.get("word_count", 0)
+                    conf = result.get("confidence", 0)
+
+                    if wc > 0:
+                        logger.info(f"[OCR] {label}: {wc} palabras, {conf:.0f}% conf")
+
+                    if best_result is None:
+                        best_result = result
+                    elif self._is_better(result, best_result):
+                        best_result = result
+                        logger.info(f"[OCR] {label} es el mejor resultado hasta ahora")
+
+                    return result
+                except Exception as e:
+                    logger.debug(f"[OCR] {label} falló: {e}")
+                    return None
+
+            # Paso 2: Preprocesar → grayscale mejorada + binaria
             if preprocess:
-                processed_image = preprocess_for_ocr(image)
-                # Para OCR, convertimos la imagen binaria a PIL
-                pil_image = Image.fromarray(processed_image)
-            else:
-                pil_image = cv2_image_to_pil(image)
+                grayscale_enhanced, binary = preprocess_for_ocr(normalized)
+                pil_gray = Image.fromarray(grayscale_enhanced)
+                pil_binary = Image.fromarray(binary)
 
-            # Paso 3: Ejecutar OCR con datos detallados
-            # psm 3 = Automatic page segmentation (sin OSD)
-            # Configuración optimizada para texto mixto
-            custom_config = r'--oem 3 --psm 3'
+                # Estrategia A: Grayscale mejorada (mejor para fotos de celular)
+                _try_ocr(pil_gray, 3, "Grayscale PSM3")
+                _try_ocr(pil_gray, 6, "Grayscale PSM6")
 
-            # Obtener texto y datos de confianza
-            data = pytesseract.image_to_data(
-                pil_image,
-                lang=self.language,
-                config=custom_config,
-                output_type=pytesseract.Output.DICT
-            )
+                # Estrategia B: Binaria (mejor para documentos escaneados)
+                _try_ocr(pil_binary, 3, "Binary PSM3")
+                _try_ocr(pil_binary, 6, "Binary PSM6")
 
-            # Paso 4: Procesar resultados
-            return self._process_ocr_results(data)
+            # Estrategia C: Imagen a color original (fallback)
+            # Probar si no hubo preprocesamiento o si resultados son pobres
+            if not preprocess or (best_result and best_result.get("word_count", 0) < 3):
+                logger.info("[OCR] Intentando con imagen a color...")
+                pil_color = cv2_image_to_pil(normalized)
+                _try_ocr(pil_color, 3, "Color PSM3")
+
+            return best_result or {
+                "text": "",
+                "confidence": 0.0,
+                "word_count": 0,
+                "has_text": False,
+            }
 
         except Exception as e:
             logger.error(f"Error en OCR: {str(e)}")
@@ -138,6 +181,24 @@ class OCRService:
                 "has_text": False,
                 "error": str(e)
             }
+
+    def _is_better(self, candidate: Dict, current_best: Dict) -> bool:
+        """Compara dos resultados OCR y decide si el candidato es mejor."""
+        c_wc = candidate.get("word_count", 0)
+        b_wc = current_best.get("word_count", 0)
+        c_conf = candidate.get("confidence", 0)
+        b_conf = current_best.get("confidence", 0)
+
+        # Más palabras siempre gana (salvo que sea basura de baja confianza)
+        if c_wc > b_wc and c_conf > 15:
+            return True
+        # Mismas palabras, mayor confianza gana
+        if c_wc == b_wc and c_conf > b_conf:
+            return True
+        # Muchas más palabras con confianza razonable
+        if c_wc > b_wc * 1.5 and c_conf > 10:
+            return True
+        return False
 
     def _process_ocr_results(self, data: Dict) -> Dict:
         """
@@ -190,8 +251,8 @@ class OCRService:
         Limpia el texto extraído.
 
         Operaciones:
-        - Remover espacios múltiples
-        - Remover caracteres no imprimibles
+        - Remover caracteres de control (excepto newlines y tabs)
+        - Normalizar espacios múltiples
         - Normalizar saltos de línea
 
         Args:
@@ -201,9 +262,23 @@ class OCRService:
             Texto limpio
         """
         import re
+        import unicodedata
 
-        # Remover caracteres no imprimibles excepto espacios y saltos de línea
-        text = re.sub(r'[^\x20-\x7E\xA0-\xFF\n]', '', text)
+        # Remover caracteres de control excepto \n y \t
+        # Preservar TODOS los caracteres imprimibles Unicode (acentos, ñ, ü, etc.)
+        cleaned = []
+        for ch in text:
+            if ch in ('\n', '\t'):
+                cleaned.append(ch)
+            elif unicodedata.category(ch).startswith('C'):
+                # Control character - skip
+                continue
+            else:
+                cleaned.append(ch)
+        text = ''.join(cleaned)
+
+        # Normalizar tabs a espacios
+        text = text.replace('\t', ' ')
 
         # Normalizar espacios múltiples a uno solo
         text = re.sub(r' +', ' ', text)

@@ -5,9 +5,9 @@
  * Resuelve los problemas de voces que se cancelan entre sí
  * usando una cola con prioridades.
  *
- * Por defecto usa Piper TTS (voz natural VITS) para TODO el audio.
- * Cae a expo-speech si el backend no responde.
- * Excepción: INTERRUPT siempre usa expo-speech (latencia cero).
+ * SIEMPRE usa Piper TTS (voz natural VITS) para TODO el audio,
+ * incluyendo INTERRUPT. Cae a expo-speech solo si el backend
+ * no responde (fallback automático).
  */
 
 import * as Speech from 'expo-speech';
@@ -64,13 +64,12 @@ class TtsManager {
   // ==========================================================================
 
   /**
-   * Habla usando Piper TTS del backend por defecto (voz natural).
+   * Habla usando Piper TTS del backend (voz natural) para TODAS
+   * las prioridades, incluyendo INTERRUPT.
    * Cae a expo-speech automáticamente si el backend no responde.
-   * INTERRUPT siempre usa expo-speech para respuesta instantánea.
    */
   speak(text: string, priority: TtsPriority = TtsPriority.HIGH): void {
     if (!this.enabled || !text?.trim()) return;
-    // INTERRUPT se fuerza a local en enqueue(), aquí marcamos backend para el resto
     this.enqueue(text.trim(), priority, true);
   }
 
@@ -121,9 +120,9 @@ class TtsManager {
     if (priority === TtsPriority.INTERRUPT) {
       this.queue = [];
       this.stopCurrent();
-      // Pequeño delay para asegurar que Speech.stop() terminó
+      // Pequeño delay para asegurar que stop() terminó
       setTimeout(() => {
-        this.queue.push({ text, priority, useBackend: false }); // INTERRUPT siempre usa expo-speech (velocidad)
+        this.queue.push({ text, priority, useBackend }); // Usa Piper backend (fallback a expo-speech si falla)
         this.processQueue();
       }, 50);
       return;

@@ -108,6 +108,19 @@ export interface ExtractedFields {
   totals: string[]
 }
 
+export interface ImageQualityIssue {
+  code: string
+  severity: string
+  message: string
+}
+
+export interface ImageQuality {
+  overall_score: number
+  is_acceptable: boolean
+  issues: ImageQualityIssue[]
+  feedback_text: string
+}
+
 export interface SmartReadingResponse {
   success: boolean
   message: string
@@ -121,6 +134,7 @@ export interface SmartReadingResponse {
   word_count: number
   extracted_fields: ExtractedFields
   visual_caption: string | null
+  image_quality: ImageQuality | null
 }
 
 // ============================================================================
@@ -354,9 +368,9 @@ export async function analyzeExploration(imageFile: File): Promise<ExplorationRe
   return postImage<ExplorationResponse>('/api/v1/analyze/exploracion', imageFile, 'Error en exploración')
 }
 
-/** Modo Lectura Inteligente: OCR + clasificación + narrativa */
-export async function analyzeReading(imageFile: File, readingMode: ReadingMode = 'detallado'): Promise<SmartReadingResponse> {
-  return postImage<SmartReadingResponse>(`/api/v1/analyze/lectura?reading_mode=${readingMode}`, imageFile, 'Error en lectura')
+/** Modo Lectura Inteligente: OCR + clasificación + narrativa automática */
+export async function analyzeReading(imageFile: File): Promise<SmartReadingResponse> {
+  return postImage<SmartReadingResponse>('/api/v1/analyze/lectura', imageFile, 'Error en lectura')
 }
 
 /** Modo Riesgo: detección de peligros */

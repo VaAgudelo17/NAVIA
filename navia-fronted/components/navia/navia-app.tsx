@@ -236,10 +236,17 @@ export function NaviaApp() {
         }
 
         case "lectura": {
-          const result = await analyzeReading(file, readingMode)
+          const result = await analyzeReading(file)
           setSmartResult(result)
           setProcessingProgress(100)
           setAppState("results")
+          // Si hay problemas de calidad, hablar feedback primero
+          if (result.image_quality?.feedback_text) {
+            const qualityPriority = result.image_quality.is_acceptable
+              ? TtsPriority.HIGH
+              : TtsPriority.INTERRUPT
+            ttsManager.speak(result.image_quality.feedback_text, qualityPriority)
+          }
           ttsManager.speakFromBackend(result.narrative, TtsPriority.HIGH)
           break
         }
@@ -368,36 +375,6 @@ export function NaviaApp() {
                     </Button>
                   ))}
                 </div>
-
-                {/* Sub-selector de modo lectura */}
-                {analysisMode === "lectura" && (
-                  <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground text-center">Tipo de lectura:</p>
-                    <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Tipo de lectura">
-                      {([
-                        { key: "resumen" as ReadingMode, label: "Resumen", Icon: Zap },
-                        { key: "detallado" as ReadingMode, label: "Detallado", Icon: List },
-                        { key: "financiero" as ReadingMode, label: "Financiero", Icon: DollarSign },
-                      ]).map((mode) => (
-                        <Button
-                          key={mode.key}
-                          variant={readingMode === mode.key ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => {
-                            setReadingMode(mode.key)
-                            ttsManager.speak(`Lectura ${mode.label}`, TtsPriority.LOW)
-                          }}
-                          role="radio"
-                          aria-checked={readingMode === mode.key}
-                          className="h-9 text-xs"
-                        >
-                          <mode.Icon className="h-3.5 w-3.5 mr-1 shrink-0" />
-                          {mode.label}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                )}
 
                 {/* Botones principales */}
                 <div className="flex flex-col gap-3">
@@ -662,6 +639,31 @@ export function NaviaApp() {
                       {smartResult.ocr_confidence ? ` • ${smartResult.ocr_confidence.toFixed(0)}% confianza` : ""}
                       {` • ${smartResult.reading_mode}`}
                     </p>
+
+                    {/* Indicador de calidad de imagen */}
+                    {smartResult.image_quality && smartResult.image_quality.issues.length > 0 && (
+                      <div className={cn(
+                        "flex items-start gap-2 p-3 rounded-lg mt-2",
+                        smartResult.image_quality.is_acceptable
+                          ? "bg-amber-500/10"
+                          : "bg-red-500/10"
+                      )}>
+                        <AlertTriangle className={cn(
+                          "h-4 w-4 shrink-0 mt-0.5",
+                          smartResult.image_quality.is_acceptable
+                            ? "text-amber-500"
+                            : "text-red-500"
+                        )} />
+                        <p className={cn(
+                          "text-sm",
+                          smartResult.image_quality.is_acceptable
+                            ? "text-amber-500"
+                            : "text-red-500"
+                        )}>
+                          {smartResult.image_quality.issues.map(i => i.message).join(" ")}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
 

@@ -227,12 +227,18 @@ export function HomeScreen() {
           break;
         }
         case 'lectura': {
-          const result = await analyzeReading(imageUri, readingMode);
+          const result = await analyzeReading(imageUri);
           setSmartResult(result);
+          // Si hay problemas de calidad, hablar feedback primero
+          if (result.image_quality?.feedback_text) {
+            const qualityPriority = result.image_quality.is_acceptable
+              ? TtsPriority.HIGH
+              : TtsPriority.INTERRUPT;
+            ttsManager.speak(result.image_quality.feedback_text, qualityPriority);
+          }
           ttsManager.speakFromBackend(result.narrative, TtsPriority.HIGH);
           saveToHistory({
             mode: 'lectura',
-            readingMode,
             resultSummary: result.narrative?.substring(0, 200) || '',
             resultData: result as unknown as Record<string, unknown>,
           });
@@ -381,49 +387,6 @@ export function HomeScreen() {
           })}
         </View>
       </View>
-
-      {/* Sub-selector de modo lectura (solo visible cuando lectura está seleccionada) */}
-      {analysisMode === 'lectura' && (
-        <View style={styles.readingModeSelector}>
-          <Text style={styles.readingModeLabel}>Tipo de lectura:</Text>
-          <View style={styles.readingModeButtons}>
-            {([
-              { key: 'resumen' as ReadingMode, label: 'Resumen', icon: 'flash' },
-              { key: 'detallado' as ReadingMode, label: 'Detallado', icon: 'list' },
-              { key: 'financiero' as ReadingMode, label: 'Financiero', icon: 'cash' },
-            ]).map((mode) => (
-              <TouchableOpacity
-                key={mode.key}
-                style={[
-                  styles.readingModeButton,
-                  readingMode === mode.key && styles.readingModeButtonActive,
-                ]}
-                onPress={() => {
-                  setReadingMode(mode.key);
-                  ttsManager.speak(`Lectura ${mode.label}.`, TtsPriority.LOW);
-                }}
-                accessibilityRole="radio"
-                accessibilityState={{ selected: readingMode === mode.key }}
-                accessibilityLabel={`Lectura modo ${mode.label}`}
-              >
-                <Ionicons
-                  name={mode.icon as any}
-                  size={16}
-                  color={readingMode === mode.key ? COLORS.background : COLORS.primary}
-                />
-                <Text
-                  style={[
-                    styles.readingModeButtonText,
-                    readingMode === mode.key && styles.readingModeButtonTextActive,
-                  ]}
-                >
-                  {mode.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      )}
 
       {/* Botones principales */}
       <View style={styles.mainButtons}>
@@ -898,6 +861,33 @@ export function HomeScreen() {
               {smartResult.ocr_confidence ? ` • ${smartResult.ocr_confidence.toFixed(0)}% confianza` : ''}
               {` • ${smartResult.reading_mode}`}
             </Text>
+
+            {/* Indicador de calidad de imagen */}
+            {smartResult.image_quality && smartResult.image_quality.issues.length > 0 && (
+              <View style={[
+                styles.totalsHighlight,
+                {
+                  backgroundColor: smartResult.image_quality.is_acceptable
+                    ? COLORS.warning + '20'
+                    : COLORS.error + '20',
+                  marginTop: 8,
+                },
+              ]}>
+                <Ionicons
+                  name={smartResult.image_quality.is_acceptable ? 'alert-circle' : 'warning'}
+                  size={16}
+                  color={smartResult.image_quality.is_acceptable ? COLORS.warning : COLORS.error}
+                />
+                <Text style={[
+                  styles.totalsText,
+                  {
+                    color: smartResult.image_quality.is_acceptable ? COLORS.warning : COLORS.error,
+                  },
+                ]}>
+                  {smartResult.image_quality.issues.map(i => i.message).join(' ')}
+                </Text>
+              </View>
+            )}
           </View>
         )}
 

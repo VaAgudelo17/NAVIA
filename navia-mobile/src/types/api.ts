@@ -159,6 +159,21 @@ export interface ExtractedFields {
   totals: string[];
 }
 
+// Problema individual de calidad de imagen
+export interface ImageQualityIssue {
+  code: string;        // blur, dark, bright, low_contrast, skewed, low_res
+  severity: string;    // warning, critical
+  message: string;     // Mensaje en español para el usuario
+}
+
+// Análisis de calidad de imagen
+export interface ImageQuality {
+  overall_score: number;    // 0.0 - 1.0
+  is_acceptable: boolean;   // Si la imagen es usable para OCR
+  issues: ImageQualityIssue[];
+  feedback_text: string;    // Texto combinado para TTS
+}
+
 // Respuesta de lectura inteligente
 export interface SmartReadingResponse {
   success: boolean;
@@ -173,6 +188,7 @@ export interface SmartReadingResponse {
   word_count: number;
   extracted_fields: ExtractedFields;
   visual_caption: string | null;
+  image_quality: ImageQuality | null;
 }
 
 // Error de la API
