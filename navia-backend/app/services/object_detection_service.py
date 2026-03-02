@@ -95,7 +95,12 @@ WORLD_CLASSES_ES = {
     "curtain on window": ("cortina", "f"),   # "curtain on window" evita confusión con toalla
     "window blind": ("persiana", "f"),
     "ceiling fan": ("ventilador de techo", "m"),
-    "standing fan": ("ventilador de pie", "m"),
+    "standing fan": ("ventilador", "m"),
+    "pedestal fan": ("ventilador", "m"),
+    "electric fan": ("ventilador", "m"),
+    "oscillating fan": ("ventilador", "m"),
+    "tower fan": ("ventilador de torre", "m"),
+    "desk fan": ("ventilador de escritorio", "m"),
     "air conditioner unit": ("aire acondicionado", "m"),
     "radiator heater": ("calentador", "m"),
     "area rug on floor": ("alfombra", "f"),  # "on floor" lo diferencia de toalla

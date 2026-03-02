@@ -165,11 +165,19 @@ class OCRService:
                 pil_color = cv2_image_to_pil(normalized)
                 _try_ocr(pil_color, 3, "Color PSM3")
 
+            # Agregar dimensiones de la imagen normalizada al resultado
+            nh, nw = normalized.shape[:2]
+            if best_result:
+                best_result["image_width"] = nw
+                best_result["image_height"] = nh
             return best_result or {
                 "text": "",
                 "confidence": 0.0,
                 "word_count": 0,
                 "has_text": False,
+                "layout": {"word_boxes": [], "num_blocks": 0, "num_lines": 0},
+                "image_width": nw,
+                "image_height": nh,
             }
 
         except Exception as e:
@@ -212,18 +220,27 @@ class OCRService:
         Procesa y limpia los resultados del OCR.
 
         Tesseract devuelve datos que incluyen:
-        - Palabras individuales
-        - Nivel de confianza por palabra (-1 si no hay texto)
-        - Posiciones de cada palabra
+        - Palabras individuales con nivel de confianza
+        - Posiciones (bounding boxes) de cada palabra
+        - Estructura jerárquica: page → block → paragraph → line → word
+
+        Preserva datos espaciales para análisis de layout posterior.
 
         Args:
-            data: Diccionario de datos de Tesseract
+            data: Diccionario de datos de Tesseract (image_to_data)
 
         Returns:
-            Resultados procesados y estructurados
+            Resultados procesados con texto, confianza, y datos estructurales
         """
+        import re
+
         words = []
         confidences = []
+
+        # Datos estructurales preservados para el clasificador
+        word_boxes = []      # {text, conf, left, top, width, height, block, line}
+        block_set = set()
+        line_set = set()
 
         # Iterar sobre cada detección
         n_boxes = len(data['text'])
@@ -243,12 +260,29 @@ class OCRService:
                 continue
 
             # Ignorar texto que es solo puntuación/símbolos
-            import re
             if re.match(r'^[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑüÜ]+$', text):
                 continue
 
             words.append(text)
             confidences.append(conf)
+
+            # Preservar datos espaciales
+            block_num = int(data['block_num'][i])
+            line_num = int(data['line_num'][i])
+            block_set.add(block_num)
+            line_set.add((block_num, line_num))
+
+            word_boxes.append({
+                "text": text,
+                "conf": conf,
+                "left": int(data['left'][i]),
+                "top": int(data['top'][i]),
+                "width": int(data['width'][i]),
+                "height": int(data['height'][i]),
+                "block": block_num,
+                "par": int(data['par_num'][i]),
+                "line": line_num,
+            })
 
         # Construir texto completo
         full_text = ' '.join(words)
@@ -263,7 +297,13 @@ class OCRService:
             "text": full_text,
             "confidence": round(avg_confidence, 2),
             "word_count": len(words),
-            "has_text": len(words) > 0
+            "has_text": len(words) > 0,
+            # Datos estructurales para el clasificador jerárquico
+            "layout": {
+                "word_boxes": word_boxes,
+                "num_blocks": len(block_set),
+                "num_lines": len(line_set),
+            },
         }
 
     def _clean_text(self, text: str) -> str:

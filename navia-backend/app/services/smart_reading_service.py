@@ -328,8 +328,8 @@ _PAT_DATE = re.compile(
 )
 
 _PAT_AMOUNT = re.compile(
-    r'(?:[\$\€£]+\s*[\d]{1,3}(?:[,\.\s]\d{3})*(?:[,\.]\d{1,2})?)'
-    r'|(?:Bs\.?\s*[\d]{1,3}(?:[,\.\s]\d{3})*(?:[,\.]\d{1,2})?)'
+    r'(?:[\$€£]+\s*[\d]{1,3}(?:[,\.\s]\d{3})*(?:[,\.]\d{1,2})?)'
+    r'|(?:Bs\.?\s*[\d]{1,3}(?:[\s,\.]+\d{3})*(?:[,\.]\d{1,2})?)'
     r'|(?:(?:USD|EUR|VES|COP|MXN)\s*[\d,\.]+)',
     re.IGNORECASE
 )
@@ -352,8 +352,10 @@ _PAT_HEADER = re.compile(
 )
 
 _PAT_TOTAL = re.compile(
-    r'^.*\b(?:total|subtotal|gran\s+total|monto\s+total|neto|bruto)\b.*$',
-    re.IGNORECASE | re.MULTILINE
+    r'\b((?:sub\s*)?total|gran\s+total|monto\s+total|neto|bruto)'
+    r'\s*:?\s*'
+    r'((?:Bs\.?|[\$€£]|USD|COP|VES|MXN)?\s*[\d]+[\d\s,\.]*[\d])',
+    re.IGNORECASE
 )
 
 
@@ -407,14 +409,335 @@ class StructureExtractor:
             if len(h.strip()) >= 3 and not h.strip().isdigit()
         ][:5]
 
-        # Líneas de totales
-        data.totals = [
-            line.strip()
-            for line in _PAT_TOTAL.findall(text)
-            if line.strip()
-        ][:3]
+        # Líneas de totales: captura (label, monto) como "Total: Bs 2.549.614"
+        data.totals = []
+        for m in _PAT_TOTAL.finditer(text):
+            label = m.group(1).strip().capitalize()
+            amount = m.group(2).strip()
+            # Limpiar espacios dentro del número: "2. 549. 614" → "2.549.614"
+            amount = re.sub(r'(\d)\s+(\d)', r'\1\2', amount)
+            amount = re.sub(r'(\d)\.\s+', r'\1.', amount)
+            data.totals.append(f"{label}: {amount}")
+        data.totals = data.totals[:3]
 
         return data
+
+
+# ============================================================================
+# OCR TEXT RECONSTRUCTOR
+# ============================================================================
+
+# Basura típica de status bar / chrome de apps en capturas de pantalla
+_STATUS_BAR_PATTERNS = re.compile(
+    r'\b(?:'
+    r'\d{1,2}:\d{2}\s*(?:[AaPp]\.?[Mm]\.?){0,2}'  # timestamps: 3:03, 8:36PM
+    r'|\d{1,3}%'                                     # battery: 85%
+    r'|all\s+[A-Z]{1,3}'                             # "all ED", "all GD"
+    r'|[A-Z]{1,2}\s+\d{1,2}:\d{2}'                  # "ED 3:03"
+    r')\b',
+    re.IGNORECASE
+)
+
+# Palabras cortas reales en español/inglés (no basura OCR)
+_REAL_SHORT_WORDS_SET = frozenset({
+    'y', 'o', 'a', 'e', 'u', 'el', 'la', 'de', 'no', 'es',
+    'lo', 'en', 'se', 'me', 'te', 'le', 'al', 'mi', 'tu',
+    'si', 'ya', 'un', 'yo', 'ni', 'he', 'su', 'os', 'do',
+    'que', 'por', 'con', 'del', 'las', 'los', 'una', 'son',
+    'fue', 'ser', 'hay', 'van', 'mas', 'más', 'sin', 'nos',
+    'hoy', 'muy', 'día', 'dia', 'ver', 'dar', 'mal', 'bien',
+    'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all',
+    'can', 'had', 'her', 'was', 'one', 'our', 'out', 'new',
+    'fui', 'eso', 'esa', 'voy', 'mis', 'tus', 'sus', 'vez',
+    'sol', 'mar', 'luz', 'pan', 'sal', 'red', 'fin', 'dos',
+    'web', 'app', 'pdf', 'url',
+})
+
+# Palabras de 3 chars válidas (superset para no tener que duplicar)
+_VALID_3CHAR = frozenset({
+    'que', 'por', 'con', 'del', 'las', 'los', 'una', 'son',
+    'fue', 'ser', 'hay', 'van', 'mas', 'más', 'sin', 'nos',
+    'hoy', 'muy', 'día', 'dia', 'ver', 'dar', 'mal', 'vez',
+    'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all',
+    'can', 'had', 'her', 'was', 'one', 'our', 'out', 'new',
+    'fui', 'eso', 'esa', 'voy', 'mis', 'tus', 'sus',
+    'sol', 'mar', 'luz', 'pan', 'sal', 'red', 'fin', 'dos',
+    'web', 'app', 'pdf', 'url',
+})
+
+# Patrones de texto de la propia UI de NAVIA (feedback loop)
+_NAVIA_UI_PATTERNS = re.compile(
+    r'\b(?:Lectura|Conversaci[oó]n\s+de\s+chat|Nueva\s+Imagen|Repetir|'
+    r'\d+\s+palabras|confianza|auto|La\s+imagen\s+est[aá]\s+muy\s+oscura|'
+    r'Busca\s+mejor\s+iluminaci[oó]n|enciende\s+la\s+linterna|'
+    r'Esto\s+es\s+una?\s+(?:conversaci[oó]n|notificaci[oó]n|pantalla|'
+    r'publicaci[oó]n|noticia|correo|diapositiva|documento)|'
+    r'Los\s+mensajes\s+dicen|Se\s+detect[oó]\s+(?:texto|un\s+documento)|'
+    r'No\s+se\s+(?:pudo|detect[oó])\s+leer|Documento\s+analizado|'
+    r'Opciones\s+visibles|El\s+texto\s+dice|Dice:|Tiene\s+campos|'
+    r'Pantalla\s+de\s+(?:inicio|configuraci[oó]n)|'
+    r'Factura|Recibo\s+de\s+pago|Etiqueta\s+de\s+producto|'
+    r'Men[uú]\s+de\s+restaurante|Tarjeta\s+de\s+presentaci[oó]n|'
+    r'Noticia\s+o\s+art[ií]culo|Correo\s+electr[oó]nico|'
+    r'Publicaci[oó]n\s+de\s+red\s+social|Presentaci[oó]n|'
+    r'Es\s+un\s+perfil\s+de|Es\s+un\s+chat|'
+    r'Intenta\s+(?:mantener|acercar|con\s+mejor)|'
+    r'borrosa|enfocar\s+bien|iluminaci[oó]n)\b',
+    re.IGNORECASE
+)
+
+
+class OCRTextReconstructor:
+    """
+    Fase obligatoria de reconstrucción semántica del texto OCR.
+
+    Se ejecuta UNA VEZ antes de cualquier generación de narrativa.
+    Transforma el texto OCR crudo en texto limpio y coherente optimizado
+    para lectura por voz.
+
+    Pipeline de reconstrucción:
+      1. Eliminar texto de la propia UI de NAVIA (anti-feedback-loop)
+      2. Eliminar basura de status bar (timestamps, batería, fragmentos)
+      3. Limpiar tokens individuales (basura OCR, símbolos sueltos)
+      4. Separar palabras pegadas por OCR
+      5. Reconstruir líneas coherentes agrupando tokens relacionados
+      6. Detectar y etiquetar estructuras semánticas (encabezados, montos)
+
+    El texto reconstruido es lo que reciben TODOS los generadores.
+    Ningún generador debe usar jamás el texto OCR crudo.
+    """
+
+    def reconstruct(self, raw_text: str, doc_type: str = "") -> str:
+        """
+        Reconstruye texto OCR crudo en texto limpio para TTS.
+
+        Args:
+            raw_text: Texto OCR crudo de Tesseract
+            doc_type: Tipo de documento (para heurísticas específicas)
+
+        Returns:
+            Texto reconstruido, limpio y coherente para narrativa
+        """
+        if not raw_text or not raw_text.strip():
+            return ""
+
+        text = raw_text
+
+        # 1. Anti-feedback-loop: eliminar texto de la propia UI de NAVIA
+        text = self._strip_navia_ui(text)
+        if not text.strip():
+            return ""
+
+        # 2. Eliminar basura de status bar y chrome de apps
+        text = self._strip_status_bar(text)
+
+        # 3. Separar palabras pegadas por OCR (ej: "VerbosHttp" → "Verbos Http")
+        text = self._split_glued_words(text)
+
+        # 4. Limpiar tokens individuales (la limpieza más agresiva)
+        text = self._clean_tokens(text)
+
+        # 5. Reconstruir líneas coherentes
+        text = self._rebuild_lines(text)
+
+        # 6. Limpieza final para TTS
+        text = self._final_tts_cleanup(text)
+
+        return text.strip()
+
+    def clean_fragment(self, fragment: str) -> str:
+        """
+        Limpia un fragmento corto de texto OCR (para regex captures).
+
+        Menos agresivo que reconstruct() — preserva la estructura del
+        fragmento pero elimina basura obvia. Para usar en regex group()
+        captures de los generadores (sender, subject, ingredient, etc.)
+        """
+        if not fragment:
+            return ""
+        # Strip puntuación envolvente
+        fragment = fragment.strip('.,;:!?()[]{}"\'`\t ')
+        # Separar palabras pegadas
+        fragment = self._split_glued_words(fragment)
+        # Limpiar tokens pero ser menos agresivo (no eliminar 3-char)
+        words = fragment.split()
+        clean = []
+        for w in words:
+            stripped = w.strip('.,;:!?()[]{}"\'`')
+            if not stripped:
+                continue
+            wl = stripped.lower()
+            # Eliminar tokens puramente basura
+            if len(wl) == 1 and wl not in 'aeiouáéíóú0123456789':
+                continue
+            # Eliminar tokens solo símbolos
+            if re.match(r'^[^\w]+$', stripped):
+                continue
+            # Eliminar tokens con >60% no-letras
+            letters = sum(1 for c in wl if c.isalpha())
+            if len(wl) > 2 and letters < len(wl) * 0.4:
+                continue
+            clean.append(stripped)
+        return " ".join(clean)
+
+    # --- Etapas internas ---
+
+    @staticmethod
+    def _strip_navia_ui(text: str) -> str:
+        """Elimina texto de la propia UI de NAVIA (anti-feedback-loop)."""
+        match = _NAVIA_UI_PATTERNS.search(text)
+        if match:
+            text = text[:match.start()].strip()
+        return text
+
+    @staticmethod
+    def _strip_status_bar(text: str) -> str:
+        """Elimina basura típica del status bar de capturas de pantalla."""
+        # Eliminar timestamps sueltos, porcentajes de batería, etc.
+        text = _STATUS_BAR_PATTERNS.sub(' ', text)
+        # Eliminar fragmentos cortos all-caps de 1-2 chars aislados
+        text = re.sub(r'(?<!\w)[A-Z]{1,2}(?!\w)', ' ', text)
+        return re.sub(r'\s{2,}', ' ', text).strip()
+
+    @staticmethod
+    def _split_glued_words(text: str) -> str:
+        """
+        Separa palabras pegadas por errores de OCR.
+
+        Ej: "VerbosHttp" → "Verbos Http"
+            "ServicioPan" → "Servicio Pan"
+            "8:36pmM" → "8:36pm M"
+
+        Regla: camelCase split (minúscula seguida de mayúscula)
+        """
+        # Split camelCase: "VerbosHttp" → "Verbos Http"
+        text = re.sub(r'([a-záéíóúñ])([A-ZÁÉÍÓÚÑ])', r'\1 \2', text)
+        # Split dígitos pegados a letras: "8:36pmM" → "8:36pm M"
+        text = re.sub(r'(\d)([A-ZÁÉÍÓÚÑ])', r'\1 \2', text)
+        return text
+
+    @staticmethod
+    def _clean_tokens(text: str) -> str:
+        """
+        Limpia tokens individuales del texto OCR.
+
+        Más completo que _clean_ocr_words — también:
+        - Normaliza Unicode (NFC)
+        - Detecta y preserva números con contexto
+        - Es consistente con la lista de palabras cortas reales
+        """
+        import unicodedata
+        text = unicodedata.normalize('NFC', text)
+
+        words = text.split()
+        clean = []
+        prev_is_word = False  # Para contexto de números
+
+        for i, w in enumerate(words):
+            stripped = w.strip('.,;:!?()[]{}"\'`')
+            wl = stripped.lower()
+
+            if not wl:
+                continue
+
+            # Preservar palabras cortas reales
+            if wl in _REAL_SHORT_WORDS_SET:
+                clean.append(stripped)
+                prev_is_word = True
+                continue
+
+            # Eliminar tokens de 1-2 chars no reconocidos
+            if len(wl) <= 2:
+                prev_is_word = False
+                continue
+
+            # Números y montos: preservar si parecen métricas/cantidades/precios
+            if re.match(r'^[\d\W]+$', wl):
+                # Preservar: "123", "45%", "10K", "$25", "$35.50", "€100"
+                if re.match(r'^[\$€£¥₡₲₺₽]?\d[\d,.]*[%KkMm]?$', stripped):
+                    clean.append(stripped)
+                    prev_is_word = False
+                continue
+
+            # Eliminar tokens con >50% basura (no-letras)
+            letter_count = sum(1 for c in wl if c.isalpha())
+            if letter_count < len(wl) * 0.5:
+                prev_is_word = False
+                continue
+
+            # Eliminar tokens cortos all-caps (basura UI: "GD", "ED")
+            if len(stripped) <= 3 and stripped.isupper():
+                prev_is_word = False
+                continue
+
+            # Tokens de 3 chars: solo aceptar los conocidos o con vocal
+            if len(wl) == 3 and wl not in _VALID_3CHAR:
+                if not re.search(r'[aeiouáéíóú]', wl):
+                    prev_is_word = False
+                    continue
+
+            clean.append(stripped)
+            prev_is_word = True
+
+        return " ".join(clean)
+
+    @staticmethod
+    def _rebuild_lines(text: str) -> str:
+        """
+        Reconstruye líneas coherentes agrupando tokens.
+
+        - Elimina líneas con menos de 2 palabras reales
+        - Colapsa líneas vacías
+        """
+        if not text:
+            return ""
+
+        lines = text.split('\n')
+        rebuilt = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            words = line.split()
+            # Contar palabras reales (>2 chars con letras)
+            real = [w for w in words
+                    if len(w) > 2 and re.search(r'[a-záéíóúñ]', w, re.IGNORECASE)]
+            # Aceptar línea si tiene al menos 2 palabras reales,
+            # O si es corta pero toda es real (ej: nombre propio)
+            if len(real) >= 2 or (len(words) <= 3 and len(real) == len(words)):
+                rebuilt.append(" ".join(words))
+
+        return "\n".join(rebuilt)
+
+    @staticmethod
+    def _final_tts_cleanup(text: str) -> str:
+        """Limpieza final optimizada para lectura por voz."""
+        # Colapsar espacios múltiples
+        text = re.sub(r'\s{2,}', ' ', text)
+        # Eliminar puntuación repetida
+        text = re.sub(r'([.!?,;:])\1+', r'\1', text)
+        # Eliminar guiones sueltos
+        text = re.sub(r'\s-\s', ' ', text)
+        text = re.sub(r'^-\s', '', text, flags=re.MULTILINE)
+        # Eliminar paréntesis vacíos o con basura
+        text = re.sub(r'\([^)]{0,2}\)', '', text)
+        text = re.sub(r'\[[^\]]{0,2}\]', '', text)
+        return text.strip()
+
+
+# Singleton
+_reconstructor_instance: Optional[OCRTextReconstructor] = None
+
+def get_text_reconstructor() -> OCRTextReconstructor:
+    global _reconstructor_instance
+    if _reconstructor_instance is None:
+        _reconstructor_instance = OCRTextReconstructor()
+    return _reconstructor_instance
+
+
+def _cf(fragment: str) -> str:
+    """Atajo módulo-level para clean_fragment (para regex captures en generators)."""
+    return get_text_reconstructor().clean_fragment(fragment)
 
 
 # ============================================================================
@@ -433,23 +756,55 @@ class NarrativeGenerator:
         visual_caption: Optional[str] = None,
     ) -> str:
         generators = {
+            # DOCUMENTO_FORMAL
             "factura": self._gen_factura,
             "recibo": self._gen_recibo,
             "carta": self._gen_carta,
             "formulario": self._gen_formulario,
             "documento_informativo": self._gen_documento_info,
-            "imagen_visual": self._gen_imagen_visual,
             "etiqueta": self._gen_etiqueta,
-            "menu": self._gen_menu,
-            "chat": self._gen_chat,
-            "notificacion": self._gen_notificacion,
-            "login": self._gen_login,
-            "red_social": self._gen_red_social,
+            "tarjeta": self._gen_tarjeta,
+            "contrato": self._gen_documento_info,
+            "hoja_de_vida": self._gen_documento_info,
+            "informe": self._gen_documento_info,
             "noticia": self._gen_noticia,
             "correo": self._gen_correo,
             "presentacion": self._gen_presentacion,
+            "receta_medica": self._gen_receta_medica,
+            "boleto": self._gen_boleto,
+            "identificacion": self._gen_identificacion,
+            "horario": self._gen_horario,
+            "instrucciones": self._gen_instrucciones,
+            "resultado_lab": self._gen_resultado_lab,
+            "tabla_nutricional": self._gen_tabla_nutricional,
+            "calendario": self._gen_calendario,
+
+            # INTERFAZ_DIGITAL (nuevos subtipos → generadores existentes)
+            "app_menu": self._gen_menu,
+            "app_settings": self._gen_configuracion,
+            "app_login": self._gen_login,
+            "app_form": self._gen_formulario,
+            "app_social": self._gen_red_social,
+            "app_service": self._make_app_gen("un servicio o compra"),
+            "notificacion": self._gen_notificacion,
+            "mapa": self._gen_mapa,
+
+            # TEXTO_CONVERSACIONAL
+            "chat": self._gen_chat,
+            "comentario": self._gen_chat,
+
+            # IMAGEN_VISUAL
+            "imagen_visual": self._gen_imagen_visual,
+
+            # Legacy compatibility
+            "menu": self._gen_menu,
+            "login": self._gen_login,
+            "red_social": self._gen_red_social,
             "configuracion": self._gen_configuracion,
+
+            # Fallbacks
             "desconocido": self._gen_desconocido,
+            "mixto": self._gen_desconocido,
         }
         fn = generators.get(doc_type, self._gen_desconocido)
         try:
@@ -472,97 +827,275 @@ class NarrativeGenerator:
 
     def _gen_factura(self, mode: str, text: str, ex: ExtractedData,
                      caption: Optional[str]) -> str:
-        intro = "Este documento es una factura."
+        """Narrativa natural para facturas y tickets de compra.
 
-        if mode == "resumen":
-            parts = [intro]
-            if ex.totals:
-                # Extraer solo el monto del total (sin la palabra "total")
-                total_clean = self._clean_total(ex.totals[-1])
-                monto = re.sub(r'^(?:sub)?total\s*:?\s*', '', total_clean, flags=re.IGNORECASE).strip()
-                parts.append(f"El monto total es {monto}.")
-            elif ex.amounts:
-                parts.append(f"Monto principal: {ex.amounts[0]}.")
-            if ex.dates:
-                parts.append(f"Fechada el {ex.dates[0]}.")
-            return " ".join(parts)
+        Extrae directamente del texto OCR (crudo o limpio):
+        - Total a pagar (busca TOTAL + monto más grande cercano)
+        - Productos/items (cuenta líneas con precio)
+        - Fecha
+        - Método de pago
+        - Empresa/establecimiento
+        """
+        # Usar texto crudo que tiene los montos (el clean los puede eliminar)
+        src = text if text else ""
 
-        if mode == "financiero":
-            parts = [intro]
-            if ex.totals:
-                for t in ex.totals:
-                    parts.append(f"{self._clean_total(t)}.")
-            if ex.amounts:
-                unique = [a for a in ex.amounts if not any(a in t for t in ex.totals)][:5]
-                if unique:
-                    parts.append("Otros montos: " + ", ".join(unique) + ".")
-            if ex.dates:
-                parts.append(f"Fecha de la factura: {ex.dates[0]}.")
-            if ex.ids:
-                parts.append(f"Identificación: {ex.ids[0]}.")
-            return " ".join(parts)
+        # --- 1. Buscar TOTAL (el dato más importante) ---
+        total_amount = None
 
-        # detallado
-        parts = [intro]
-        if ex.ids:
-            parts.append(f"Identificación del emisor: {ex.ids[0]}.")
+        def _clean_bs_amount(raw_amt: str) -> str:
+            """Limpia un monto en Bs: 'Bs 2.533. 818,60' → 'Bs 2.533.818,60'"""
+            clean = re.sub(r'(\d)[\s]+(?=\d)', r'\1', raw_amt)
+            clean = re.sub(r'\.\s+', '.', clean)
+            clean = re.sub(r',\s+', ',', clean)
+            return clean.strip()
+
+        def _parse_amount_value(amt_str: str) -> int:
+            """Extrae valor numérico de un monto para comparación."""
+            digits = re.sub(r'[^\d]', '', amt_str)
+            try:
+                return int(digits) if digits else 0
+            except ValueError:
+                return 0
+
+        # Estrategia 1: buscar SUBTOTAL primero (más confiable, OCR garbles TOTAL)
+        # Variantes OCR: SUBTOTAL, SUBTTL, SUBTTOL, SUBTL, SUB TOTAL
+        sub_m = re.search(
+            r'\bSUB\s*T(?:OT|T)?(?:AL|L)?\b[^\n]{0,15}?'
+            r'((?:Bs\.?|[\$€£])\s*[\d]+(?:[\s,\.]+\d+)*)',
+            src, re.IGNORECASE)
+        subtotal_amount = None
+        if sub_m:
+            subtotal_amount = _clean_bs_amount(sub_m.group(1))
+
+        # Estrategia 2: buscar "TOTAL" (no SUBTOTAL) + Bs + número
+        total_m = re.search(
+            r'(?<!\bSUB)\bTOTAL\b[^\n]{0,25}?'
+            r'((?:Bs\.?|[\$€£]|USD|COP|VES|MXN)\s*'
+            r'[\d]+(?:[\s,\.]+\d+)*)',
+            src, re.IGNORECASE)
+        if total_m:
+            candidate = _clean_bs_amount(total_m.group(1))
+            total_val = _parse_amount_value(candidate)
+            sub_val = _parse_amount_value(subtotal_amount) if subtotal_amount else 0
+            # Usar TOTAL si es >= SUBTOTAL (lógico) o si no hay SUBTOTAL
+            if total_val >= sub_val and total_val >= 1000:
+                total_amount = candidate
+            elif sub_val > 0:
+                # TOTAL garbled, usar SUBTOTAL
+                total_amount = subtotal_amount
+        elif subtotal_amount:
+            total_amount = subtotal_amount
+
+        # Estrategia 3: tomar el monto más grande de ex.amounts
+        if not total_amount and ex.amounts:
+            best = None
+            best_val = 0
+            for a in ex.amounts:
+                val = _parse_amount_value(a)
+                # Filtrar montos absurdamente grandes (>100 dígitos = regex greedy)
+                if val > best_val and len(re.sub(r'[^\d]', '', a)) <= 15:
+                    best_val = val
+                    best = a
+            if best:
+                total_amount = best
+
+        # Estrategia 4: buscar el monto más grande en el texto directamente
+        if not total_amount:
+            all_bs = re.findall(
+                r'(?:Bs\.?|[\$€£])\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)',
+                src, re.I)
+            best_raw = None
+            best_val = 0
+            for a in all_bs:
+                val = _parse_amount_value(a)
+                if val > best_val:
+                    best_val = val
+                    best_raw = a
+            if best_raw:
+                total_amount = f"Bs {best_raw}"
+
+        # --- 2. Contar productos/items ---
+        # Productos: texto seguido de (E) o (G) y luego Bs/$/€ + número
+        product_pattern = re.compile(
+            r'([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑa-záéíóúñ\s\d]{2,45}?)'
+            r'\s*(?:pk\.?|pK\.?)?\s*'
+            r'\([EGeg]\)\s*'
+            r'(?:Bs\.?|[\$€£])',
+            re.IGNORECASE)
+        products = product_pattern.findall(src)
+        # Limpiar nombres de producto
+        _SKIP_NAMES = frozenset({
+            'TOTAL', 'SUBTOTAL', 'EXENTO', 'SUBTTL', 'EFECTIVO',
+            'TARJETA', 'DEBITO', 'CREDITO', 'IVA', 'FACTURA',
+            'NETO', 'BRUTO',
+        })
+        product_names = []
+        for p in products:
+            name = p.strip()
+            # Eliminar peso/volumen del final: "500G", "1KG", "60ML", "900ML"
+            name = re.sub(r'\s*\d+\s*(?:KG|G|ML|LT|OZ|LB|CC)\s*$', '', name, flags=re.I)
+            # Eliminar multiplicadores: "0,79xBs"
+            name = re.sub(r'\s*\d+[,\.]\d+x.*$', '', name, flags=re.I)
+            name = name.strip()
+            if len(name) > 2 and name.upper() not in _SKIP_NAMES:
+                # Capitalizar: "ARROZ DONA BLANCA" → "Arroz Doña Blanca"
+                product_names.append(name.title())
+        num_items = len(product_names)
+
+        # --- 3. Fecha ---
+        fecha = None
         if ex.dates:
-            parts.append(f"Fecha: {ex.dates[0]}.")
-        if ex.headers:
-            parts.append(f"Empresa: {ex.headers[0]}.")
-        if ex.totals:
-            for t in ex.totals:
-                parts.append(f"{self._clean_total(t)}.")
-        elif ex.amounts:
-            parts.append("Montos detectados: " + ", ".join(ex.amounts[:4]) + ".")
-        if ex.emails:
-            parts.append(f"Correo de contacto: {ex.emails[0]}.")
-        if ex.phones:
-            parts.append(f"Teléfono: {ex.phones[0]}.")
+            fecha = ex.dates[0]
+        else:
+            # Buscar FECHA: dd/mm/yyyy o dd-mm-yyyy
+            fecha_m = re.search(r'FECHA\s*:?\s*(\d{1,2}[\s/\-]\s*\d{1,2}[\s/\-]\s*\d{2,4})',
+                                src, re.IGNORECASE)
+            if fecha_m:
+                fecha = re.sub(r'\s+', '', fecha_m.group(1))
+
+        # --- 4. Método de pago ---
+        metodo_pago = None
+        if re.search(r'\bTARJETA\s+DEBITO\b', src, re.I):
+            metodo_pago = "tarjeta débito"
+        elif re.search(r'\bTARJETA\s+(?:DE\s+)?CR[ÉE]DITO\b', src, re.I):
+            metodo_pago = "tarjeta de crédito"
+        elif re.search(r'\bEFECTIVO\b', src, re.I):
+            # Si hay tarjeta Y efectivo, es pago mixto
+            if re.search(r'\bTARJETA\b', src, re.I):
+                metodo_pago = "tarjeta y efectivo"
+            else:
+                metodo_pago = "efectivo"
+
+        # --- 5. Número de factura ---
+        num_factura = None
+        nf_m = re.search(r'FACTURA\s*:?\s*#?\s*(\d{4,})', src, re.I)
+        if nf_m:
+            num_factura = nf_m.group(1)
+        elif ex.ids:
+            num_factura = ex.ids[0]
+
+        # === CONSTRUIR NARRATIVA ===
+        parts = []
+
+        # Intro
+        parts.append("Tienes una factura de compra.")
+
+        # Total (lo más importante)
+        if total_amount:
+            parts.append(f"El total a pagar es {total_amount}.")
+
+        # Resumen de productos
+        if num_items > 0:
+            if num_items <= 3:
+                nombres = ", ".join(product_names[:3])
+                parts.append(f"Compraste {nombres}.")
+            elif num_items <= 8:
+                top3 = ", ".join(product_names[:3])
+                parts.append(f"Tiene {num_items} productos. Entre ellos: {top3}.")
+            else:
+                top3 = ", ".join(product_names[:3])
+                parts.append(f"Tiene {num_items} productos. Los primeros son: {top3}, entre otros.")
+
+        # Método de pago
+        if metodo_pago:
+            parts.append(f"Pagado con {metodo_pago}.")
+
+        # Fecha
+        if fecha:
+            parts.append(f"Fecha: {fecha}.")
+
+        # Número de factura (solo en detallado)
+        if mode == "detallado" or mode == "financiero":
+            if num_factura:
+                parts.append(f"Factura número {num_factura}.")
+
+        # Si no encontramos nada útil, dar resumen mínimo
+        if len(parts) == 1:
+            if ex.amounts:
+                parts.append(f"Se ven montos como {ex.amounts[0]}.")
+            else:
+                parts.append("No pude leer los detalles con claridad. Intenta con mejor iluminación.")
+
         return " ".join(parts)
 
     # --- RECIBO ---
 
     def _gen_recibo(self, mode: str, text: str, ex: ExtractedData,
                     caption: Optional[str]) -> str:
-        intro = "Este documento es un recibo de pago."
+        """Narrativa natural para recibos de pago."""
+        # Detectar método de pago (heurística por keywords)
+        metodo = None
+        if re.search(r'\btarjeta\s+(?:de\s+)?cr[eé]dito\b', text, re.IGNORECASE):
+            metodo = "tarjeta de crédito"
+        elif re.search(r'\btarjeta\s+(?:de\s+)?d[eé]bito\b', text, re.IGNORECASE):
+            metodo = "tarjeta débito"
+        elif re.search(r'\btarjeta\b', text, re.IGNORECASE):
+            metodo = "tarjeta"
+        elif re.search(r'\befectivo\b', text, re.IGNORECASE):
+            metodo = "efectivo"
+        elif re.search(r'\btransferencia\b', text, re.IGNORECASE):
+            metodo = "transferencia"
+        elif re.search(r'\b(?:nequi|daviplata|pse|paypal)\b', text, re.IGNORECASE):
+            m = re.search(r'\b(nequi|daviplata|pse|paypal)\b', text, re.IGNORECASE)
+            metodo = m.group(1) if m else None
+
+        if ex.amounts:
+            intro = f"Tienes un recibo de pago por {ex.amounts[0]}."
+        else:
+            intro = "Tienes un recibo de pago."
 
         if mode == "resumen":
             parts = [intro]
-            if ex.amounts:
-                parts.append(f"Monto: {ex.amounts[0]}.")
+            if metodo:
+                parts.append(f"Pagado con {metodo}.")
             if ex.dates:
-                parts.append(f"Fecha de pago: {ex.dates[0]}.")
+                parts.append(f"Fecha: {ex.dates[0]}.")
             return " ".join(parts)
 
         if mode == "financiero":
             parts = [intro]
             if ex.totals:
                 parts.extend([f"{self._clean_total(t)}." for t in ex.totals])
-            elif ex.amounts:
-                parts.append(f"Monto pagado: {ex.amounts[0]}.")
+            if metodo:
+                parts.append(f"Método de pago: {metodo}.")
             if ex.dates:
                 parts.append(f"Fecha: {ex.dates[0]}.")
             return " ".join(parts)
 
+        # detallado
         parts = [intro]
+        if metodo:
+            parts.append(f"Pagado con {metodo}.")
         if ex.dates:
-            parts.append(f"Fecha del pago: {ex.dates[0]}.")
-        if ex.amounts:
-            parts.append(f"Monto pagado: {ex.amounts[0]}.")
+            parts.append(f"Fecha: {ex.dates[0]}.")
         if ex.ids:
-            parts.append(f"Número de comprobante: {ex.ids[0]}.")
+            parts.append(f"Comprobante número {ex.ids[0]}.")
         if ex.emails:
-            parts.append(f"Correo: {ex.emails[0]}.")
+            parts.append(f"Correo de contacto: {ex.emails[0]}.")
         if ex.phones:
             parts.append(f"Teléfono: {ex.phones[0]}.")
+        parts.append("Guarda este recibo como comprobante.")
         return " ".join(parts)
 
     # --- CARTA ---
 
     def _gen_carta(self, mode: str, text: str, ex: ExtractedData,
                    caption: Optional[str]) -> str:
-        intro = "Este documento es una carta."
+        """Narrativa natural para cartas y oficios."""
+        # Buscar remitente/destinatario
+        remitente = None
+        rem_match = re.search(
+            r'(?:atentamente|cordialmente|firma)\s*:?\s*,?\s*([^\n]{3,40})',
+            text, re.IGNORECASE)
+        if rem_match:
+            remitente = _cf(rem_match.group(1))
+
+        if remitente:
+            intro = f"Tienes una carta firmada por {remitente}."
+        elif ex.headers:
+            intro = f"Tienes una carta de {ex.headers[0]}."
+        else:
+            intro = "Tienes una carta."
 
         if mode == "resumen":
             parts = [intro]
@@ -576,21 +1109,22 @@ class NarrativeGenerator:
         if mode == "financiero":
             parts = [intro]
             if ex.amounts:
-                parts.append("Montos mencionados: " + ", ".join(ex.amounts[:3]) + ".")
+                parts.append("Menciona estos montos: " + ", ".join(ex.amounts[:3]) + ".")
             if ex.dates:
                 parts.append(f"Fecha: {ex.dates[0]}.")
             return " ".join(parts)
 
+        # detallado
         parts = [intro]
         if ex.dates:
-            parts.append(f"Fecha: {ex.dates[0]}.")
-        if ex.headers:
+            parts.append(f"Con fecha {ex.dates[0]}.")
+        if ex.headers and not remitente:
             parts.append(f"Asunto: {ex.headers[0]}.")
         body = self._extract_body_preview(text, max_words=40)
         if body:
-            parts.append(f"Contenido: {body}.")
+            parts.append(f"Dice: {body}.")
         if ex.emails:
-            parts.append(f"Correo: {ex.emails[0]}.")
+            parts.append(f"Correo de contacto: {ex.emails[0]}.")
         if ex.phones:
             parts.append(f"Teléfono: {ex.phones[0]}.")
         return " ".join(parts)
@@ -599,25 +1133,46 @@ class NarrativeGenerator:
 
     def _gen_formulario(self, mode: str, text: str, ex: ExtractedData,
                         caption: Optional[str]) -> str:
-        intro = "Este documento es un formulario."
+        """Narrativa natural para formularios."""
+        if ex.headers:
+            intro = f"Tienes un formulario de {ex.headers[0]}."
+        else:
+            intro = "Tienes un formulario para llenar."
+
+        # Detectar campos comunes
+        campos = []
+        campo_patterns = [
+            (r'\bnombre\s+completo\b', 'nombre completo'),
+            (r'\bcorreo|e-?mail\b', 'correo electrónico'),
+            (r'\btel[eé]fono|celular\b', 'teléfono'),
+            (r'\bdirecci[oó]n\b', 'dirección'),
+            (r'\bc[eé]dula|documento\b', 'documento de identidad'),
+            (r'\bfirma\b', 'firma'),
+            (r'\bfecha\s+de\s+nacimiento\b', 'fecha de nacimiento'),
+        ]
+        for pat, label in campo_patterns:
+            if re.search(pat, text, re.IGNORECASE):
+                campos.append(label)
 
         if mode == "resumen":
             parts = [intro]
-            if ex.headers:
-                parts.append(f"Título: {ex.headers[0]}.")
-            parts.append("Contiene campos para completar.")
+            if campos:
+                parts.append(f"Te pide: {', '.join(campos[:3])}.")
+            else:
+                parts.append("Tiene varios campos para completar.")
             return " ".join(parts)
 
+        # detallado
         parts = [intro]
-        if ex.headers:
-            parts.append(f"Título del formulario: {ex.headers[0]}.")
         field_count = text.count(':')
-        if field_count > 0:
-            parts.append(f"Tiene aproximadamente {field_count} campos para llenar.")
+        if campos:
+            parts.append(f"Te pide datos como {', '.join(campos[:5])}.")
+        elif field_count > 2:
+            parts.append(f"Tiene alrededor de {field_count} campos para llenar.")
         if ex.ids:
-            parts.append(f"Solicita identificación: {ex.ids[0]}.")
+            parts.append(f"Pide tu identificación: {ex.ids[0]}.")
         if ex.dates:
-            parts.append(f"Incluye fecha: {ex.dates[0]}.")
+            parts.append(f"Fecha incluida: {ex.dates[0]}.")
         if ex.phones:
             parts.append(f"Teléfono de contacto: {ex.phones[0]}.")
         return " ".join(parts)
@@ -626,21 +1181,25 @@ class NarrativeGenerator:
 
     def _gen_documento_info(self, mode: str, text: str, ex: ExtractedData,
                             caption: Optional[str]) -> str:
-        intro = "Este es un documento informativo."
+        """Narrativa natural para documentos informativos genéricos."""
+        if ex.headers:
+            intro = f"Tienes un documento sobre {ex.headers[0]}."
+        else:
+            intro = "Tienes un documento informativo."
 
         if mode == "resumen":
             parts = [intro]
-            if ex.headers:
-                parts.append(f"Título: {ex.headers[0]}.")
             if ex.dates:
                 parts.append(f"Fecha: {ex.dates[0]}.")
+            first = self._extract_first_sentence(text, skip_lines=2)
+            if first and (not ex.headers or first.lower() != ex.headers[0].lower()):
+                parts.append(f"Comienza diciendo: {first}")
             return " ".join(parts)
 
+        # detallado
         parts = [intro]
-        if ex.headers:
-            parts.append(f"Título principal: {ex.headers[0]}.")
         if ex.dates:
-            parts.append(f"Fecha de emisión: {ex.dates[0]}.")
+            parts.append(f"Con fecha {ex.dates[0]}.")
         body = self._extract_body_preview(text, max_words=50)
         if body:
             parts.append(f"Dice: {body}.")
@@ -654,8 +1213,9 @@ class NarrativeGenerator:
         if caption:
             parts.append(f"La imagen muestra: {caption}.")
         if text and text.strip():
-            clean = " ".join(text.split()[:30])
-            parts.append(f"El texto visible dice: {clean}.")
+            preview = self._extract_body_preview(text, max_words=30)
+            if preview:
+                parts.append(f"El texto visible dice: {preview}.")
         elif not caption:
             parts.append("No se detectó texto claro en la imagen.")
         return " ".join(parts) if parts else "Imagen sin texto legible detectado."
@@ -665,11 +1225,8 @@ class NarrativeGenerator:
     def _gen_etiqueta(self, mode: str, text: str, ex: ExtractedData,
                       caption: Optional[str]) -> str:
         """Genera narrativa natural para etiquetas de productos."""
-        text = self._strip_navia_ui(text)
         if not text or not text.strip():
             return "Es una etiqueta de producto, pero no se pudo leer."
-
-        parts = ["Esto es una etiqueta de producto."]
 
         # Detectar nombre del producto (primera línea larga o header)
         product_name = None
@@ -681,7 +1238,9 @@ class NarrativeGenerator:
                 product_name = first
 
         if product_name:
-            parts.append(f"Producto: {product_name}.")
+            parts = [f"Es la etiqueta de {product_name}."]
+        else:
+            parts = ["Es una etiqueta de producto."]
 
         # Buscar precio
         price_match = re.search(
@@ -699,7 +1258,9 @@ class NarrativeGenerator:
             text, re.IGNORECASE
         )
         if venc_match:
-            parts.append(f"Vencimiento: {venc_match.group(1).strip()}.")
+            venc_val = venc_match.group(1).strip()
+            if venc_val:
+                parts.append(f"Vence en {venc_val}.")
         elif ex.dates:
             parts.append(f"Fecha: {ex.dates[0]}.")
 
@@ -728,7 +1289,7 @@ class NarrativeGenerator:
             text, re.IGNORECASE
         )
         if ingr_match:
-            ingredientes = ingr_match.group(1).strip()
+            ingredientes = _cf(ingr_match.group(1))
             # Limitar largo
             words = ingredientes.split()
             if len(words) > 25:
@@ -741,7 +1302,7 @@ class NarrativeGenerator:
             text, re.IGNORECASE
         )
         if fab_match:
-            parts.append(f"Fabricado por: {fab_match.group(1).strip()}.")
+            parts.append(f"Fabricado por: {_cf(fab_match.group(1))}.")
 
         # Lote
         lote_match = re.search(
@@ -758,18 +1319,17 @@ class NarrativeGenerator:
     def _gen_menu(self, mode: str, text: str, ex: ExtractedData,
                   caption: Optional[str]) -> str:
         """Genera narrativa natural para menús de restaurante."""
-        text = self._strip_navia_ui(text)
         if not text or not text.strip():
             return "Es un menú, pero no se pudo leer."
-
-        parts = ["Esto es un menú."]
 
         # Detectar nombre del restaurante (header o primera línea prominente)
         restaurant = None
         if ex.headers:
             restaurant = ex.headers[0]
         if restaurant:
-            parts.append(f"Restaurante: {restaurant}.")
+            parts = [f"Es el menú de {restaurant}."]
+        else:
+            parts = ["Tienes un menú de restaurante."]
 
         # Detectar secciones del menú
         sections_found = []
@@ -801,7 +1361,7 @@ class NarrativeGenerator:
             re.IGNORECASE
         )
         for m in item_pattern.finditer(text):
-            item_name = m.group(1).strip()
+            item_name = _cf(m.group(1))
             item_price = m.group(2).strip()
             # Filtrar basura (no items de 1-2 words que sean secciones)
             if len(item_name.split()) >= 1 and len(item_name) > 3:
@@ -843,28 +1403,6 @@ class NarrativeGenerator:
 
     # --- CHAT ---
 
-    # Patrones de texto que pertenecen a la UI de NAVIA (feedback loop)
-    # Detecta narrativas generadas por NAVIA para evitar leer su propia salida
-    _NAVIA_UI_PATTERNS = re.compile(
-        r'\b(?:Lectura|Conversaci[oó]n\s+de\s+chat|Nueva\s+Imagen|Repetir|'
-        r'\d+\s+palabras|confianza|auto|La\s+imagen\s+est[aá]\s+muy\s+oscura|'
-        r'Busca\s+mejor\s+iluminaci[oó]n|enciende\s+la\s+linterna|'
-        r'Esto\s+es\s+una?\s+(?:conversaci[oó]n|notificaci[oó]n|pantalla|'
-        r'publicaci[oó]n|noticia|correo|diapositiva|documento)|'
-        r'Los\s+mensajes\s+dicen|Se\s+detect[oó]\s+(?:texto|un\s+documento)|'
-        r'No\s+se\s+(?:pudo|detect[oó])\s+leer|Documento\s+analizado|'
-        r'Opciones\s+visibles|El\s+texto\s+dice|Dice:|Tiene\s+campos|'
-        r'Pantalla\s+de\s+(?:inicio|configuraci[oó]n)|'
-        r'Factura|Recibo\s+de\s+pago|Etiqueta\s+de\s+producto|'
-        r'Men[uú]\s+de\s+restaurante|Tarjeta\s+de\s+presentaci[oó]n|'
-        r'Noticia\s+o\s+art[ií]culo|Correo\s+electr[oó]nico|'
-        r'Publicaci[oó]n\s+de\s+red\s+social|Presentaci[oó]n|'
-        r'Es\s+un\s+perfil\s+de|Es\s+un\s+chat|'
-        r'Intenta\s+(?:mantener|acercar|con\s+mejor)|'
-        r'borrosa|enfocar\s+bien|iluminaci[oó]n)\b',
-        re.IGNORECASE
-    )
-
     # Patrones de UI del teléfono / status bar / chrome de chat apps
     _PHONE_UI_PATTERNS = re.compile(
         r'^\d{1,2}:\d{2}\s*$|'                     # solo timestamp (3:03)
@@ -880,14 +1418,7 @@ class NarrativeGenerator:
         if not text or not text.strip():
             return "Es un chat, pero no se pudo leer."
 
-        # 1. Anti-feedback-loop
-        navia_match = self._NAVIA_UI_PATTERNS.search(text)
-        if navia_match:
-            text = text[:navia_match.start()].strip()
-            if not text:
-                return "Es un chat, pero no se pudo leer el contenido."
-
-        # 2. Detectar contacto/grupo
+        # Detectar contacto/grupo
         contact = None
         # El nombre del contacto aparece en la primera línea (header del chat)
         # Típicamente: "Brayan" o "Mamá" antes de los timestamps/mensajes
@@ -979,12 +1510,24 @@ class NarrativeGenerator:
 
     def _gen_notificacion(self, mode: str, text: str, ex: ExtractedData,
                           caption: Optional[str]) -> str:
-        """Genera narrativa para notificaciones y alertas."""
-        text = self._strip_navia_ui(text)
+        """Narrativa natural para notificaciones y alertas."""
         if not text or not text.strip():
-            return "Es una notificación, pero no se pudo leer el contenido."
+            return "Tienes una notificación, pero no pude leer el contenido."
 
-        parts = ["Esto es una notificación."]
+        # Detectar app de la notificación
+        app = None
+        app_match = re.search(
+            r'\b(WhatsApp|Gmail|Instagram|Facebook|Twitter|Uber|Rappi|'
+            r'YouTube|Spotify|Netflix|Telegram|TikTok|LinkedIn|Slack|'
+            r'Teams|Outlook|Calendar|Maps|Waze)\b', text, re.IGNORECASE)
+        if app_match:
+            app = app_match.group(1)
+
+        if app:
+            parts = [f"Tienes una notificación de {app}."]
+        else:
+            parts = ["Tienes una notificación."]
+
         body = self._extract_body_preview(text, max_words=40)
         if body:
             parts.append(f"Dice: {body}.")
@@ -994,20 +1537,23 @@ class NarrativeGenerator:
 
     def _gen_login(self, mode: str, text: str, ex: ExtractedData,
                    caption: Optional[str]) -> str:
-        """Genera narrativa para pantallas de inicio de sesión."""
-        text = self._strip_navia_ui(text)
+        """Narrativa natural para pantallas de inicio de sesión."""
         if not text or not text.strip():
-            return "Es una pantalla de inicio de sesión."
-
-        parts = ["Esto es una pantalla de inicio de sesión."]
+            return "Estás en una pantalla de inicio de sesión."
 
         # Detectar qué servicio/app es
+        service = None
         service_match = re.search(
             r'\b(Google|Facebook|Apple|Instagram|Twitter|X|GitHub|Microsoft|'
             r'Outlook|Netflix|Spotify|Amazon|WhatsApp|Telegram|LinkedIn|'
             r'TikTok|Snapchat|Discord|Uber|PayPal)\b', text, re.IGNORECASE)
         if service_match:
-            parts.append(f"Es de {service_match.group(1)}.")
+            service = service_match.group(1)
+
+        if service:
+            parts = [f"Estás en la pantalla de inicio de sesión de {service}."]
+        else:
+            parts = ["Estás en una pantalla de inicio de sesión."]
 
         # Detectar campos visibles
         has_password = bool(re.search(r'\b(?:contrase[ñn]a|password|clave)\b', text, re.IGNORECASE))
@@ -1016,13 +1562,13 @@ class NarrativeGenerator:
         has_forgot = bool(re.search(r'\b(?:olvid|forgot|recuperar)\b', text, re.IGNORECASE))
 
         if has_user and has_password:
-            parts.append("Tiene campos para usuario y contraseña.")
+            parts.append("Te pide usuario y contraseña.")
         elif has_user:
-            parts.append("Pide ingresar el usuario o correo.")
+            parts.append("Te pide ingresar tu usuario o correo.")
         if has_register:
-            parts.append("También tiene opción de registrarse.")
+            parts.append("También puedes crear una cuenta nueva.")
         if has_forgot:
-            parts.append("Hay opción para recuperar la contraseña.")
+            parts.append("Si olvidaste tu contraseña, hay opción para recuperarla.")
 
         return " ".join(parts)
 
@@ -1031,7 +1577,6 @@ class NarrativeGenerator:
     def _gen_red_social(self, mode: str, text: str, ex: ExtractedData,
                         caption: Optional[str]) -> str:
         """Genera narrativa natural para perfiles y publicaciones de redes sociales."""
-        text = self._strip_navia_ui(text)
         if not text or not text.strip():
             return "Es una red social, pero no se pudo leer el contenido."
 
@@ -1153,45 +1698,50 @@ class NarrativeGenerator:
 
     def _gen_noticia(self, mode: str, text: str, ex: ExtractedData,
                      caption: Optional[str]) -> str:
-        """Genera narrativa para noticias, artículos, blogs, portadas."""
-        text = self._strip_navia_ui(text)
+        """Narrativa natural para noticias, artículos, blogs, portadas."""
         if not text or not text.strip():
-            return "Es una noticia o artículo, pero no se pudo leer el contenido."
-
-        parts = ["Esto es una noticia o artículo."]
+            return "Hay una noticia, pero no pude leer el contenido."
 
         # Buscar fuente/medio
         source_name = None
         source_match = re.search(
             r'\b(Reuters|AP|AFP|EFE|CNN|BBC|El\s+Pa[ií]s|El\s+Nacional|'
             r'El\s+Universal|El\s+Tiempo|New\s+York\s+Times|The\s+Guardian|'
-            r'Washington\s+Post|Forbes|Bloomberg)\b', text, re.IGNORECASE)
+            r'Washington\s+Post|Forbes|Bloomberg|Semana|Portafolio|'
+            r'La\s+Rep[uú]blica|Infobae)\b', text, re.IGNORECASE)
         if source_match:
             source_name = source_match.group(1)
-            parts.append(f"Fuente: {source_name}.")
+
+        # Extraer título
+        titulo = None
+        first = self._extract_first_sentence(text, skip_lines=0)
+        if first and source_name and first.strip().lower() == source_name.strip().lower():
+            first = self._extract_first_sentence(text, skip_lines=1)
+        if first:
+            titulo = first
+
+        # Intro contextual
+        if source_name and titulo:
+            parts = [f"Hay una noticia de {source_name}. El titular dice: {titulo}."]
+        elif source_name:
+            parts = [f"Hay una noticia de {source_name}."]
+        elif titulo:
+            parts = [f"Hay una noticia. El titular dice: {titulo}."]
+        else:
+            parts = ["Hay un artículo o noticia."]
 
         if ex.dates:
             parts.append(f"Fecha: {ex.dates[0]}.")
 
-        if mode == "resumen":
-            # Solo título/primera oración, saltando la línea de la fuente
-            first = self._extract_first_sentence(text, skip_lines=0)
-            # Evitar que el título sea simplemente el nombre de la fuente
-            if first and source_name and first.strip().lower() == source_name.strip().lower():
-                first = self._extract_first_sentence(text, skip_lines=1)
-            if first:
-                parts.append(f"Título: {first}.")
-        else:
-            # Detallado: más contenido, pero quitar fuente del body para no repetir
+        if mode != "resumen":
             body_text = text
             if source_name:
-                # Quitar primera aparición del nombre de la fuente del body
                 body_text = re.sub(
                     r'\b' + re.escape(source_name) + r'\b',
                     '', body_text, count=1, flags=re.IGNORECASE
                 ).strip()
             body = self._extract_body_preview(body_text, max_words=60)
-            if body:
+            if body and (not titulo or titulo.lower() not in body[:50].lower()):
                 parts.append(f"Dice: {body}.")
 
         return " ".join(parts)
@@ -1200,33 +1750,36 @@ class NarrativeGenerator:
 
     def _gen_correo(self, mode: str, text: str, ex: ExtractedData,
                     caption: Optional[str]) -> str:
-        """Genera narrativa para correos electrónicos."""
-        text = self._strip_navia_ui(text)
+        """Narrativa natural para correos electrónicos."""
         if not text or not text.strip():
-            return "Es un correo electrónico, pero no se pudo leer el contenido."
-
-        parts = ["Esto es un correo electrónico."]
+            return "Tienes un correo, pero no pude leer el contenido."
 
         # Extraer remitente
+        remitente = None
         from_match = re.search(r'(?:de|from)\s*:?\s*([^\n]{3,40})', text, re.IGNORECASE)
         if from_match:
-            parts.append(f"De: {from_match.group(1).strip()}.")
+            remitente = _cf(from_match.group(1))
 
         # Extraer asunto
         subject_text = None
         subject_match = re.search(r'(?:asunto|subject)\s*:?\s*([^\n]{3,60})', text, re.IGNORECASE)
         if subject_match:
-            subject_text = subject_match.group(1).strip()
-            parts.append(f"Asunto: {subject_text}.")
+            subject_text = _cf(subject_match.group(1))
+
+        # Intro contextual
+        if remitente and subject_text:
+            parts = [f"Tienes un correo de {remitente}. Asunto: {subject_text}."]
+        elif remitente:
+            parts = [f"Tienes un correo de {remitente}."]
+        elif subject_text:
+            parts = [f"Tienes un correo con asunto: {subject_text}."]
+        else:
+            parts = ["Tienes un correo electrónico."]
 
         if ex.dates:
             parts.append(f"Fecha: {ex.dates[0]}.")
 
-        if ex.emails:
-            parts.append(f"Correo: {ex.emails[0]}.")
-
         if mode == "detallado":
-            # Quitar líneas de De:/Asunto: del texto antes de extraer body
             body_text = text
             body_text = re.sub(r'(?:de|from)\s*:?\s*[^\n]{3,40}', '', body_text, count=1, flags=re.IGNORECASE)
             body_text = re.sub(r'(?:asunto|subject)\s*:?\s*[^\n]{3,60}', '', body_text, count=1, flags=re.IGNORECASE)
@@ -1240,26 +1793,30 @@ class NarrativeGenerator:
 
     def _gen_presentacion(self, mode: str, text: str, ex: ExtractedData,
                           caption: Optional[str]) -> str:
-        """Genera narrativa para diapositivas/presentaciones."""
-        text = self._strip_navia_ui(text)
+        """Narrativa natural para diapositivas/presentaciones."""
         if not text or not text.strip():
-            return "Es una diapositiva, pero no se pudo leer el contenido."
+            return "Es una diapositiva, pero no pude leer el contenido."
 
-        parts = ["Esto es una diapositiva de presentación."]
+        parts = []
 
         # Detectar número de slide
         slide_match = re.search(r'(\d+)\s*/\s*(\d+)', text)
-        if slide_match:
-            parts.append(f"Diapositiva {slide_match.group(1)} de {slide_match.group(2)}.")
 
         # El título suele ser el texto más prominente (primera línea larga)
         first = self._extract_first_sentence(text, skip_lines=0)
-        if first:
-            parts.append(f"Título: {first}.")
+
+        if slide_match and first:
+            parts.append(f"Es la diapositiva {slide_match.group(1)} de {slide_match.group(2)}. Título: {first}.")
+        elif slide_match:
+            parts.append(f"Es la diapositiva {slide_match.group(1)} de {slide_match.group(2)}.")
+        elif first:
+            parts.append(f"Es una diapositiva titulada: {first}.")
+        else:
+            parts.append("Es una diapositiva de presentación.")
 
         body = self._extract_body_preview(text, max_words=40)
         if body and body != first:
-            parts.append(f"Contenido: {body}.")
+            parts.append(f"Dice: {body}.")
 
         return " ".join(parts)
 
@@ -1267,31 +1824,28 @@ class NarrativeGenerator:
 
     def _gen_configuracion(self, mode: str, text: str, ex: ExtractedData,
                            caption: Optional[str]) -> str:
-        """Genera narrativa para pantallas de configuración/ajustes."""
-        text = self._strip_navia_ui(text)
+        """Narrativa natural para pantallas de configuración/ajustes."""
         if not text or not text.strip():
-            return "Es una pantalla de configuración."
-
-        parts = ["Esto es una pantalla de configuración o ajustes."]
+            return "Estás en una pantalla de ajustes."
 
         # Detectar opciones visibles
         options = []
         option_patterns = [
             (r'\bWi-?Fi\b', 'Wi-Fi'),
             (r'\bBluetooth\b', 'Bluetooth'),
-            (r'\b(?:datos?\s+m[oó]viles|mobile\s+data)\b', 'Datos móviles'),
-            (r'\b(?:brillo|brightness)\b', 'Brillo'),
-            (r'\b(?:volumen|volume|sonido|sound)\b', 'Sonido'),
-            (r'\b(?:bater[ií]a|battery)\b', 'Batería'),
-            (r'\b(?:almacenamiento|storage)\b', 'Almacenamiento'),
-            (r'\b(?:modo\s+oscuro|dark\s+mode)\b', 'Modo oscuro'),
-            (r'\b(?:modo\s+avi[oó]n|airplane)\b', 'Modo avión'),
-            (r'\b(?:notificaciones|notifications)\b', 'Notificaciones'),
-            (r'\b(?:privacidad|privacy)\b', 'Privacidad'),
-            (r'\b(?:accesibilidad|accessibility)\b', 'Accesibilidad'),
-            (r'\b(?:pantalla|display)\b', 'Pantalla'),
-            (r'\b(?:idioma|language)\b', 'Idioma'),
-            (r'\b(?:cuenta|account)\b', 'Cuenta'),
+            (r'\b(?:datos?\s+m[oó]viles|mobile\s+data)\b', 'datos móviles'),
+            (r'\b(?:brillo|brightness)\b', 'brillo'),
+            (r'\b(?:volumen|volume|sonido|sound)\b', 'sonido'),
+            (r'\b(?:bater[ií]a|battery)\b', 'batería'),
+            (r'\b(?:almacenamiento|storage)\b', 'almacenamiento'),
+            (r'\b(?:modo\s+oscuro|dark\s+mode)\b', 'modo oscuro'),
+            (r'\b(?:modo\s+avi[oó]n|airplane)\b', 'modo avión'),
+            (r'\b(?:notificaciones|notifications)\b', 'notificaciones'),
+            (r'\b(?:privacidad|privacy)\b', 'privacidad'),
+            (r'\b(?:accesibilidad|accessibility)\b', 'accesibilidad'),
+            (r'\b(?:pantalla|display)\b', 'pantalla'),
+            (r'\b(?:idioma|language)\b', 'idioma'),
+            (r'\b(?:cuenta|account)\b', 'cuenta'),
         ]
         for pattern, label in option_patterns:
             if re.search(pattern, text, re.IGNORECASE):
@@ -1299,51 +1853,941 @@ class NarrativeGenerator:
 
         if options:
             visible = ", ".join(options[:6])
-            parts.append(f"Opciones visibles: {visible}.")
+            parts = [f"Estás en los ajustes del teléfono. Se ven las opciones de {visible}."]
         else:
+            parts = ["Estás en una pantalla de configuración."]
             body = self._extract_body_preview(text, max_words=30)
             if body:
                 parts.append(f"Dice: {body}.")
 
         return " ".join(parts)
 
-    # --- HELPER: Strip NAVIA UI text (reutilizable) ---
+    # --- TARJETA DE PRESENTACIÓN ---
 
-    def _strip_navia_ui(self, text: str) -> str:
-        """Elimina texto de la propia UI de NAVIA para evitar feedback loop."""
-        if not text:
-            return text
-        navia_match = self._NAVIA_UI_PATTERNS.search(text)
-        if navia_match:
-            text = text[:navia_match.start()].strip()
-        return text
+    def _gen_tarjeta(self, mode: str, text: str, ex: ExtractedData,
+                     caption: Optional[str]) -> str:
+        """Narrativa natural para tarjetas de presentación / business cards."""
+        if not text or not text.strip():
+            return "Es una tarjeta de presentación, pero no pude leerla."
+
+        # Nombre: típicamente primera línea prominente o header
+        name = None
+        if ex.headers:
+            name = ex.headers[0]
+        else:
+            first = self._extract_first_sentence(text, skip_lines=0)
+            if first and len(first.split()) <= 5:
+                name = first
+
+        if name:
+            parts = [f"Es la tarjeta de presentación de {name}."]
+        else:
+            parts = ["Es una tarjeta de presentación."]
+
+        # Cargo/título profesional
+        cargo_match = re.search(
+            r'(?:cargo|puesto|título|posición|position|title)\s*:?\s*([^\n]{3,40})',
+            text, re.IGNORECASE
+        )
+        if cargo_match:
+            parts.append(f"Cargo: {_cf(cargo_match.group(1))}.")
+        else:
+            # Heurística: segunda línea corta suele ser el cargo
+            lines = [l.strip() for l in text.split('\n') if l.strip()]
+            if len(lines) >= 2 and len(lines[1].split()) <= 6:
+                parts.append(f"Cargo: {_cf(lines[1])}.")
+
+        # Empresa/organización
+        empresa_match = re.search(
+            r'(?:empresa|company|organización|compañía)\s*:?\s*([^\n]{3,40})',
+            text, re.IGNORECASE
+        )
+        if empresa_match:
+            parts.append(f"Empresa: {_cf(empresa_match.group(1))}.")
+
+        if mode == "resumen":
+            # En resumen, solo nombre + cargo + contacto principal
+            if ex.phones:
+                parts.append(f"Teléfono: {ex.phones[0]}.")
+            elif ex.emails:
+                parts.append(f"Correo: {ex.emails[0]}.")
+            return " ".join(parts)
+
+        # Detallado: todos los datos de contacto
+        if ex.phones:
+            if len(ex.phones) == 1:
+                parts.append(f"Teléfono: {ex.phones[0]}.")
+            else:
+                parts.append("Teléfonos: " + ", ".join(ex.phones[:3]) + ".")
+
+        if ex.emails:
+            if len(ex.emails) == 1:
+                parts.append(f"Correo: {ex.emails[0]}.")
+            else:
+                parts.append("Correos: " + ", ".join(ex.emails[:2]) + ".")
+
+        # Dirección (heurística: línea larga con números)
+        addr_match = re.search(
+            r'(?:direcci[oó]n|address|ubicaci[oó]n)\s*:?\s*([^\n]{5,60})',
+            text, re.IGNORECASE
+        )
+        if addr_match:
+            parts.append(f"Dirección: {_cf(addr_match.group(1))}.")
+
+        # Sitio web (excluir emails)
+        web_match = re.search(
+            r'(?:www\.\S+|https?://\S+)',
+            text, re.IGNORECASE
+        )
+        if web_match:
+            parts.append(f"Web: {web_match.group(0).strip()}.")
+
+        return " ".join(parts)
+
+    # --- RECETA MÉDICA ---
+
+    def _gen_receta_medica(self, mode: str, text: str, ex: ExtractedData,
+                           caption: Optional[str]) -> str:
+        """Narrativa natural para recetas médicas. Prioriza: medicamento, dosis, frecuencia."""
+        if not text or not text.strip():
+            return "Es una receta médica, pero no pude leer el contenido. Intenta acercar más la cámara."
+
+        parts = []
+
+        # Doctor
+        doc_match = re.search(
+            r'\b(?:Dr\.?|Dra\.?|Doctor[a]?)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})',
+            text, re.IGNORECASE)
+        if doc_match:
+            parts.append(f"Tienes una receta del doctor {doc_match.group(1)}.")
+        else:
+            parts.append("Tienes una receta médica.")
+
+        # Medicamentos (buscar nombres + dosis)
+        med_patterns = [
+            re.compile(r'\b([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ]?[a-záéíóúñ]+)?)\s+(\d+)\s*(mg|ml|g|mcg|UI)\b', re.I),
+            re.compile(r'\b(acetaminof[eé]n|ibuprofeno|amoxicilina|omeprazol|metformina|losart[aá]n|diclofenaco|naproxeno|azitromicina|ciprofloxacin[oa]|prednisona|loratadina|cetirizina|atorvastatina|amlodipino|metoprolol)\s*(\d+)?\s*(mg|ml|g)?\b', re.I),
+        ]
+        meds_found = []
+        for pat in med_patterns:
+            for m in pat.finditer(text):
+                name = m.group(1).strip()
+                dose = m.group(2) if m.group(2) else ""
+                unit = m.group(3) if m.group(3) else ""
+                med_str = name
+                if dose:
+                    med_str += f" de {dose}"
+                if unit:
+                    med_str += f" {unit}"
+                if med_str not in meds_found:
+                    meds_found.append(med_str)
+
+        if meds_found:
+            if len(meds_found) == 1:
+                parts.append(f"Te recetaron {meds_found[0]}.")
+            else:
+                parts.append("Te recetaron los siguientes medicamentos.")
+                for med in meds_found[:4]:
+                    parts.append(f"{med}.")
+        else:
+            body = self._extract_body_preview(text, max_words=15)
+            if body:
+                parts.append(f"Contiene: {body}.")
+
+        # Frecuencia
+        freq_match = re.search(r'\bcada\s+(\d+)\s*(horas?|d[ií]as?)\b', text, re.I)
+        if freq_match:
+            num = freq_match.group(1)
+            unit = freq_match.group(2).lower()
+            if 'hora' in unit:
+                veces = 24 // int(num) if int(num) > 0 else 0
+                parts.append(f"Tómalo cada {num} horas, es decir, {veces} veces al día.")
+            else:
+                parts.append(f"Tómalo cada {num} {unit}.")
+
+        # Duración
+        dur_match = re.search(r'\b(?:durante|por)\s+(\d+)\s*(d[ií]as?|semanas?)\b', text, re.I)
+        if dur_match:
+            parts.append(f"El tratamiento dura {dur_match.group(1)} {dur_match.group(2)}.")
+
+        # Vía de administración
+        via_match = re.search(r'\bv[ií]a\s+(oral|t[oó]pica|intramuscular|intravenosa|subling[uü]al|nasal|rectal)\b', text, re.I)
+        if via_match:
+            parts.append(f"Se administra por vía {via_match.group(1)}.")
+
+        # Indicaciones especiales
+        if re.search(r'\b(?:en\s+ayunas|antes\s+de\s+comer)\b', text, re.I):
+            parts.append("Tómalo en ayunas, antes de comer.")
+        elif re.search(r'\b(?:despu[eé]s\s+de\s+(?:comer|las\s+comidas)|con\s+(?:las\s+)?comidas?)\b', text, re.I):
+            parts.append("Tómalo después de comer para evitar malestar estomacal.")
+
+        if mode != "resumen":
+            parts.append("Recuerda completar todo el tratamiento aunque te sientas mejor.")
+
+        return " ".join(parts)
+
+    # --- BOLETO / TICKET ---
+
+    def _gen_boleto(self, mode: str, text: str, ex: ExtractedData,
+                    caption: Optional[str]) -> str:
+        """Narrativa natural para boletos de avión, bus, tren o eventos."""
+        if not text or not text.strip():
+            return "Es un boleto o ticket, pero no pude leer los detalles. Intenta acercar más la cámara."
+
+        parts = []
+
+        # Detectar tipo de boleto
+        is_flight = bool(re.search(r'\b(?:vuelo|flight|boarding|embarque|aerol[ií]nea|airline)\b', text, re.I))
+        is_event = bool(re.search(r'\b(?:concierto|cine|teatro|evento|funci[oó]n|espect[aá]culo|show|entrada)\b', text, re.I))
+        is_bus = bool(re.search(r'\b(?:bus|aut[oó]bus|terminal\s+(?:de\s+)?(?:buses|transporte))\b', text, re.I))
+        is_train = bool(re.search(r'\b(?:tren|train|ferrocarril|and[eé]n)\b', text, re.I))
+
+        if is_flight:
+            parts.append("Tienes un boleto de avión.")
+        elif is_event:
+            parts.append("Tienes una entrada para un evento.")
+        elif is_bus:
+            parts.append("Tienes un boleto de bus.")
+        elif is_train:
+            parts.append("Tienes un boleto de tren.")
+        else:
+            parts.append("Tienes un boleto o ticket.")
+
+        # Aerolínea / compañía
+        airline_match = re.search(r'\b(Avianca|LATAM|Copa|Wingo|JetBlue|American|Delta|United|Volaris|VivaAerobus|Aeroméxico|Spirit)\b', text, re.I)
+        if airline_match:
+            parts.append(f"Con {airline_match.group(1)}.")
+
+        # Número de vuelo/ruta
+        flight_match = re.search(r'\b(?:vuelo|flight)\s*(?:No\.?|#)?\s*([A-Z]{0,2}\d{2,5})\b', text, re.I)
+        if flight_match:
+            parts.append(f"Vuelo número {flight_match.group(1)}.")
+
+        # Origen y destino
+        origin_match = re.search(r'\b(?:origen|from|de|salida)\s*:?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-Za-záéíóúñ]+)?)', text, re.I)
+        dest_match = re.search(r'\b(?:destino|to|hacia|llegada)\s*:?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-Za-záéíóúñ]+)?)', text, re.I)
+        if origin_match and dest_match:
+            parts.append(f"Desde {origin_match.group(1)} hasta {dest_match.group(1)}.")
+        elif dest_match:
+            parts.append(f"Con destino a {dest_match.group(1)}.")
+
+        # Fecha y hora
+        if ex.dates:
+            parts.append(f"Fecha: {ex.dates[0]}.")
+        hora_match = re.search(r'\b(?:salida|departure|hora)\s*:?\s*(\d{1,2}:\d{2})\b', text, re.I)
+        if hora_match:
+            parts.append(f"Hora de salida: {hora_match.group(1)}.")
+
+        # Asiento
+        seat_match = re.search(r'\b(?:asiento|seat)\s*:?\s*(\d{1,3}[A-F]?)\b', text, re.I)
+        if seat_match:
+            seat = seat_match.group(1)
+            parts.append(f"Tu asiento es el {seat}.")
+
+        # Puerta
+        gate_match = re.search(r'\b(?:puerta|gate)\s*:?\s*([A-Z]?\d{1,3})\b', text, re.I)
+        if gate_match:
+            parts.append(f"Puerta de embarque: {gate_match.group(1)}.")
+
+        # Pasajero
+        pax_match = re.search(r'\b(?:pasajero|passenger|nombre|name)\s*:?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-Za-záéíóúñ]+){0,3})', text, re.I)
+        if pax_match:
+            parts.append(f"A nombre de {pax_match.group(1)}.")
+
+        # PNR / Localizador
+        pnr_match = re.search(r'\b(?:PNR|localizador|confirmaci[oó]n|booking)\s*:?\s*([A-Z0-9]{4,8})\b', text, re.I)
+        if pnr_match:
+            parts.append(f"Código de reserva: {pnr_match.group(1)}.")
+
+        # Evento específico
+        if is_event:
+            fila_match = re.search(r'\b(?:fila|row)\s*:?\s*(\d+)\b', text, re.I)
+            sec_match = re.search(r'\b(?:secci[oó]n|section|zona)\s*:?\s*([A-Za-z0-9]+)\b', text, re.I)
+            if fila_match:
+                parts.append(f"Fila {fila_match.group(1)}.")
+            if sec_match:
+                parts.append(f"Sección {sec_match.group(1)}.")
+
+        if mode != "resumen" and is_flight:
+            parts.append("Recuerda llegar al aeropuerto con anticipación y tener tu documento de identidad a la mano.")
+
+        return " ".join(parts)
+
+    # --- IDENTIFICACIÓN ---
+
+    def _gen_identificacion(self, mode: str, text: str, ex: ExtractedData,
+                            caption: Optional[str]) -> str:
+        """Narrativa natural para documentos de identidad."""
+        if not text or not text.strip():
+            return "Es un documento de identificación, pero no pude leer los datos."
+
+        parts = []
+
+        # Tipo de documento
+        is_cedula = bool(re.search(r'\bc[eé]dula\b', text, re.I))
+        is_passport = bool(re.search(r'\bpasaporte|passport\b', text, re.I))
+        is_license = bool(re.search(r'\blicencia\s+de\s+(?:conducir|conducci[oó]n)\b', text, re.I))
+        is_dni = bool(re.search(r'\bDNI\b', text, re.I))
+
+        if is_cedula:
+            parts.append("Es una cédula de ciudadanía.")
+        elif is_passport:
+            parts.append("Es un pasaporte.")
+        elif is_license:
+            parts.append("Es una licencia de conducir.")
+        elif is_dni:
+            parts.append("Es un documento nacional de identidad.")
+        else:
+            parts.append("Es un documento de identificación.")
+
+        # Nombre
+        name_match = re.search(
+            r'\b(?:nombre|nombres?|name)\s*:?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-Za-záéíóúñ]+){0,4})',
+            text, re.I)
+        apellido_match = re.search(
+            r'\b(?:apellido|apellidos?|surname|last\s+name)\s*:?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-Za-záéíóúñ]+){0,2})',
+            text, re.I)
+        if name_match and apellido_match:
+            parts.append(f"A nombre de {name_match.group(1)} {apellido_match.group(1)}.")
+        elif name_match:
+            parts.append(f"A nombre de {name_match.group(1)}.")
+
+        # Número de documento
+        num_match = re.search(r'\b(?:n[úu]mero|no\.?|num\.?|#)\s*:?\s*([\d\.\-]{5,15})\b', text, re.I)
+        if num_match:
+            parts.append(f"Número de documento: {num_match.group(1)}.")
+        elif ex.ids:
+            parts.append(f"Número: {ex.ids[0]}.")
+
+        # Fecha de nacimiento
+        nac_match = re.search(
+            r'\b(?:fecha\s+de\s+nacimiento|nacimiento|f\.?\s*(?:de\s+)?nac\.?|date\s+of\s+birth)\s*:?\s*([^\n]{5,20})',
+            text, re.I)
+        if nac_match:
+            parts.append(f"Fecha de nacimiento: {_cf(nac_match.group(1))}.")
+
+        # Nacionalidad
+        nac_match2 = re.search(r'\b(?:nacionalidad|nationality)\s*:?\s*([A-Za-záéíóúñ]+)', text, re.I)
+        if nac_match2:
+            parts.append(f"Nacionalidad: {nac_match2.group(1)}.")
+
+        # Sexo
+        sex_match = re.search(r'\b(?:sexo|sex|g[eé]nero)\s*:?\s*(M|F|masculino|femenino|male|female)\b', text, re.I)
+        if sex_match:
+            val = sex_match.group(1).upper()
+            sexo = "Masculino" if val in ('M', 'MASCULINO', 'MALE') else "Femenino"
+            parts.append(f"Sexo: {sexo}.")
+
+        # Tipo de sangre
+        blood_match = re.search(r'\b(?:tipo\s+de\s+sangre|RH|grupo\s+sangu[ií]neo)\s*:?\s*([ABO]+[\+\-]?)\b', text, re.I)
+        if blood_match:
+            parts.append(f"Tipo de sangre: {blood_match.group(1)}.")
+
+        # Vigencia
+        vig_match = re.search(r'\b(?:v[aá]lido\s+hasta|vigencia|vencimiento|expira)\s*:?\s*([^\n]{4,15})', text, re.I)
+        if vig_match:
+            parts.append(f"Vigente hasta: {_cf(vig_match.group(1))}.")
+
+        if mode != "resumen":
+            parts.append("Protege siempre tu información personal. No compartas fotos de tu documento con desconocidos.")
+
+        return " ".join(parts)
+
+    # --- HORARIO ---
+
+    def _gen_horario(self, mode: str, text: str, ex: ExtractedData,
+                     caption: Optional[str]) -> str:
+        """Narrativa natural para horarios de clase, trabajo o citas.
+
+        Maneja dos formatos:
+        1. Tipo lista: "Lunes 7:00-8:30 Matemáticas Aula 301"
+        2. Tipo tabla/grid: "LUNES MARTES ... ASEO ASEO ... TAREAS TAREAS"
+        """
+        if not text or not text.strip():
+            return "Es un horario, pero no pude leer el contenido."
+
+        src = text
+        parts = []
+
+        # Detectar tipo de horario
+        is_class = bool(re.search(r'\b(?:clase|materia|asignatura|curso|profesor|aula)\b', src, re.I))
+        is_work = bool(re.search(r'\b(?:turno|jornada|oficina|trabajo)\b', src, re.I))
+
+        if is_class:
+            parts.append("Es tu horario de clases.")
+        elif is_work:
+            parts.append("Es tu horario de trabajo.")
+        else:
+            parts.append("Tienes un horario semanal.")
+
+        # --- Extraer días presentes ---
+        _DAY_MAP = [
+            ('lunes', 'lunes'), ('martes', 'martes'),
+            ('mi[eé]rcoles', 'miércoles'), ('jueves', 'jueves'),
+            ('viernes', 'viernes'), ('s[aá]bado', 'sábado'),
+            ('domingo', 'domingo'),
+        ]
+        days_found = []
+        for pat, name in _DAY_MAP:
+            if re.search(rf'\b{pat}\b', src, re.I):
+                days_found.append(name)
+
+        # --- Estrategia 1: Rangos de hora (formato lista) ---
+        time_ranges = re.findall(r'(\d{1,2}:\d{2})\s*[-–a]\s*(\d{1,2}:\d{2})', src)
+        activities_after_time = re.findall(
+            r'\d{1,2}:\d{2}\s*[-–a]\s*\d{1,2}:\d{2}\s+'
+            r'([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-Za-záéíóúñ]+){0,3})',
+            src)
+
+        if time_ranges and activities_after_time:
+            # Formato lista con horas → leer actividades con su hora
+            n_days = len(days_found)
+            if n_days > 0:
+                parts.append(f"Abarca {n_days} días: {', '.join(days_found)}.")
+
+            count = min(len(time_ranges), len(activities_after_time))
+            limit = 4 if mode == "resumen" else 8
+            for i in range(min(count, limit)):
+                start, end = time_ranges[i]
+                act = activities_after_time[i]
+                parts.append(f"De {start} a {end}, {act}.")
+
+            # Aulas
+            aulas = re.findall(r'\b(?:aula|sal[oó]n|lab)\s*:?\s*([A-Za-z0-9\-]+)', src, re.I)
+            if aulas and mode != "resumen":
+                parts.append(f"En las aulas: {', '.join(aulas[:3])}.")
+
+            return " ".join(parts)
+
+        # --- Estrategia 2: Formato tabla/grid (días como encabezados) ---
+        # Extraer actividades únicas (palabras repetidas = actividades en la grid)
+        # Excluir días, números, y basura
+        _SKIP_WORDS = frozenset({
+            'HORARIO', 'HORA', 'HORAS', 'LUNES', 'MARTES', 'MIERCOLES',
+            'MIÉRCOLES', 'JUEVES', 'VIERNES', 'SABADO', 'SÁBADO', 'DOMINGO',
+            'AM', 'PM', 'SCHEDULE',
+        })
+        words = re.findall(r'\b([A-ZÁÉÍÓÚÑ]{3,})\b', src)
+        # Contar frecuencia de cada palabra (en grid, actividades se repiten por día)
+        from collections import Counter
+        word_freq = Counter(w.upper() for w in words if w.upper() not in _SKIP_WORDS)
+
+        # Actividades = palabras que aparecen >= 2 veces (se repiten por día)
+        activities_grid = [w.title() for w, count in word_freq.most_common(15)
+                          if count >= 2 and len(w) >= 3]
+
+        # Capturar pares de palabras consecutivas DIFERENTES:
+        # "TAREAS EN" (ok), pero NO "ASEO ASEO" (duplicado)
+        two_word = re.findall(r'\b([A-ZÁÉÍÓÚÑ]{3,})\s+([A-ZÁÉÍÓÚÑ]{2,})\b', src)
+        two_word_freq = Counter(
+            f"{a} {b}".title() for a, b in two_word
+            if a.upper() not in _SKIP_WORDS
+            and b.upper() not in _SKIP_WORDS
+            and a.upper() != b.upper()  # NO duplicados como "ASEO ASEO"
+        )
+        compound_activities = [w for w, c in two_word_freq.most_common(10) if c >= 2]
+
+        # Combinar: preferir compound si existe
+        final_activities = []
+        used_singles = set()
+        for comp in compound_activities:
+            final_activities.append(comp)
+            for part in comp.split():
+                used_singles.add(part.title())
+        for act in activities_grid:
+            if act not in used_singles:
+                final_activities.append(act)
+
+        # Quitar duplicados y limitar
+        seen = set()
+        unique_activities = []
+        for a in final_activities:
+            al = a.lower()
+            if al not in seen:
+                seen.add(al)
+                unique_activities.append(a)
+
+        n_days = len(days_found)
+        if n_days > 0:
+            parts.append(f"Va de {days_found[0]} a {days_found[-1]}.")
+
+        if unique_activities:
+            act_list = ", ".join(unique_activities[:6])
+            parts.append(f"Las actividades incluyen: {act_list}.")
+            if len(unique_activities) > 6:
+                parts.append(f"Y {len(unique_activities) - 6} actividades más.")
+        else:
+            # No se pudieron extraer actividades
+            parts.append("No pude identificar las actividades con claridad.")
+
+        # Horas sueltas (sin rango, ej: "7", "8", "10")
+        horas = re.findall(r'\b(\d{1,2})\s*(?:am|pm|:00|hrs?)?\b', src, re.I)
+        horas_validas = [h for h in horas if 5 <= int(h) <= 23]
+        if horas_validas and mode != "resumen":
+            parts.append(f"Los bloques empiezan alrededor de las {horas_validas[0]}.")
+
+        return " ".join(parts)
+
+    # --- INSTRUCCIONES ---
+
+    def _gen_instrucciones(self, mode: str, text: str, ex: ExtractedData,
+                           caption: Optional[str]) -> str:
+        """Narrativa natural para instrucciones paso a paso."""
+        if not text or not text.strip():
+            return "Son instrucciones, pero no pude leer el contenido."
+
+        parts = ["Estas son instrucciones paso a paso."]
+
+        # Intentar extraer pasos numerados
+        steps = re.findall(
+            r'\b(?:paso|step)\s*(\d+)\s*:?\s*(.{5,80}?)(?=\b(?:paso|step)\s*\d|\Z)',
+            text, re.I | re.S)
+
+        if steps:
+            for num, content in steps[:8]:
+                clean_step = _cf(content.strip())
+                parts.append(f"Paso {num}: {clean_step}.")
+        else:
+            # Buscar verbos imperativos como inicio de frase (pasos implícitos)
+            imp_pattern = re.compile(
+                r'\b((?:aplica|mezcla|agita|vierte|remueve|enjuaga|coloca|retira|'
+                r'deja|espera|conecta|presiona|abre|cierra|hornea|hierve|corta|'
+                r'aplique|mezcle|agite|vierta|coloque|retire|abra|cierre|'
+                r'limpie|seque|lave)\b[^.!?\n]{3,60})',
+                re.I)
+            imp_steps = imp_pattern.findall(text)
+
+            if imp_steps:
+                step_num = 1
+                for step_text in imp_steps[:8]:
+                    clean_step = _cf(step_text.strip())
+                    parts.append(f"Paso {step_num}: {clean_step}.")
+                    step_num += 1
+            else:
+                body = self._extract_body_preview(text, max_words=60)
+                if body:
+                    parts.append(body + ".")
+
+        # Advertencias
+        warn_match = re.search(
+            r'\b(?:precauci[oó]n|advertencia|importante|warning|cuidado|peligro)\s*:?\s*(.{5,80})',
+            text, re.I)
+        if warn_match:
+            parts.append(f"Importante: {_cf(warn_match.group(1))}.")
+
+        # Medidas
+        measures = re.findall(r'\b(\d+)\s*(ml|g|oz|litros?|cucharadas?|tazas?|gotas?|minutos?)\b', text, re.I)
+        if measures and mode != "resumen":
+            meas_strs = [f"{qty} {unit}" for qty, unit in measures[:4]]
+            parts.append("Medidas mencionadas: " + ", ".join(meas_strs) + ".")
+
+        return " ".join(parts)
+
+    # --- RESULTADO DE LABORATORIO ---
+
+    def _gen_resultado_lab(self, mode: str, text: str, ex: ExtractedData,
+                           caption: Optional[str]) -> str:
+        """Narrativa natural para resultados de laboratorio clínico.
+
+        Prioriza: valores fuera de rango → normales → sin rango.
+        No lista rangos numéricos, solo dice si es normal/alto/bajo.
+        """
+        if not text or not text.strip():
+            return "Son resultados de laboratorio, pero no pude leer los valores."
+
+        src = text
+        parts = []
+
+        # Paciente (evitar capturar palabras clave como "Orden", "Doctor")
+        _LAB_SKIP = {'Orden', 'Doctor', 'Médico', 'Medico', 'Fecha', 'Reporte',
+                     'Laboratorio', 'Resultado', 'Referencia', 'Unidad'}
+        pac_match = re.search(
+            r'\b(?:paciente|patient|nombre)\s*:?\s*'
+            r'([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-Za-záéíóúñ]+){1,3})',
+            src, re.I)
+
+        paciente = None
+        if pac_match:
+            candidate = pac_match.group(1).strip()
+            if candidate.split()[0] not in _LAB_SKIP:
+                paciente = candidate
+
+        if paciente:
+            parts.append(f"Tienes los resultados de laboratorio de {paciente}.")
+        else:
+            parts.append("Tienes unos resultados de laboratorio.")
+
+        if ex.dates:
+            parts.append(f"Del {ex.dates[0]}.")
+
+        # Laboratorio / Orden
+        lab_match = re.search(r'\b(?:laboratorio|lab)\s*:?\s*([A-Za-záéíóúñ\s]{3,30})', src, re.I)
+        orden_match = re.search(r'\b(?:orden)\s*:?\s*(\d+)', src, re.I)
+
+        # Extraer valores: nombre + valor + unidad
+        lab_pattern = re.compile(
+            r'\b(hemoglobina|hematocrito|plaquetas|leucocitos|eritrocitos|'
+            r'gl[oó]bulos?\s*(?:blancos?|rojos?)|'
+            r'neutr[oó]filos|linfocitos|monocitos|eosin[oó]filos|bas[oó]filos|'
+            r'glucosa|glicemia|colesterol|triglic[eé]ridos|'
+            r'creatinina|urea|[aá]cido\s+[uú]rico|bilirrubina|'
+            r'ALT|AST|TGO|TGP|TSH|T3|T4|'
+            r'HDL|LDL|VLDL|PSA|HbA1c|'
+            r'hemoglobina\s+glicosilada|'
+            r'VCM|HCM|CHCM|RDW|VSG|PCR)\s*:?\s*'
+            r'([\d,.]+)\s*'
+            r'(mg/dL|g/dL|%|mmol/L|UI/L|mL|mm3|cel/uL|mEq/L|ng/mL|U/L|fL|pg|pg/mL|x10\^?\d)?',
+            re.I)
+
+        # Rango de referencia: "Ref: 12.0-16.0" o "12.0 - 16.0" o "400-540"
+        ref_pattern = re.compile(
+            r'(?:ref(?:erencia)?|rango|normal|valores?\s+(?:de\s+)?ref)\s*:?\s*'
+            r'([\d,.]+)\s*[-–a]\s*([\d,.]+)',
+            re.I)
+
+        results = []
+        for m in lab_pattern.finditer(src):
+            test_name = m.group(1).strip()
+            value_str = m.group(2).strip().replace(',', '.')
+            unit = m.group(3) if m.group(3) else ""
+
+            try:
+                value = float(value_str)
+            except ValueError:
+                continue
+
+            # Buscar rango de referencia DESPUÉS de este match
+            after_text = src[m.end():m.end()+80]
+            status = "sin rango"
+            ref_m = ref_pattern.search(after_text)
+            if ref_m:
+                try:
+                    low = float(ref_m.group(1).replace(',', '.'))
+                    high = float(ref_m.group(2).replace(',', '.'))
+                    if value < low:
+                        status = "bajo"
+                    elif value > high:
+                        status = "alto"
+                    else:
+                        status = "normal"
+                except ValueError:
+                    pass
+
+            results.append((test_name.capitalize(), value_str, unit, status))
+
+        if results:
+            # Separar anormales vs normales
+            abnormal = [(n, v, u, s) for n, v, u, s in results if s in ("alto", "bajo")]
+            normal = [(n, v, u, s) for n, v, u, s in results if s == "normal"]
+            unknown = [(n, v, u, s) for n, v, u, s in results if s == "sin rango"]
+
+            total = len(results)
+            if abnormal:
+                parts.append(f"Atención, hay {len(abnormal)} valor{'es' if len(abnormal) > 1 else ''} fuera de lo normal.")
+                for name, val, unit, status in abnormal:
+                    u = f" {unit}" if unit else ""
+                    parts.append(f"{name}: {val}{u}, está {status}.")
+
+            if normal:
+                if len(normal) <= 3:
+                    for name, val, unit, _ in normal:
+                        u = f" {unit}" if unit else ""
+                        parts.append(f"{name}: {val}{u}, normal.")
+                else:
+                    nombres = ", ".join(n for n, _, _, _ in normal[:5])
+                    parts.append(f"Los demás valores están normales: {nombres}.")
+
+            if unknown and mode != "resumen":
+                for name, val, unit, _ in unknown[:3]:
+                    u = f" {unit}" if unit else ""
+                    parts.append(f"{name}: {val}{u}.")
+        else:
+            # No se pudieron parsear valores, dar resumen general
+            # Contar cuántos números hay (probable que haya datos)
+            nums = re.findall(r'\b\d+[.,]?\d*\b', src)
+            if len(nums) > 5:
+                parts.append(f"Veo {len(nums)} valores numéricos pero no pude identificar los nombres con claridad.")
+                parts.append("Intenta con mejor iluminación o acercando más la cámara.")
+            else:
+                parts.append("No pude leer los valores con claridad.")
+
+        parts.append("Consulta con tu médico para interpretar estos resultados.")
+
+        return " ".join(parts)
+
+    # --- TABLA NUTRICIONAL ---
+
+    def _gen_tabla_nutricional(self, mode: str, text: str, ex: ExtractedData,
+                               caption: Optional[str]) -> str:
+        """Narrativa natural para tablas nutricionales."""
+        if not text or not text.strip():
+            return "Es una tabla nutricional, pero no pude leer los valores."
+
+        parts = ["Esta es la información nutricional del producto."]
+
+        # Porción
+        porc_match = re.search(
+            r'\b(?:porci[oó]n|serving\s+size|tama[ñn]o\s+de\s+(?:la\s+)?porci[oó]n)\s*:?\s*([\d,.]+\s*(?:g|ml|oz|unidad(?:es)?)?)',
+            text, re.I)
+        if porc_match:
+            parts.append(f"Tamaño de porción: {porc_match.group(1)}.")
+
+        # Calorías
+        cal_match = re.search(r'\b(?:calor[ií]as|calories|energ[ií]a)\s*:?\s*([\d,.]+)\s*(?:kcal|cal|kJ)?', text, re.I)
+        if cal_match:
+            parts.append(f"Calorías por porción: {cal_match.group(1)}.")
+
+        # Macronutrientes principales
+        nutrients = [
+            (r'\b(?:grasa(?:s)?\s+total(?:es)?|total\s+fat)\s*:?\s*([\d,.]+)\s*g?', 'Grasas totales'),
+            (r'\b(?:grasa(?:s)?\s+saturada(?:s)?|saturated)\s*:?\s*([\d,.]+)\s*g?', 'Grasas saturadas'),
+            (r'\b(?:sodio|sodium)\s*:?\s*([\d,.]+)\s*mg?', 'Sodio'),
+            (r'\b(?:carbohidratos?\s+totales?|total\s+carb)\s*:?\s*([\d,.]+)\s*g?', 'Carbohidratos'),
+            (r'\b(?:fibra|fiber)\s*:?\s*([\d,.]+)\s*g?', 'Fibra'),
+            (r'\b(?:az[úu]cares?\s+totales?|total\s+sugars?)\s*:?\s*([\d,.]+)\s*g?', 'Azúcares'),
+            (r'\b(?:prote[ií]nas?|protein)\s*:?\s*([\d,.]+)\s*g?', 'Proteínas'),
+            (r'\b(?:colesterol|cholesterol)\s*:?\s*([\d,.]+)\s*mg?', 'Colesterol'),
+        ]
+
+        found_nutrients = []
+        for pattern, name in nutrients:
+            m = re.search(pattern, text, re.I)
+            if m:
+                found_nutrients.append((name, m.group(1)))
+
+        if found_nutrients:
+            for name, value in found_nutrients[:6 if mode != "resumen" else 4]:
+                unit = "mg" if name in ('Sodio', 'Colesterol') else "g"
+                parts.append(f"{name}: {value} {unit}.")
+        else:
+            body = self._extract_body_preview(text, max_words=40)
+            if body:
+                parts.append(body + ".")
+
+        return " ".join(parts)
+
+    # --- CALENDARIO ---
+
+    def _gen_calendario(self, mode: str, text: str, ex: ExtractedData,
+                        caption: Optional[str]) -> str:
+        """Narrativa natural para calendarios."""
+        if not text or not text.strip():
+            return "Es un calendario, pero no pude leer el contenido."
+
+        parts = []
+
+        # Detectar app
+        app_match = re.search(r'\b(Google\s+Calendar|Outlook|Apple\s+Calendar|Samsung\s+Calendar)\b', text, re.I)
+        if app_match:
+            parts.append(f"Es tu calendario de {app_match.group(1)}.")
+        else:
+            parts.append("Es un calendario.")
+
+        # Mes y año
+        months_es = {
+            'enero': 'enero', 'febrero': 'febrero', 'marzo': 'marzo',
+            'abril': 'abril', 'mayo': 'mayo', 'junio': 'junio',
+            'julio': 'julio', 'agosto': 'agosto', 'septiembre': 'septiembre',
+            'octubre': 'octubre', 'noviembre': 'noviembre', 'diciembre': 'diciembre',
+            'january': 'enero', 'february': 'febrero', 'march': 'marzo',
+            'april': 'abril', 'may': 'mayo', 'june': 'junio',
+            'july': 'julio', 'august': 'agosto', 'september': 'septiembre',
+            'october': 'octubre', 'november': 'noviembre', 'december': 'diciembre',
+        }
+        month_found = None
+        for pat, name in months_es.items():
+            if re.search(rf'\b{pat}\b', text, re.I):
+                month_found = name
+                break
+
+        year_match = re.search(r'\b(20\d{2})\b', text)
+        if month_found and year_match:
+            parts.append(f"Estás viendo {month_found} de {year_match.group(1)}.")
+        elif month_found:
+            parts.append(f"Estás viendo el mes de {month_found}.")
+
+        # Eventos
+        events = re.findall(
+            r'\b(?:evento|cita|reuni[oó]n|meeting|appointment|cumplea[ñn]os|birthday)\s*:?\s*(.{3,50})',
+            text, re.I)
+        if events:
+            parts.append("Eventos encontrados:")
+            for ev in events[:4]:
+                parts.append(f"{_cf(ev.strip())}.")
+
+        # Hoy / día señalado
+        if re.search(r'\b(?:hoy|today)\b', text, re.I):
+            parts.append("El día de hoy está marcado.")
+
+        # Feriados
+        if re.search(r'\b(?:feriado|festivo|holiday)\b', text, re.I):
+            parts.append("Hay días festivos marcados en el calendario.")
+
+        # Vista
+        view_match = re.search(r'\b(?:vista\s+(mensual|semanal|diaria|anual))\b', text, re.I)
+        if view_match:
+            parts.append(f"Está en vista {view_match.group(1)}.")
+
+        if not events and mode != "resumen":
+            body = self._extract_body_preview(text, max_words=30)
+            if body:
+                parts.append(body + ".")
+
+        return " ".join(parts)
+
+    # --- MAPA / NAVEGACIÓN ---
+
+    def _gen_mapa(self, mode: str, text: str, ex: ExtractedData,
+                  caption: Optional[str]) -> str:
+        """Narrativa natural para mapas y navegación."""
+        if not text or not text.strip():
+            if caption:
+                return f"Es un mapa. La imagen muestra: {caption}."
+            return "Es un mapa, pero no pude leer los detalles."
+
+        parts = []
+
+        # App
+        app_match = re.search(r'\b(Google\s+Maps|Waze|Apple\s+Maps|Moovit|Citymapper)\b', text, re.I)
+        if app_match:
+            parts.append(f"Estás usando {app_match.group(1)}.")
+        else:
+            parts.append("Es un mapa de navegación.")
+
+        # Destino
+        dest_match = re.search(
+            r'\b(?:hacia|to|destino|destination|ir\s+a|go\s+to|navegar?\s+(?:a|hacia))\s*:?\s*(.{3,40})',
+            text, re.I)
+        if dest_match:
+            parts.append(f"Destino: {_cf(dest_match.group(1))}.")
+
+        # Tiempo estimado
+        time_match = re.search(r'(\d+)\s*(?:min(?:utos?)?)\b', text, re.I)
+        if time_match:
+            mins = int(time_match.group(1))
+            if mins >= 60:
+                hrs = mins // 60
+                rem = mins % 60
+                if rem > 0:
+                    parts.append(f"Tiempo estimado: {hrs} hora{'s' if hrs > 1 else ''} y {rem} minutos.")
+                else:
+                    parts.append(f"Tiempo estimado: {hrs} hora{'s' if hrs > 1 else ''}.")
+            else:
+                parts.append(f"Tiempo estimado: {mins} minutos.")
+
+        # Distancia
+        dist_match = re.search(r'(\d+[\.,]?\d*)\s*(km|mi|metros|m)\b', text, re.I)
+        if dist_match:
+            parts.append(f"Distancia: {dist_match.group(1)} {dist_match.group(2)}.")
+
+        # Tráfico
+        if re.search(r'\b(?:tr[aá]fico\s+(?:pesado|denso|congestionado)|congesti[oó]n)\b', text, re.I):
+            parts.append("Hay tráfico pesado en la ruta.")
+        elif re.search(r'\b(?:tr[aá]fico\s+(?:moderado|regular))\b', text, re.I):
+            parts.append("El tráfico está moderado.")
+        elif re.search(r'\b(?:tr[aá]fico\s+(?:fluido|libre)|sin\s+tr[aá]fico)\b', text, re.I):
+            parts.append("El tráfico está fluido, buen momento para salir.")
+
+        # Modo de transporte
+        if re.search(r'\b(?:en\s+auto|driving|en\s+carro|en\s+coche)\b', text, re.I):
+            parts.append("Ruta en auto.")
+        elif re.search(r'\b(?:a\s+pie|walking|caminando)\b', text, re.I):
+            parts.append("Ruta a pie.")
+        elif re.search(r'\b(?:en\s+bici|cycling|bicicleta)\b', text, re.I):
+            parts.append("Ruta en bicicleta.")
+        elif re.search(r'\b(?:transporte\s+p[uú]blico|transit|bus|metro)\b', text, re.I):
+            parts.append("Ruta en transporte público.")
+
+        # Indicaciones de giro
+        turn_match = re.search(r'\b(?:gir[ae]\s+a\s+la\s+(derecha|izquierda)|turn\s+(left|right))\b', text, re.I)
+        if turn_match:
+            direction = turn_match.group(1) or turn_match.group(2)
+            parts.append(f"Próxima indicación: gira a la {direction}.")
+
+        # Dirección/calle
+        street_match = re.search(r'\b(?:Av\.?|Avenida|Calle|Carrera|Cra\.?|Cl\.?|Boulevard|Autopista)\s+[^\n]{3,30}', text, re.I)
+        if street_match and mode != "resumen":
+            parts.append(f"Sobre: {_cf(street_match.group(0))}.")
+
+        # Caption visual como complemento
+        if caption and mode != "resumen":
+            parts.append(f"En la imagen se ve: {caption}.")
+
+        return " ".join(parts)
+
+    # --- GENÉRICO INTERFAZ DE APP (para subtipos nuevos sin generador propio) ---
+
+    def _gen_interfaz_app(self, mode: str, text: str, ex: ExtractedData,
+                          caption: Optional[str],
+                          label: str = "una pantalla de aplicación") -> str:
+        """Generador genérico para interfaces de app sin generador especializado.
+
+        Usa el label del subtipo para dar contexto, y lee el contenido
+        de forma inteligente según el reading_mode.
+        """
+        if not text or not text.strip():
+            if caption:
+                return f"Es {label}. La imagen muestra: {caption}."
+            return f"Es {label}, pero no se pudo leer el contenido."
+
+        parts = [f"Es {label}."]
+
+        if mode == "resumen":
+            if ex.amounts:
+                parts.append(f"Monto: {ex.amounts[0]}.")
+            if ex.dates:
+                parts.append(f"Fecha: {ex.dates[0]}.")
+            preview = self._extract_body_preview(text, max_words=25)
+            if preview:
+                parts.append(f"Dice: {preview}.")
+            return " ".join(parts)
+
+        if mode == "financiero":
+            if ex.totals:
+                for t in ex.totals[:3]:
+                    parts.append(f"{self._clean_total(t)}.")
+            elif ex.amounts:
+                parts.append("Montos: " + ", ".join(ex.amounts[:5]) + ".")
+            if ex.dates:
+                parts.append(f"Fecha: {ex.dates[0]}.")
+            return " ".join(parts)
+
+        # Detallado
+        if ex.headers:
+            parts.append(f"Título: {ex.headers[0]}.")
+        if ex.dates:
+            parts.append(f"Fecha: {ex.dates[0]}.")
+        if ex.amounts:
+            parts.append("Montos: " + ", ".join(ex.amounts[:5]) + ".")
+        if ex.emails:
+            parts.append(f"Correo: {ex.emails[0]}.")
+        if ex.phones:
+            parts.append(f"Teléfono: {ex.phones[0]}.")
+        body = self._extract_body_preview(text, max_words=60)
+        if body:
+            parts.append(f"Contenido: {body}.")
+        return " ".join(parts)
+
+    # Fábricas para crear generadores con label específico
+    def _make_app_gen(self, label: str):
+        """Crea un generador específico de interfaz de app con el label dado."""
+        def gen(mode, text, ex, caption):
+            return self._gen_interfaz_app(mode, text, ex, caption, label=label)
+        return gen
 
     # --- DESCONOCIDO (fallback universal) ---
 
     def _gen_desconocido(self, mode: str, text: str, ex: ExtractedData,
                          caption: Optional[str]) -> str:
-        # Primero limpiar texto de la UI de NAVIA
-        text = self._strip_navia_ui(text)
-
         if not text or not text.strip():
             if caption:
                 return f"La imagen muestra: {caption}."
             return "No se detectó texto en la imagen."
 
-        # Filtrar texto: solo líneas con palabras reales (> 2 words, no basura)
-        lines = [l.strip() for l in text.split('\n') if l.strip()]
-        clean_lines = []
-        for line in lines:
-            words = line.split()
-            if len(words) < 2:
-                continue
-            # Calcular ratio de palabras "reales" (> 2 chars con letras) vs basura
-            real_words = [w for w in words if len(w) > 2 and re.search(r'[a-záéíóúñ]', w, re.IGNORECASE)]
-            if len(real_words) >= len(words) * 0.4:
-                clean_lines.append(" ".join(words))
-
-        clean_text = "\n".join(clean_lines)
-        if not clean_text.strip():
+        # Texto ya viene reconstruido del OCRTextReconstructor.
+        # Verificar que hay contenido legible.
+        preview_check = self._extract_body_preview(text, max_words=5)
+        if not preview_check:
             if caption:
                 return f"La imagen muestra: {caption}. No se pudo leer texto claramente."
             return "Se detectó algo de texto, pero no se pudo leer claramente. Intenta acercar más la cámara al texto."
@@ -1356,8 +2800,9 @@ class NarrativeGenerator:
                 parts.append(f"Fecha: {ex.dates[0]}.")
             if ex.amounts:
                 parts.append(f"Monto: {ex.amounts[0]}.")
-            preview = " ".join(clean_text.split()[:30])
-            parts.append(f"Dice: {preview}.")
+            preview = self._extract_body_preview(text, max_words=30)
+            if preview:
+                parts.append(f"Dice: {preview}.")
             return " ".join(parts)
 
         if mode == "financiero":
@@ -1370,11 +2815,12 @@ class NarrativeGenerator:
             if ex.dates:
                 parts.append(f"Fecha: {ex.dates[0]}.")
             if not ex.amounts and not ex.totals:
-                preview = " ".join(clean_text.split()[:30])
-                parts.append(f"Dice: {preview}.")
+                preview = self._extract_body_preview(text, max_words=30)
+                if preview:
+                    parts.append(f"Dice: {preview}.")
             return " ".join(parts)
 
-        # detallado: leer contenido limpio (no basura)
+        # detallado: leer contenido limpio
         parts = [intro]
         if ex.headers:
             parts.append(f"Título: {ex.headers[0]}.")
@@ -1386,8 +2832,8 @@ class NarrativeGenerator:
             parts.append(f"Correo: {ex.emails[0]}.")
         if ex.phones:
             parts.append(f"Teléfono: {ex.phones[0]}.")
-        # Leer el contenido principal (hasta 80 palabras del texto limpio)
-        body = self._extract_body_preview(clean_text, max_words=80)
+        # Leer el contenido principal (hasta 80 palabras)
+        body = self._extract_body_preview(text, max_words=80)
         if body:
             parts.append(f"Dice: {body}.")
         return " ".join(parts)
@@ -1515,9 +2961,15 @@ class NarrativeGenerator:
 
     @staticmethod
     def _fallback(raw_text: str) -> str:
-        clean = NarrativeGenerator._clean_ocr_words(raw_text)
-        words = clean.split()[:40]
-        return " ".join(words) if words else "No se pudo leer el documento."
+        """Fallback universal: nunca dumpar texto OCR crudo."""
+        if not raw_text or not raw_text.strip():
+            return "No se pudo leer el documento."
+        # Contar palabras para dar contexto
+        wc = len(raw_text.split())
+        if wc < 10:
+            return "Se detectó poco texto. Intenta acercar más la cámara."
+        return ("Se detectó un documento pero no pude interpretar bien el contenido. "
+                "Intenta con mejor iluminación o acercando más la cámara.")
 
     @staticmethod
     def _extract_first_sentence(text: str, skip_lines: int = 0) -> str:
@@ -1941,19 +3393,33 @@ class SmartReadingService:
       Imagen → Gemini Vision → narrativa + OCR + campos → ProsodyEnhancer → Response
 
     Pipeline FALLBACK (sin internet o si Gemini falla):
-      Imagen → Tesseract OCR → DocumentClassifier → StructureExtractor
-             → NarrativeGenerator → ProsodyEnhancer → Response
+      Imagen → Tesseract OCR (con layout) → HierarchicalDocumentClassifier
+             → StructureExtractor → NarrativeGenerator → ProsodyEnhancer → Response
+
+    Clasificación jerárquica (v3):
+      Pre-check: texto insuficiente → IMAGEN_VISUAL + visual_description
+      Fase 1 (layout): macro-tipo (DOCUMENTO_FORMAL, INTERFAZ_DIGITAL, TEXTO_CONVERSACIONAL, IMAGEN_VISUAL)
+      Fase 2 (keywords): subtipo (factura, chat, app_login, etc.) sobre texto limpio
+      + scoring probabilístico 0-1 + gap analysis + reading_mode recomendado
+      + estabilización temporal + detección de ambigüedad
     """
 
     def __init__(self):
         self._ocr_service = None
         self._gemini_service = None
-        self._classifier = DocumentClassifier()
+        self._classifier_v2 = None       # Nuevo clasificador jerárquico
+        self._classifier_legacy = DocumentClassifier()  # Para get_label() en Gemini path
         self._extractor = StructureExtractor()
         self._generator = NarrativeGenerator()
         self._enhancer = ProsodyEnhancer()
         self._optimizer = None
         self._captioning = None
+
+    def _get_classifier(self):
+        if self._classifier_v2 is None:
+            from app.services.document_classifier import get_document_classifier
+            self._classifier_v2 = get_document_classifier()
+        return self._classifier_v2
 
     def _get_ocr(self):
         if self._ocr_service is None:
@@ -1991,16 +3457,41 @@ class SmartReadingService:
             self._quality_analyzer = get_image_quality_analyzer()
         return self._quality_analyzer
 
-    def _auto_select_reading_mode(self, doc_type: str, extracted, word_count: int) -> str:
+    def _auto_select_reading_mode(self, doc_type: str, extracted, word_count: int,
+                                   classifier_reading_mode: Optional[str] = None) -> str:
         """
         Selecciona automáticamente el modo de lectura óptimo según el tipo de documento.
+
+        Mapea el reading_mode del clasificador v3 (dialogue, structured_fields,
+        list_items, paragraph_text, visual_description) al modo de lectura
+        del NarrativeGenerator (financiero, detallado, resumen).
+
+        Si el clasificador provee reading_mode, se usa como base.
+        Si no, se usa la lógica legacy por doc_type.
         """
-        if doc_type in ("factura", "recibo"):
+        # --- Mapeo desde classifier reading_mode (v3) ---
+        if classifier_reading_mode:
+            _READING_MODE_MAP = {
+                "structured_fields": "financiero",
+                "paragraph_text": "detallado",
+                "dialogue": "resumen",
+                "list_items": "resumen",
+                "visual_description": "resumen",
+            }
+            mapped = _READING_MODE_MAP.get(classifier_reading_mode)
+            if mapped:
+                return mapped
+
+        # --- Fallback: lógica legacy por doc_type ---
+        if doc_type in ("factura", "recibo", "app_service"):
             return "financiero"
-        if doc_type in ("carta", "formulario", "documento_informativo", "correo"):
+        if doc_type in ("carta", "formulario", "documento_informativo", "correo",
+                        "contrato", "hoja_de_vida", "informe"):
             return "detallado"
         if doc_type in ("etiqueta", "menu", "tarjeta", "chat", "notificacion",
-                        "login", "red_social", "configuracion", "presentacion"):
+                        "login", "red_social", "configuracion", "presentacion",
+                        "app_menu", "app_settings", "app_login", "app_form",
+                        "app_social", "comentario"):
             return "resumen"
         if doc_type == "noticia":
             return "detallado"
@@ -2025,10 +3516,7 @@ class SmartReadingService:
 
         Estrategia:
         1. Analizar calidad de imagen (siempre, local)
-        2. Intentar Gemini Vision (si está disponible)
-        3. Si Gemini falla → Tesseract local (fallback)
-        4. Aplicar ProsodyEnhancer a la narrativa
-        5. Construir respuesta
+        2. Pipeline Tesseract local + Clasificador jerárquico v3
 
         Args:
             image: Imagen BGR (OpenCV)
@@ -2041,16 +3529,8 @@ class SmartReadingService:
         quality_analyzer = self._get_quality_analyzer()
         quality_report = quality_analyzer.analyze(image)
 
-        # 1. Intentar Gemini Vision (pipeline primario)
-        gemini_result = self._try_gemini(image)
-
-        if gemini_result is not None:
-            return self._build_response_from_gemini(
-                gemini_result, quality_report, reading_mode
-            )
-
-        # 2. Fallback: Pipeline Tesseract local
-        logger.info("[SmartReading] Usando Tesseract (fallback local)")
+        # 1. Pipeline Tesseract local + Clasificador v3
+        logger.info("[SmartReading] Usando Tesseract + Clasificador v3")
         return self._analyze_with_tesseract(image, quality_report, reading_mode)
 
     def _try_gemini(self, image: np.ndarray) -> Optional[dict]:
@@ -2138,7 +3618,7 @@ class SmartReadingService:
             "message": "Documento analizado con Gemini Vision",
             "narrative": narrative,
             "document_type": doc_type,
-            "document_type_label": DocumentClassifier.get_label(doc_type),
+            "document_type_label": self._get_classifier().get_label(doc_type),
             "reading_mode": reading_mode,
             "raw_text": raw_text,
             "has_text": has_text,
@@ -2157,30 +3637,84 @@ class SmartReadingService:
     ) -> dict:
         """
         Pipeline completo con Tesseract (fallback offline).
-        Este es el pipeline original que funciona sin internet.
+
+        Pipeline v2 con clasificador jerárquico:
+          1. OCR con datos estructurales (bounding boxes, bloques, líneas)
+          2. Clasificación jerárquica:
+             Fase 1: MacroClassifier (solo layout) → macro-tipo
+             Fase 2: SubtypeClassifier (keywords sobre texto limpio) → subtipo
+             + estabilización temporal + detección de ambigüedad
+          3. Extraer campos estructurados (regex)
+          4. Generar narrativa por tipo
+          5. Optimizar para TTS
         """
-        # 1. OCR
+        # 1. OCR (ahora devuelve datos estructurales en 'layout')
         ocr_result = self._get_ocr().extract_text(image)
         raw_text = ocr_result.get("text", "")
         has_text = ocr_result.get("has_text", False)
         confidence = ocr_result.get("confidence")
         word_count = ocr_result.get("word_count", 0)
+        layout_data = ocr_result.get("layout", {
+            "word_boxes": [], "num_blocks": 0, "num_lines": 0
+        })
+        img_width = ocr_result.get("image_width", 800)
+        img_height = ocr_result.get("image_height", 600)
 
-        logger.info(f"[SmartReading/Tesseract] OCR: {word_count} palabras, confianza={confidence}")
+        logger.info(f"[SmartReading/Tesseract] OCR: {word_count} palabras, "
+                     f"confianza={confidence}, "
+                     f"bloques={layout_data.get('num_blocks', 0)}, "
+                     f"líneas={layout_data.get('num_lines', 0)}")
         if raw_text:
             logger.info(f"[SmartReading/Tesseract] Texto (200 chars): {raw_text[:200]}")
 
-        # 2. Clasificar
-        doc_type, cls_confidence = self._classifier.classify(raw_text, word_count)
-        logger.info(f"[SmartReading/Tesseract] Clasificación: {doc_type} (conf={cls_confidence:.2f})")
+        # 2. Clasificación jerárquica (Fase 1: layout → Fase 2: keywords)
+        classifier = self._get_classifier()
+        cls_result = classifier.classify(
+            raw_text=raw_text,
+            word_count=word_count,
+            layout_data=layout_data,
+            img_width=img_width,
+            img_height=img_height,
+            ocr_confidence=confidence or 0.0,
+        )
+        doc_type = cls_result.doc_type
+        cls_confidence = cls_result.confidence
 
-        # 3. Extraer campos
+        # Log de explicación interna
+        expl = cls_result.explanation
+        logger.info(
+            f"[SmartReading/Classifier] "
+            f"macro={expl.macro_type} → subtipo={doc_type} "
+            f"(conf={cls_confidence:.2f})"
+            + (f" AMBIGUO: {expl.ambiguity_note}" if expl.is_ambiguous else "")
+            + (f" ESTABILIZADO: {expl.stabilization_note}" if expl.was_stabilized else "")
+        )
+
+        # 3. Extraer campos (usa texto crudo — los regex de StructureExtractor
+        #    necesitan el texto original para detectar patrones como "Total: $150")
         extracted = self._extractor.extract(raw_text)
 
-        # 4. Auto-select reading mode
+        # 3.5 RECONSTRUCCIÓN SEMÁNTICA: limpiar texto ANTES de generar narrativa
+        #     Ningún generador debe usar jamás el texto OCR crudo.
+        reconstructor = get_text_reconstructor()
+        clean_text = reconstructor.reconstruct(raw_text, doc_type)
+        logger.info(
+            f"[SmartReading/Reconstruct] "
+            f"{len(raw_text)} chars → {len(clean_text)} chars "
+            f"({len(clean_text.split())} palabras limpias)"
+        )
+        if clean_text:
+            logger.info(f"[SmartReading/Reconstruct] Texto limpio (200 chars): {clean_text[:200]}")
+
+        # 4. Auto-select reading mode (usa reading_mode del clasificador v3 si disponible)
+        classifier_reading_mode = getattr(cls_result, 'reading_mode', None)
         if reading_mode is None:
-            reading_mode = self._auto_select_reading_mode(doc_type, extracted, word_count)
-            logger.info(f"[SmartReading/Tesseract] Modo automático: {reading_mode}")
+            reading_mode = self._auto_select_reading_mode(
+                doc_type, extracted, word_count,
+                classifier_reading_mode=classifier_reading_mode
+            )
+            logger.info(f"[SmartReading/Tesseract] Modo automático: {reading_mode} "
+                        f"(classifier sugirió: {classifier_reading_mode})")
 
         # 5. Florence-2 para imagen_visual
         visual_caption = None
@@ -2195,10 +3729,14 @@ class SmartReadingService:
                     logger.debug(f"Florence-2 caption falló: {e}")
 
         # 6. Generar narrativa
+        # Los generadores reciben el texto crudo para extracción con regex
+        # (el clean text puede eliminar montos, fechas, etc.)
+        # Si clean_text está vacío, usar raw_text directamente.
+        gen_text = clean_text if clean_text.strip() else raw_text
         narrative = self._generator.generate(
             doc_type=doc_type,
             reading_mode=reading_mode,
-            raw_text=raw_text,
+            raw_text=gen_text,
             extracted=extracted,
             visual_caption=visual_caption,
         )
@@ -2249,7 +3787,7 @@ class SmartReadingService:
             "message": "Documento analizado con Tesseract (offline)",
             "narrative": narrative,
             "document_type": doc_type,
-            "document_type_label": DocumentClassifier.get_label(doc_type),
+            "document_type_label": cls_result.label,
             "reading_mode": reading_mode,
             "raw_text": raw_text,
             "has_text": has_text,
@@ -2266,6 +3804,15 @@ class SmartReadingService:
             },
             "visual_caption": visual_caption,
             "image_quality": quality_data,
+            "classification": {
+                "macro_type": cls_result.macro_type,
+                "classifier_reading_mode": classifier_reading_mode,
+                "is_ambiguous": expl.is_ambiguous,
+                "ambiguity_note": expl.ambiguity_note,
+                "was_stabilized": expl.was_stabilized,
+                "macro_reasons": expl.macro_reasons[:3],
+                "subtype_reasons": expl.subtype_reasons[:3],
+            },
         }
 
 

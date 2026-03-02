@@ -46,6 +46,7 @@ from app.services.scene_description_service import get_scene_description_service
 from app.services.navigation_service import get_navigation_service
 from app.services.risk_service import get_risk_service
 from app.services.smart_reading_service import get_smart_reading_service
+from app.services.exploration_service import get_exploration_service
 from app.services.history_service import save_to_history
 
 # Configurar logging
@@ -502,17 +503,28 @@ async def analyze_navigation(
 @router.post(
     "/exploracion",
     response_model=ExplorationResponse,
-    summary="Modo Exploración - descripción del entorno",
+    summary="Modo Exploración - descripción del entorno (mejorado)",
     description="""
-    Genera una descripción estructurada del entorno.
-    Ejemplo: "Hay una mesa frente a ti y una silla a la izquierda."
+    Genera una descripción estructurada del entorno optimizada para accesibilidad.
+    
+    **Mejoras implementadas:**
+    - Filtrado semántico (ignora objetos irrelevantes como piso, cielo, paredes)
+    - Priorización inteligente (score = confianza × tamaño × cercanía al centro)
+    - Estimación de distancia basada en tamaño del objeto
+    - Posición espacial completa (horizontal + vertical)
+    - Extracción de color dominante del objeto principal
+    - Filtro inteligente de OCR (evita ruido visual)
+    - Máximo 3 objetos + 1 bloque de texto (evita sobrecarga cognitiva)
+    
+    **Ejemplo de salida:**
+    "Un gato está frente a ti, muy cerca, a nivel del suelo. Es de color naranja."
     """
 )
 async def analyze_exploration(
     image: UploadFile = File(..., description="Imagen para exploración"),
     background_tasks: BackgroundTasks = None,
 ) -> ExplorationResponse:
-    """Modo Exploración: descripción estructurada del entorno."""
+    """Modo Exploración mejorado: descripción estructurada con priorización inteligente."""
     try:
         start_time = time.time()
 
@@ -523,8 +535,9 @@ async def analyze_exploration(
         cv2_image = bytes_to_cv2_image(content)
         cv2_image = resize_image_if_needed(cv2_image)
 
-        scene_service = get_scene_description_service()
-        response = scene_service.describe_exploration(cv2_image)
+        # Usar el nuevo servicio de exploración mejorado
+        exploration_service = get_exploration_service()
+        response = exploration_service.analyze(cv2_image)
 
         processing_time = (time.time() - start_time) * 1000
 
@@ -605,6 +618,7 @@ async def analyze_reading(
             extracted_fields=result["extracted_fields"],
             visual_caption=result.get("visual_caption"),
             image_quality=result.get("image_quality"),
+            classification=result.get("classification"),
         )
 
         # Guardar en historial

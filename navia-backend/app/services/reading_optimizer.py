@@ -414,12 +414,28 @@ class UncertaintyHandler:
         return narrative
 
     def _add_uncertainty_prefix(self, narrative: str, level: str) -> str:
-        """Agrega indicador de incertidumbre al contenido (no a la intro)."""
+        """Agrega indicador de incertidumbre al contenido (no a la intro).
+
+        Si la narrativa ya tiene datos estructurados (montos, listas, conteos),
+        NO envolver con "Parece decir:" — solo agregar disclaimer suave al final.
+        """
+        # Detectar si la narrativa tiene datos estructurados (no es texto crudo)
+        has_structured = bool(re.search(
+            r'(?:total|productos?|pagado|compraste|actividades|resultados|'
+            r'valores?|tarjeta|normal|atención|diapositiva|opciones|campos)',
+            narrative, re.I
+        ))
+
+        if has_structured:
+            # Datos estructurados → no meter "Parece decir:", solo disclaimer
+            if level == "low":
+                return narrative + " La imagen no se lee muy bien, algunos datos pueden ser imprecisos."
+            return narrative
+
         # Separar intro del contenido
         sentences = re.split(r'(?<=[.!?])\s+', narrative, maxsplit=1)
 
         if len(sentences) < 2:
-            # Solo una oración
             if level == "low":
                 return f"No se lee muy bien, pero: {narrative}"
             return narrative
@@ -428,14 +444,13 @@ class UncertaintyHandler:
         content = sentences[1]
 
         # Eliminar "Dice:" redundante del contenido si existe
-        # (ya que vamos a agregar "Parece decir:")
         content = re.sub(r'(?:^|\.\s*)(?:Dice|El texto dice|El contenido dice)\s*:\s*',
                          '. ', content, flags=re.IGNORECASE).strip()
-        content = re.sub(r'^\.\s*', '', content)  # Limpiar punto inicial
+        content = re.sub(r'^\.\s*', '', content)
 
         if level == "low":
             prefix = "No se lee con total claridad, pero parece decir:"
-        else:  # medium
+        else:
             prefix = "Parece decir:"
 
         return f"{intro} {prefix} {content}"
