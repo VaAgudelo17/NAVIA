@@ -11,7 +11,7 @@
  * feedback de audio para usuarios ciegos.
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -45,7 +45,7 @@ import {
   SmartReadingResponse,
   ReadingMode,
 } from '../types/api';
-import { useRealtimeDetection } from '../hooks/useRealtimeDetection';
+import { useRealtimeDetection, RealtimeSessionSummary } from '../hooks/useRealtimeDetection';
 import { usePreferences } from '../context/PreferencesContext';
 import { saveToHistory, getHistory, clearHistory, HistoryEntry } from '../services/storage';
 
@@ -92,13 +92,29 @@ export function HomeScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
 
-  // Detección en tiempo real (para Navegación y Riesgo)
+  // Detección en tiempo real (Navegación con riesgo integrado)
   const [realtimeActive, setRealtimeActive] = useState(false);
+  const handleRealtimeSessionEnd = useCallback((session: RealtimeSessionSummary) => {
+    if (session.framesProcessed > 0) {
+      saveToHistory({
+        mode: 'navegacion',
+        resultSummary: session.summary,
+        resultData: {
+          type: 'realtime_session',
+          durationSeconds: session.durationSeconds,
+          framesProcessed: session.framesProcessed,
+          dangerCount: session.dangerCount,
+          topObstacles: session.topObstacles,
+        },
+      });
+    }
+  }, []);
   const { wsStatus, latestResult } = useRealtimeDetection({
     cameraRef,
     enabled: realtimeActive,
     ttsEnabled,
     mode: analysisMode,
+    onSessionEnd: handleRealtimeSessionEnd,
   });
 
   const isRealtimeMode = REALTIME_MODES.includes(analysisMode);
@@ -147,10 +163,10 @@ export function HomeScreen() {
       setAppState('realtime');
       setRealtimeActive(true);
       const modeLabel = MODE_CONFIG[analysisMode].label;
-      ttsManager.speak(`Modo ${modeLabel} activado. Apunta la cámara.`, TtsPriority.LOW);
+      ttsManager.speak(`Modo ${modeLabel} activado. Apunta la cámara.`, TtsPriority.HIGH);
     } else {
       setAppState('camera');
-      ttsManager.speak('Cámara activada. Toca el botón central para capturar.', TtsPriority.LOW);
+      ttsManager.speak('Cámara activada. Toca el botón central para capturar.', TtsPriority.HIGH);
     }
   };
 
@@ -168,7 +184,7 @@ export function HomeScreen() {
       if (photo?.uri) {
         setCapturedImage(photo.uri);
         setAppState('processing');
-        ttsManager.speak('Foto capturada.', TtsPriority.LOW);
+        ttsManager.speak('Foto capturada.', TtsPriority.HIGH);
         await processImage(photo.uri);
       }
     } catch (err) {
@@ -179,7 +195,7 @@ export function HomeScreen() {
 
   // Seleccionar imagen de la galería
   const handlePickImage = async () => {
-    ttsManager.speak('Abriendo galería.', TtsPriority.LOW);
+    ttsManager.speak('Abriendo galería.', TtsPriority.HIGH);
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       quality: 0.8,
@@ -342,7 +358,7 @@ export function HomeScreen() {
                 ]}
                 onPress={() => {
                   setAnalysisMode(value);
-                  ttsManager.speak(`Modo ${config.label}. ${config.description}.`, TtsPriority.LOW);
+                  ttsManager.speak(`Modo ${config.label}. ${config.description}.`, TtsPriority.HIGH);
                 }}
                 accessibilityRole="radio"
                 accessibilityState={{ selected: analysisMode === value }}
@@ -397,13 +413,12 @@ export function HomeScreen() {
         onPress={() => {
           const newValue = !ttsEnabled;
           setTtsEnabled(newValue);
-          // INTERRUPT: confirmar cambio de voz siempre debe oírse
-          // Temporalmente activar para que se escuche el mensaje
+          // Siempre habilitar temporalmente para que se escuche la confirmación
+          ttsManager.setEnabled(true);
           if (!newValue) {
-            ttsManager.setEnabled(true);
             ttsManager.speak('Voz desactivada.', TtsPriority.INTERRUPT);
             // Desactivar después de que termine de hablar
-            setTimeout(() => ttsManager.setEnabled(false), 2000);
+            setTimeout(() => ttsManager.setEnabled(false), 3000);
           } else {
             ttsManager.speak('Voz activada.', TtsPriority.INTERRUPT);
           }
@@ -437,7 +452,7 @@ export function HomeScreen() {
 
   // Abrir historial
   const handleOpenHistory = async () => {
-    ttsManager.speak('Abriendo historial.', TtsPriority.LOW);
+    ttsManager.speak('Abriendo historial.', TtsPriority.HIGH);
     const items = await getHistory(20);
     setHistoryItems(items);
     setAppState('history');
@@ -447,7 +462,7 @@ export function HomeScreen() {
   const handleClearHistory = async () => {
     await clearHistory();
     setHistoryItems([]);
-    ttsManager.speak('Historial borrado.', TtsPriority.LOW);
+    ttsManager.speak('Historial borrado.', TtsPriority.HIGH);
   };
 
   // Pantalla de Historial
@@ -540,7 +555,10 @@ export function HomeScreen() {
             )}
             <Button
               title="Volver"
-              onPress={handleReset}
+              onPress={() => {
+                handleReset();
+                ttsManager.speak('Volviendo al inicio.', TtsPriority.HIGH);
+              }}
               size="large"
               icon={<Ionicons name="arrow-back" size={20} color={COLORS.background} />}
               style={styles.resultActionButton}
@@ -660,7 +678,7 @@ export function HomeScreen() {
             style={styles.stopRealtimeButton}
             onPress={() => {
               handleReset();
-              ttsManager.speak('Detenido.', TtsPriority.LOW);
+              ttsManager.speak('Detenido.', TtsPriority.HIGH);
             }}
             accessibilityLabel="Detener"
             accessibilityRole="button"
@@ -687,7 +705,7 @@ export function HomeScreen() {
           style={styles.cameraButton}
           onPress={() => {
             handleReset();
-            ttsManager.speak('Cancelado.', TtsPriority.LOW);
+            ttsManager.speak('Cancelado.', TtsPriority.HIGH);
           }}
           accessibilityLabel="Cancelar y volver"
           accessibilityRole="button"
@@ -919,7 +937,7 @@ export function HomeScreen() {
           title="Nueva Imagen"
           onPress={() => {
             handleReset();
-            ttsManager.speak('Nueva captura.', TtsPriority.LOW);
+            ttsManager.speak('Nueva captura.', TtsPriority.HIGH);
           }}
           variant="outline"
           size="large"
@@ -953,7 +971,7 @@ export function HomeScreen() {
         title="Intentar de nuevo"
         onPress={() => {
           handleReset();
-          ttsManager.speak('Volviendo al inicio.', TtsPriority.LOW);
+          ttsManager.speak('Volviendo al inicio.', TtsPriority.HIGH);
         }}
         size="large"
       />

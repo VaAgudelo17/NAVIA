@@ -28,6 +28,35 @@ from app.models.schemas import DetectedObject
 logger = logging.getLogger(__name__)
 
 
+class _DetArray:
+    """
+    Wrapper ligero que expone detecciones en el formato que ByteTrack espera.
+
+    ByteTrack accede a: .conf, .xyxy, .xywh, .cls, len(), y [] (slicing).
+    """
+
+    def __init__(self, xyxy: np.ndarray, conf: np.ndarray, cls: np.ndarray):
+        self.xyxy = xyxy     # [N, 4] x1,y1,x2,y2
+        self.conf = conf     # [N]
+        self.cls = cls       # [N]
+
+    @property
+    def xywh(self) -> np.ndarray:
+        """Convierte xyxy → xywh (center_x, center_y, w, h)."""
+        x1, y1, x2, y2 = self.xyxy[:, 0], self.xyxy[:, 1], self.xyxy[:, 2], self.xyxy[:, 3]
+        w = x2 - x1
+        h = y2 - y1
+        cx = x1 + w / 2
+        cy = y1 + h / 2
+        return np.stack([cx, cy, w, h], axis=1)
+
+    def __len__(self) -> int:
+        return len(self.conf)
+
+    def __getitem__(self, idx):
+        return _DetArray(self.xyxy[idx], self.conf[idx], self.cls[idx])
+
+
 class TrackingService:
     """
     Servicio de tracking que envuelve ByteTrack de ultralytics.
@@ -59,6 +88,7 @@ class TrackingService:
                 new_track_thresh=settings.TRACK_LOW_THRESH,
                 track_buffer=settings.TRACK_BUFFER_FRAMES,
                 match_thresh=settings.TRACK_MATCH_THRESH,
+                fuse_score=True,
             )
             self.tracker = BYTETracker(args, frame_rate=10)
             logger.info("ByteTrack inicializado correctamente")
@@ -108,27 +138,29 @@ class TrackingService:
 
         self.frame_id += 1
 
-        # Construir array [N, 6]: x1, y1, x2, y2, confidence, class_id
-        # ByteTrack necesita class_id numérico; usamos hash del nombre
-        det_array = np.zeros((len(detections), 6), dtype=np.float32)
+        # Construir arrays separados para el wrapper _DetArray
+        # ByteTrack necesita .xyxy, .conf, .cls, .xywh
+        n = len(detections)
+        xyxy = np.zeros((n, 4), dtype=np.float32)
+        conf = np.zeros(n, dtype=np.float32)
+        cls = np.zeros(n, dtype=np.float32)
         det_to_obj: Dict[int, DetectedObject] = {}
 
         for i, det in enumerate(detections):
             bb = det.bounding_box
-            # Generar class_id numérico consistente a partir del nombre
             class_id = hash(det.name_es) % 10000
             self._class_name_map[class_id] = det.name_es
 
-            det_array[i] = [
-                bb.x_min, bb.y_min, bb.x_max, bb.y_max,
-                det.confidence, class_id,
-            ]
+            xyxy[i] = [bb.x_min, bb.y_min, bb.x_max, bb.y_max]
+            conf[i] = det.confidence
+            cls[i] = class_id
             det_to_obj[i] = det
 
+        det_wrapper = _DetArray(xyxy, conf, cls)
+
         try:
-            # ByteTrack espera formato Results-like de ultralytics
-            # Pasamos el array directamente
-            tracks = self.tracker.update(det_array, img_shape)
+            # ByteTrack espera objeto con .conf, .xyxy, .xywh, .cls
+            tracks = self.tracker.update(det_wrapper)
         except Exception as e:
             logger.warning(f"Error en ByteTrack update: {e}")
             return [
@@ -141,16 +173,20 @@ class TrackingService:
             ]
 
         # Mapear tracks de vuelta a DetectedObject
+        # tracks es ndarray [M, 8]: x1, y1, x2, y2, track_id, score, cls, idx
         tracked_results = []
 
-        for track in tracks:
-            track_id = int(track.track_id)
-            # track.tlbr contiene [x1, y1, x2, y2]
-            track_bbox = track.tlbr
+        if len(tracks) == 0:
+            return tracked_results
+
+        for row in tracks:
+            track_bbox = row[:4]
+            track_id = int(row[4])
+            cls_id = int(row[6])
 
             # Encontrar la detección original más cercana por IoU
             best_idx = self._match_track_to_detection(
-                track_bbox, det_array[:, :4]
+                track_bbox, xyxy
             )
 
             if best_idx is not None and best_idx in det_to_obj:
@@ -158,9 +194,7 @@ class TrackingService:
                 name_es = original_obj.name_es
             else:
                 # Track sin detección asociable, usar class_name del mapa
-                cls_id = int(track.cls) if hasattr(track, 'cls') else 0
                 name_es = self._class_name_map.get(cls_id, "desconocido")
-                # Crear objeto con las coordenadas del track
                 original_obj = None
 
             if original_obj is not None:

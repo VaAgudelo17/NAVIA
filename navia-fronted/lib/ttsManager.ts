@@ -113,6 +113,9 @@ class TtsManager {
 
     if (item.useBackend) {
       this.playFromBackend(item.text).catch(() => {
+        // Asegurar que el estado esté limpio antes del fallback
+        this.isPlaying = false
+        this.currentAudio = null
         // Fallback a Web Speech API
         this.playWebSpeech(item.text)
       })
@@ -128,7 +131,14 @@ class TtsManager {
       return
     }
 
+    // Detener cualquier audio previo (backend o Web Speech)
+    if (this.currentAudio) {
+      this.currentAudio.pause()
+      this.currentAudio = null
+    }
     window.speechSynthesis.cancel()
+
+    this.isPlaying = true
     const utterance = new SpeechSynthesisUtterance(text)
     utterance.lang = 'es-ES'
     utterance.rate = 0.9
@@ -147,6 +157,15 @@ class TtsManager {
   }
 
   private async playFromBackend(text: string): Promise<void> {
+    // Detener cualquier audio previo antes de iniciar nuevo
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel()
+    }
+    if (this.currentAudio) {
+      this.currentAudio.pause()
+      this.currentAudio = null
+    }
+
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 8000)
 

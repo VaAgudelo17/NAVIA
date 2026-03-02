@@ -133,10 +133,10 @@ export function NaviaApp() {
           setAppState("realtime")
           setRealtimeActive(true)
           const modeLabel = MODE_CONFIG[analysisMode].label
-          ttsManager.speak(`Modo ${modeLabel} activado.`, TtsPriority.LOW)
+          ttsManager.speak(`Modo ${modeLabel} activado.`, TtsPriority.HIGH)
         } else {
           setAppState("camera")
-          ttsManager.speak("Cámara activada. Toca el botón central para capturar.", TtsPriority.LOW)
+          ttsManager.speak("Cámara activada. Toca el botón central para capturar.", TtsPriority.HIGH)
         }
       }
     } catch {
@@ -162,7 +162,7 @@ export function NaviaApp() {
     if (!videoRef.current || !canvasRef.current) return
 
     setAppState("capturing")
-    ttsManager.speak("Foto capturada.", TtsPriority.LOW)
+    ttsManager.speak("Foto capturada.", TtsPriority.HIGH)
 
     const video = videoRef.current
     const canvas = canvasRef.current
@@ -350,7 +350,7 @@ export function NaviaApp() {
                       variant={analysisMode === mode ? "default" : "outline"}
                       onClick={() => {
                         setAnalysisMode(mode)
-                        ttsManager.speak(`Modo ${config.label}`, TtsPriority.LOW)
+                        ttsManager.speak(`Modo ${config.label}`, TtsPriority.HIGH)
                       }}
                       role="radio"
                       aria-checked={analysisMode === mode}
@@ -381,7 +381,7 @@ export function NaviaApp() {
                       variant="outline"
                       size="lg"
                       onClick={() => {
-                        ttsManager.speak("Abriendo galería", TtsPriority.LOW)
+                        ttsManager.speak("Abriendo galería", TtsPriority.HIGH)
                         fileInputRef.current?.click()
                       }}
                       disabled={isBackendConnected === false}
@@ -407,7 +407,7 @@ export function NaviaApp() {
                   variant="ghost"
                   size="sm"
                   onClick={async () => {
-                    ttsManager.speak("Abriendo historial", TtsPriority.LOW)
+                    ttsManager.speak("Abriendo historial", TtsPriority.HIGH)
                     try {
                       const data = await getHistory(undefined, 1, 20)
                       setHistoryItems(data.items)
@@ -458,7 +458,7 @@ export function NaviaApp() {
                 onClick={() => {
                   stopCamera()
                   setAppState("idle")
-                  ttsManager.speak("Cancelado", TtsPriority.LOW)
+                  ttsManager.speak("Cancelado", TtsPriority.HIGH)
                 }}
                 aria-label="Cancelar y volver"
               >
@@ -478,7 +478,7 @@ export function NaviaApp() {
                 variant="outline"
                 size="icon-lg"
                 onClick={() => {
-                  ttsManager.speak("Abriendo galería", TtsPriority.LOW)
+                  ttsManager.speak("Abriendo galería", TtsPriority.HIGH)
                   fileInputRef.current?.click()
                 }}
                 aria-label="Subir imagen desde galería"
@@ -702,7 +702,7 @@ export function NaviaApp() {
                 size="lg"
                 onClick={() => {
                   reset()
-                  ttsManager.speak("Nueva captura", TtsPriority.LOW)
+                  ttsManager.speak("Nueva captura", TtsPriority.HIGH)
                 }}
                 className="min-h-[48px]"
                 aria-label="Tomar nueva imagen"
@@ -824,7 +824,7 @@ export function NaviaApp() {
                 size="lg"
                 onClick={() => {
                   reset()
-                  ttsManager.speak("Detenido", TtsPriority.LOW)
+                  ttsManager.speak("Detenido", TtsPriority.HIGH)
                 }}
                 className="w-full min-h-[48px]"
                 aria-label="Detener detección en tiempo real"
@@ -845,7 +845,7 @@ export function NaviaApp() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <p>{error}</p>
-                <Button onClick={() => { reset(); ttsManager.speak("Volviendo al inicio", TtsPriority.LOW) }} className="w-full min-h-[48px]" aria-label="Intentar de nuevo">
+                <Button onClick={() => { reset(); ttsManager.speak("Volviendo al inicio", TtsPriority.HIGH) }} className="w-full min-h-[48px]" aria-label="Intentar de nuevo">
                   Intentar de nuevo
                 </Button>
               </CardContent>
@@ -918,9 +918,9 @@ export function NaviaApp() {
                         try {
                           await clearHistory()
                           setHistoryItems([])
-                          ttsManager.speak("Historial borrado", TtsPriority.LOW)
+                          ttsManager.speak("Historial borrado", TtsPriority.HIGH)
                         } catch {
-                          ttsManager.speak("Error al borrar historial", TtsPriority.LOW)
+                          ttsManager.speak("Error al borrar historial", TtsPriority.HIGH)
                         }
                       }}
                       className="flex-1 text-destructive"
@@ -934,7 +934,7 @@ export function NaviaApp() {
                     size="sm"
                     onClick={() => {
                       reset()
-                      ttsManager.speak("Volviendo al inicio", TtsPriority.LOW)
+                      ttsManager.speak("Volviendo al inicio", TtsPriority.HIGH)
                     }}
                     className="flex-1"
                     aria-label="Volver al inicio"

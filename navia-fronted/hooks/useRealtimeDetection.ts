@@ -3,6 +3,9 @@
  *
  * Extrae frames del video via canvas y los envía al backend
  * por WebSocket. Soporta modo Navegación (con detección de riesgo integrada).
+ *
+ * Al finalizar la sesión (enabled → false), llama onSessionEnd
+ * con un resumen para guardar en historial.
  */
 
 "use client"
@@ -12,6 +15,14 @@ import { RealtimeWebSocket } from '@/lib/websocket'
 import { RealtimeTtsManager } from '@/lib/realtimeTts'
 import { type RealtimeDetectionResult, type NaviaMode } from '@/lib/api'
 
+export interface RealtimeSessionSummary {
+  durationSeconds: number
+  framesProcessed: number
+  dangerCount: number
+  topObstacles: Record<string, number>
+  summary: string
+}
+
 interface UseRealtimeDetectionOptions {
   videoRef: React.RefObject<HTMLVideoElement | null>
   canvasRef: React.RefObject<HTMLCanvasElement | null>
@@ -19,6 +30,7 @@ interface UseRealtimeDetectionOptions {
   ttsEnabled: boolean
   mode: NaviaMode
   targetFps?: number
+  onSessionEnd?: (summary: RealtimeSessionSummary) => void
 }
 
 export function useRealtimeDetection({
@@ -28,6 +40,7 @@ export function useRealtimeDetection({
   ttsEnabled,
   mode,
   targetFps = 5,
+  onSessionEnd,
 }: UseRealtimeDetectionOptions) {
   const [wsStatus, setWsStatus] = useState<string>('disconnected')
   const [latestResult, setLatestResult] = useState<RealtimeDetectionResult | null>(null)
@@ -37,6 +50,14 @@ export function useRealtimeDetection({
   const animFrameRef = useRef<number | null>(null)
   const lastCaptureTime = useRef(0)
 
+  // --- Estadísticas de sesión ---
+  const sessionStartRef = useRef<number>(0)
+  const framesRef = useRef<number>(0)
+  const dangerCountRef = useRef<number>(0)
+  const obstacleCountsRef = useRef<Record<string, number>>({})
+  const onSessionEndRef = useRef(onSessionEnd)
+  onSessionEndRef.current = onSessionEnd
+
   // Actualizar modo del TTS manager cuando cambie
   useEffect(() => {
     ttsManagerRef.current.setMode(mode)
@@ -44,6 +65,18 @@ export function useRealtimeDetection({
 
   const handleDetection = useCallback((data: RealtimeDetectionResult) => {
     setLatestResult(data)
+
+    // Acumular estadísticas
+    framesRef.current += 1
+    if (data.has_danger) {
+      dangerCountRef.current += 1
+    }
+    if (data.obstacle_details) {
+      for (const obs of data.obstacle_details) {
+        const name = obs.name
+        obstacleCountsRef.current[name] = (obstacleCountsRef.current[name] || 0) + 1
+      }
+    }
 
     if (ttsEnabled) {
       ttsManagerRef.current.speakResult(
@@ -60,6 +93,37 @@ export function useRealtimeDetection({
 
   useEffect(() => {
     if (!enabled) {
+      // --- Al desactivar: generar resumen y notificar ---
+      const frames = framesRef.current
+      if (frames > 0 && onSessionEndRef.current) {
+        const durationSeconds = (Date.now() - sessionStartRef.current) / 1000
+        const dangers = dangerCountRef.current
+        const obstacles = obstacleCountsRef.current
+
+        const topObstacles: Record<string, number> = {}
+        Object.entries(obstacles)
+          .sort(([, a], [, b]) => b - a)
+          .slice(0, 5)
+          .forEach(([name, count]) => { topObstacles[name] = count })
+
+        const durationMin = (durationSeconds / 60).toFixed(1)
+        const obsText = Object.entries(topObstacles)
+          .map(([name, count]) => `${name} (${count}x)`)
+          .join(', ')
+
+        const summary = obsText
+          ? `Sesión de ${durationMin} min, ${frames} frames. Obstáculos: ${obsText}. Alertas: ${dangers}.`
+          : `Sesión de ${durationMin} min, ${frames} frames. Camino libre.`
+
+        onSessionEndRef.current({
+          durationSeconds,
+          framesProcessed: frames,
+          dangerCount: dangers,
+          topObstacles,
+          summary,
+        })
+      }
+
       // Limpieza
       if (animFrameRef.current) {
         cancelAnimationFrame(animFrameRef.current)
@@ -72,6 +136,12 @@ export function useRealtimeDetection({
       setWsStatus('disconnected')
       return
     }
+
+    // Reiniciar stats de sesión
+    sessionStartRef.current = Date.now()
+    framesRef.current = 0
+    dangerCountRef.current = 0
+    obstacleCountsRef.current = {}
 
     // Conectar WebSocket con modo
     wsRef.current = new RealtimeWebSocket(handleDetection, setWsStatus, mode)

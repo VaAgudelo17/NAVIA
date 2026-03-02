@@ -12,27 +12,34 @@ import { useState, useEffect, useCallback } from "react"
  * @param defaultValue - Valor por defecto si no existe en storage
  */
 export function useLocalStorage<T>(key: string, defaultValue: T): [T, (value: T | ((prev: T) => T)) => void] {
-  // Inicializar con el valor de localStorage o el default
-  const [storedValue, setStoredValue] = useState<T>(() => {
-    if (typeof window === "undefined") return defaultValue
+  // Siempre inicializar con defaultValue para evitar hydration mismatch.
+  // En SSR y en la primera render del cliente usamos el mismo valor.
+  const [storedValue, setStoredValue] = useState<T>(defaultValue)
+  const [hydrated, setHydrated] = useState(false)
+
+  // Después del mount, leer localStorage y actualizar si difiere
+  useEffect(() => {
     try {
       const item = window.localStorage.getItem(key)
-      return item ? (JSON.parse(item) as T) : defaultValue
+      if (item) {
+        const parsed = JSON.parse(item) as T
+        setStoredValue(parsed)
+      }
     } catch (error) {
       console.warn(`Error leyendo localStorage key "${key}":`, error)
-      return defaultValue
     }
-  })
+    setHydrated(true)
+  }, [key])
 
-  // Guardar en localStorage cada vez que cambia el valor
+  // Guardar en localStorage cada vez que cambia el valor (solo después de hidratar)
   useEffect(() => {
-    if (typeof window === "undefined") return
+    if (!hydrated) return
     try {
       window.localStorage.setItem(key, JSON.stringify(storedValue))
     } catch (error) {
       console.warn(`Error guardando localStorage key "${key}":`, error)
     }
-  }, [key, storedValue])
+  }, [key, storedValue, hydrated])
 
   // Setter que acepta valor directo o funcion updater
   const setValue = useCallback((value: T | ((prev: T) => T)) => {

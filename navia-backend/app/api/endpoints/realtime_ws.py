@@ -29,6 +29,7 @@ import base64
 import json
 import time
 import logging
+from collections import Counter
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -38,6 +39,7 @@ from app.services.object_detection_service import get_object_detection_service
 from app.services.realtime_detection_service import RealtimeSessionState
 from app.services.depth_estimation_service import ZONE_LABELS
 from app.services.navigation_guidance_service import get_navigation_guidance_service
+from app.services.history_service import save_to_history
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,16 @@ async def realtime_detection(websocket: WebSocket):
         "mode": "navegacion",
     }
     guidance_service = get_navigation_guidance_service()
+
+    # --- Estadísticas de sesión para historial ---
+    session_stats = {
+        "start_time": time.time(),
+        "frames_processed": 0,
+        "danger_count": 0,
+        "obstacle_names": Counter(),   # {"coche": 5, "persona": 3}
+        "max_risk_score": 0.0,
+        "total_processing_ms": 0,
+    }
 
     async def receive_loop():
         """Recibe frames y configuración del cliente."""
@@ -221,6 +233,16 @@ async def realtime_detection(websocket: WebSocket):
 
                     await websocket.send_json(response)
 
+                    # --- Acumular estadísticas de sesión ---
+                    session_stats["frames_processed"] += 1
+                    session_stats["total_processing_ms"] += processing_time
+                    if guidance["has_danger"]:
+                        session_stats["danger_count"] += 1
+                    for obs in guidance.get("obstacle_details", []):
+                        session_stats["obstacle_names"][obs["name"]] += 1
+                        if obs.get("risk_score", 0) > session_stats["max_risk_score"]:
+                            session_stats["max_risk_score"] = obs["risk_score"]
+
                 except Exception as e:
                     logger.error(f"Error procesando frame: {e}")
                     try:
@@ -245,6 +267,55 @@ async def realtime_detection(websocket: WebSocket):
         logger.error(f"Error en sesión WebSocket: {e}")
     finally:
         guidance_service.reset_movement_state()
+
+        # --- Guardar resumen de sesión en historial ---
+        frames = session_stats["frames_processed"]
+        if frames > 0:
+            duration_s = time.time() - session_stats["start_time"]
+            duration_min = duration_s / 60
+            top_obstacles = session_stats["obstacle_names"].most_common(5)
+            danger_count = session_stats["danger_count"]
+
+            # Resumen corto legible
+            if top_obstacles:
+                obs_text = ", ".join(
+                    f"{name} ({count}x)" for name, count in top_obstacles
+                )
+                summary = (
+                    f"Sesión de {duration_min:.1f} min, "
+                    f"{frames} frames. "
+                    f"Obstáculos: {obs_text}. "
+                    f"Alertas de peligro: {danger_count}."
+                )
+            else:
+                summary = (
+                    f"Sesión de {duration_min:.1f} min, "
+                    f"{frames} frames. Camino libre."
+                )
+
+            avg_ms = session_stats["total_processing_ms"] / frames
+
+            try:
+                await save_to_history(
+                    mode="navegacion",
+                    result_data={
+                        "type": "realtime_session",
+                        "duration_seconds": round(duration_s, 1),
+                        "frames_processed": frames,
+                        "danger_count": danger_count,
+                        "max_risk_score": round(session_stats["max_risk_score"], 2),
+                        "top_obstacles": dict(top_obstacles),
+                        "avg_processing_ms": round(avg_ms, 1),
+                    },
+                    result_summary=summary,
+                    processing_time_ms=avg_ms,
+                    object_count=sum(session_stats["obstacle_names"].values()),
+                    has_danger=danger_count > 0,
+                )
+                logger.info(f"Historial de sesión realtime guardado: {summary[:80]}...")
+            except Exception as e:
+                logger.error(f"Error guardando historial de sesión realtime: {e}")
+
         logger.info(
             f"Sesión WebSocket finalizada. "
             f"Frames procesados: {session_state.frame_count}"
