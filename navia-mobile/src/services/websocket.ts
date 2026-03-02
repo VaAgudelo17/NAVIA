@@ -1,6 +1,6 @@
 /**
  * Cliente WebSocket para detección en tiempo real
- * Soporta modos: navegacion y riesgo
+ * Usa pipeline unificado de navegación + riesgo
  */
 
 import { API_BASE_URL } from '../constants/config';

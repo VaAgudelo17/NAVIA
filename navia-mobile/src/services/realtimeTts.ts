@@ -1,17 +1,13 @@
 /**
- * TTS inteligente para modos tiempo real (Navegación y Riesgo)
+ * TTS inteligente para navegación en tiempo real (Mobile)
  *
  * Delega al ttsManager singleton para evitar conflictos de audio.
  *
- * Modo Navegación:
- * - Usa el summary del backend (ya formateado como instrucción)
- * - Mínimo 3 segundos entre frases
- * - Prioridad LOW (se descarta si algo está sonando)
- *
- * Modo Riesgo:
- * - Solo habla si has_danger === true
- * - Alertas critical usan INTERRUPT (interrumpen todo)
- * - Alertas high usan HIGH (se encolan)
+ * Pipeline unificado (navegación + riesgo):
+ * - Usa el summary del backend (instrucciones priorizadas de navegación)
+ * - Alertas critical interrumpen el speech actual (INTERRUPT)
+ * - Alertas high tienen prioridad alta con cooldown reducido
+ * - Instrucciones normales tienen cooldown de 3s
  */
 
 import { ttsManager, TtsPriority } from './ttsManager';
@@ -25,10 +21,10 @@ interface RealtimeChanges {
   has_significant_change: boolean;
 }
 
-interface RiskData {
+interface GuidanceData {
   has_danger: boolean;
   priority: string;
-  alert_text: string;
+  path_clear: boolean;
 }
 
 export class RealtimeTtsManager {
@@ -41,17 +37,41 @@ export class RealtimeTtsManager {
   }
 
   /**
-   * Procesa resultado de detección según el modo activo.
+   * Habla el resultado de navegación unificada.
+   *
+   * Prioridad de speech:
+   * 1. Peligro critical → interrumpe inmediatamente
+   * 2. Peligro high → prioridad alta, cooldown reducido (1.5s)
+   * 3. Navegación normal → prioridad baja, cooldown 3s
    */
   speakResult(
     summary: string,
     changes?: RealtimeChanges,
-    riskData?: RiskData,
+    guidanceData?: GuidanceData,
   ): void {
-    if (this.mode === 'riesgo') {
-      this.speakRiskAlert(riskData);
+    if (!summary) return;
+
+    // Peligro critical: interrumpir speech actual
+    if (guidanceData?.has_danger && guidanceData.priority === 'critical') {
+      this.lastSummary = summary;
+      this.lastSpeakTime = Date.now();
+      ttsManager.speak(summary, TtsPriority.INTERRUPT);
       return;
     }
+
+    // Peligro high: prioridad alta con cooldown reducido
+    if (guidanceData?.has_danger && guidanceData.priority === 'high') {
+      const now = Date.now();
+      if (now - this.lastSpeakTime < 1500) return;
+      if (ttsManager.isSpeaking()) return;
+
+      this.lastSummary = summary;
+      this.lastSpeakTime = Date.now();
+      ttsManager.speak(summary, TtsPriority.HIGH);
+      return;
+    }
+
+    // Navegación normal: cooldown estándar
     this.speakNavigationSummary(summary, changes);
   }
 
@@ -59,7 +79,6 @@ export class RealtimeTtsManager {
     summary: string,
     changes?: RealtimeChanges,
   ): void {
-    // Solo hablar si hay cambio significativo o summary cambió
     if (!changes?.has_significant_change && summary === this.lastSummary) return;
     if (!summary) return;
 
@@ -69,27 +88,7 @@ export class RealtimeTtsManager {
 
     this.lastSummary = summary;
     this.lastSpeakTime = now;
-    // Prioridad LOW: no interrumpe resultados de análisis en curso
-    // speak() usa Piper TTS (voz natural) por defecto con fallback a expo-speech
     ttsManager.speak(summary, TtsPriority.LOW);
-  }
-
-  private speakRiskAlert(riskData?: RiskData): void {
-    if (!riskData?.has_danger || !riskData.alert_text) return;
-
-    const now = Date.now();
-
-    if (riskData.priority === 'critical') {
-      // INTERRUPT: peligro crítico debe oírse AHORA
-      this.lastSpeakTime = now;
-      ttsManager.speak(riskData.alert_text, TtsPriority.INTERRUPT);
-    } else {
-      // HIGH: respeta cooldown, se encola
-      if (now - this.lastSpeakTime < REALTIME_CONFIG.ttsMinInterval) return;
-      if (ttsManager.isSpeaking()) return;
-      this.lastSpeakTime = now;
-      ttsManager.speak(riskData.alert_text, TtsPriority.HIGH);
-    }
   }
 
   stop(): void {

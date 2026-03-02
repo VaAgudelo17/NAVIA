@@ -11,12 +11,10 @@ import {
   analyzeNavigation,
   analyzeExploration,
   analyzeReading,
-  analyzeRisk,
   checkHealth,
   type NaviaMode,
   type NavigationResponse,
   type ExplorationResponse,
-  type RiskResponse,
   type SmartReadingResponse,
   type ReadingMode,
 } from "@/lib/api"
@@ -30,14 +28,13 @@ type AppState = "idle" | "camera" | "capturing" | "processing" | "results" | "er
 
 // Configuración de modos
 const MODE_CONFIG: Record<NaviaMode, { label: string; Icon: typeof Compass; description: string }> = {
-  navegacion: { label: "Navegación", Icon: Compass, description: "Instrucciones de navegación en tiempo real" },
+  navegacion: { label: "Navegación", Icon: Compass, description: "Navegación asistida con detección de riesgo" },
   exploracion: { label: "Exploración", Icon: Eye, description: "Descripción estructurada del entorno" },
   lectura: { label: "Lectura", Icon: FileText, description: "Lectura de texto y documentos" },
-  riesgo: { label: "Riesgo", Icon: AlertTriangle, description: "Alertas de peligro en tiempo real" },
 }
 
 // Modos que usan WebSocket (tiempo real con cámara)
-const REALTIME_MODES: NaviaMode[] = ['navegacion', 'riesgo']
+const REALTIME_MODES: NaviaMode[] = ['navegacion']
 
 export function NaviaApp() {
   // Preferencias persistentes (desde Context + localStorage)
@@ -59,7 +56,6 @@ export function NaviaApp() {
   const [navResult, setNavResult] = useState<NavigationResponse | null>(null)
   const [explorationResult, setExplorationResult] = useState<ExplorationResponse | null>(null)
   const [smartResult, setSmartResult] = useState<SmartReadingResponse | null>(null)
-  const [riskResult, setRiskResult] = useState<RiskResponse | null>(null)
 
   // Estados de TTS (Text-to-Speech)
   const [isSpeaking, setIsSpeaking] = useState(false)
@@ -251,14 +247,7 @@ export function NaviaApp() {
           break
         }
 
-        case "riesgo": {
-          const result = await analyzeRisk(file)
-          setRiskResult(result)
-          setProcessingProgress(100)
-          setAppState("results")
-          ttsManager.speakFromBackend(result.alert_text, TtsPriority.HIGH)
-          break
-        }
+        // "riesgo" fue unificado con "navegacion" en el pipeline
       }
 
     } catch (err) {
@@ -279,7 +268,6 @@ export function NaviaApp() {
     setNavResult(null)
     setExplorationResult(null)
     setSmartResult(null)
-    setRiskResult(null)
     setError(null)
     setProcessingProgress(0)
   }
@@ -292,8 +280,6 @@ export function NaviaApp() {
       ttsManager.speakFromBackend(explorationResult.description, TtsPriority.HIGH)
     } else if (smartResult) {
       ttsManager.speakFromBackend(smartResult.narrative, TtsPriority.HIGH)
-    } else if (riskResult) {
-      ttsManager.speakFromBackend(riskResult.alert_text, TtsPriority.HIGH)
     }
   }
 
@@ -667,45 +653,43 @@ export function NaviaApp() {
                   </div>
                 )}
 
-                {/* Resultado de Riesgo */}
-                {riskResult && (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                      <div className={cn(
-                        "w-4 h-4 rounded-full",
-                        riskResult.has_danger
-                          ? riskResult.priority === 'critical' ? "bg-red-500" : "bg-amber-500"
-                          : "bg-green-500"
-                      )} />
-                      <p className="text-lg font-medium">{riskResult.alert_text}</p>
-                    </div>
-
-                    {riskResult.dangers.length > 0 && (
-                      <ul className="space-y-2">
-                        {riskResult.dangers.map((danger, idx) => (
-                          <li key={idx} className="flex justify-between items-center p-2 bg-secondary rounded">
-                            <div className="flex items-start gap-2">
-                              <div className={cn(
-                                "w-2 h-2 rounded-full mt-1.5 shrink-0",
-                                danger.danger_level === 'critical' ? 'bg-red-500' : 'bg-amber-500'
-                              )} />
-                              <div>
-                                <span>{danger.object_name}</span>
-                                <p className="text-xs text-muted-foreground mt-0.5">
-                                  {danger.distance_zone} • {danger.position}
-                                </p>
-                              </div>
+                {/* Detalles de obstáculos (parte de navegación unificada) */}
+                {navResult && navResult.obstacle_details && navResult.obstacle_details.length > 0 && (
+                  <div className="space-y-3 mt-3">
+                    <h4 className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4" />
+                      Obstáculos detectados
+                    </h4>
+                    <ul className="space-y-2">
+                      {navResult.obstacle_details.map((detail, idx) => (
+                        <li key={idx} className="flex justify-between items-center p-2 bg-secondary rounded">
+                          <div className="flex items-start gap-2">
+                            <div className={cn(
+                              "w-2 h-2 rounded-full mt-1.5 shrink-0",
+                              detail.risk_score >= 0.75 ? 'bg-red-500' :
+                              detail.risk_score >= 0.5 ? 'bg-amber-500' : 'bg-yellow-500'
+                            )} />
+                            <div>
+                              <span className="capitalize">{detail.name}</span>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {detail.proximity === 'muy_cerca' ? 'Muy cerca' : detail.proximity === 'cerca' ? 'Cerca' : 'Lejos'} • {detail.position}
+                                {detail.movement === 'acercandose' && ' • Se acerca'}
+                                {detail.height_zone === 'suelo' && ' • Suelo'}
+                                {detail.height_zone === 'cabeza' && ' • Cabeza'}
+                              </p>
                             </div>
-                            <span className={cn(
-                              "text-xs font-medium px-2 py-0.5 rounded",
-                              danger.danger_level === 'critical' ? 'bg-red-500/20 text-red-500' : 'bg-amber-500/20 text-amber-500'
-                            )}>
-                              {danger.danger_level}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                          </div>
+                          <span className={cn(
+                            "text-xs font-medium px-2 py-0.5 rounded",
+                            detail.risk_score >= 0.75 ? 'bg-red-500/20 text-red-500' :
+                            detail.risk_score >= 0.5 ? 'bg-amber-500/20 text-amber-500' :
+                            'bg-yellow-500/20 text-yellow-500'
+                          )}>
+                            {Math.round(detail.risk_score * 100)}%
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 )}
               </CardContent>
@@ -771,14 +755,12 @@ export function NaviaApp() {
                 )}
               </div>
 
-              {/* Indicador de riesgo para modo riesgo */}
-              {analysisMode === "riesgo" && (
+              {/* Indicador de riesgo en navegación */}
+              {latestResult?.has_danger && (
                 <div className="absolute top-14 right-3">
                   <div className={cn(
                     "w-8 h-8 rounded-full border-2 border-white",
-                    latestResult?.has_danger
-                      ? latestResult?.priority === 'critical' ? "bg-red-500 animate-pulse" : "bg-amber-500"
-                      : "bg-green-500"
+                    latestResult?.priority === 'critical' ? "bg-red-500 animate-pulse" : "bg-amber-500"
                   )} />
                 </div>
               )}
@@ -786,7 +768,7 @@ export function NaviaApp() {
               {/* Resumen de detección */}
               <div className="absolute bottom-0 left-0 right-0 p-3 bg-black/70">
                 <p className="text-white text-lg font-medium">
-                  {latestResult?.summary || (analysisMode === "riesgo" ? "Monitoreando peligros..." : "Apunta la cámara para navegar...")}
+                  {latestResult?.summary || "Apunta la cámara para navegar..."}
                 </p>
                 {analysisMode === "navegacion" && latestResult && latestResult.object_count > 0 && (
                   <p className="text-primary text-sm mt-1">

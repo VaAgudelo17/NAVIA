@@ -3,8 +3,8 @@
  * Corresponden a los schemas del backend FastAPI
  */
 
-// Modos de NAVIA
-export type NaviaMode = 'navegacion' | 'exploracion' | 'lectura' | 'riesgo';
+// Modos de NAVIA (riesgo fue unificado con navegacion)
+export type NaviaMode = 'navegacion' | 'exploracion' | 'lectura';
 
 // Bounding box de un objeto detectado
 export interface BoundingBox {
@@ -92,13 +92,26 @@ export interface QuickAnalysisResponse {
 // NUEVOS MODOS
 // ============================================================================
 
-// Respuesta del modo Navegación
+// Detalle de obstáculo analizado por el pipeline de navegación
+export interface ObstacleDetail {
+  name: string;               // Nombre en español
+  position: string;           // "a tu izquierda", "frente a ti", "a tu derecha"
+  proximity: string;          // "muy_cerca", "cerca", "lejos"
+  height_zone: string;        // "suelo", "cuerpo", "cabeza"
+  movement: string;           // "acercandose", "alejandose", "estatico"
+  risk_score: number;         // Puntaje de riesgo combinado (0.0 - 1.0)
+}
+
+// Respuesta unificada del modo Navegación (incluye riesgo)
 export interface NavigationResponse {
   success: boolean;
   message: string;
-  instruction: string;        // Texto corto para TTS
-  obstacles: DetectedObject[];
-  path_clear: boolean;
+  instruction: string;             // Instrucciones priorizadas para TTS
+  obstacles: DetectedObject[];     // Obstáculos relevantes
+  path_clear: boolean;             // Si el camino central está libre
+  has_danger: boolean;             // Si se detectó peligro real
+  priority: 'critical' | 'high' | 'medium' | 'none';
+  obstacle_details: ObstacleDetail[];  // Detalles completos de obstáculos
   object_count: number;
 }
 
@@ -113,23 +126,8 @@ export interface ExplorationResponse {
   object_count: number;
 }
 
-// Alerta de riesgo individual
-export interface RiskAlert {
-  object_name: string;
-  danger_level: 'critical' | 'high' | 'medium';
-  distance_zone: string;
-  position: string;
-}
-
-// Respuesta del modo Riesgo
-export interface RiskResponse {
-  success: boolean;
-  message: string;
-  has_danger: boolean;
-  priority: 'critical' | 'high' | 'medium' | 'none';
-  alert_text: string;
-  dangers: RiskAlert[];
-}
+// Alias de compatibilidad: RiskResponse = NavigationResponse
+export type RiskResponse = NavigationResponse;
 
 // ============================================================================
 // LECTURA INTELIGENTE
@@ -206,10 +204,10 @@ export interface RealtimeDetectionResult {
   frame_id: number;
   objects: DetectedObject[];
   object_count: number;
-  summary: string;
+  summary: string;               // Instrucciones de navegación para TTS
   processing_time_ms: number;
   timestamp: number;
-  tracked_count?: number;   // Número de objetos con tracking activo (ByteTrack)
+  tracked_count?: number;        // Objetos con tracking activo (ByteTrack)
   changes?: {
     appeared: string[];
     disappeared: string[];
@@ -219,9 +217,11 @@ export interface RealtimeDetectionResult {
     current_objects: string[];
     tracked_count?: number;
   };
-  // Campos específicos del modo Riesgo
+  // Navegación unificada (siempre presente)
   has_danger?: boolean;
   priority?: string;
+  path_clear?: boolean;
+  obstacle_details?: ObstacleDetail[];
 }
 
 // Mensaje de estado WebSocket

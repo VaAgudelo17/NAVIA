@@ -2,7 +2,7 @@
  * Hook para detección en tiempo real
  *
  * Captura frames periódicos de la cámara y los envía al backend
- * via WebSocket. Soporta modos Navegación y Riesgo.
+ * via WebSocket. Soporta modo Navegación (con detección de riesgo integrada).
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
@@ -45,11 +45,11 @@ export function useRealtimeDetection({
       ttsManagerRef.current.speakResult(
         data.summary,
         data.changes as any,
-        mode === 'riesgo' ? {
+        {
           has_danger: data.has_danger ?? false,
           priority: data.priority ?? 'none',
-          alert_text: data.summary,
-        } : undefined,
+          path_clear: data.path_clear ?? true,
+        },
       );
     }
   }, [ttsEnabled, mode]);

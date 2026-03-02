@@ -141,14 +141,28 @@ export interface SmartReadingResponse {
 // NUEVOS MODOS
 // ============================================================================
 
-export type NaviaMode = 'navegacion' | 'exploracion' | 'lectura' | 'riesgo'
+export type NaviaMode = 'navegacion' | 'exploracion' | 'lectura'
 
+// Detalle de obstáculo analizado por el pipeline de navegación
+export interface ObstacleDetail {
+  name: string               // Nombre en español
+  position: string           // "a tu izquierda", "frente a ti", "a tu derecha"
+  proximity: string          // "muy_cerca", "cerca", "lejos"
+  height_zone: string        // "suelo", "cuerpo", "cabeza"
+  movement: string           // "acercandose", "alejandose", "estatico"
+  risk_score: number         // Puntaje de riesgo combinado (0.0 - 1.0)
+}
+
+// Respuesta unificada del modo Navegación (incluye riesgo)
 export interface NavigationResponse {
   success: boolean
   message: string
-  instruction: string
-  obstacles: DetectedObject[]
-  path_clear: boolean
+  instruction: string             // Instrucciones priorizadas para TTS
+  obstacles: DetectedObject[]     // Obstáculos relevantes
+  path_clear: boolean             // Si el camino central está libre
+  has_danger: boolean             // Si se detectó peligro real
+  priority: 'critical' | 'high' | 'medium' | 'none'
+  obstacle_details: ObstacleDetail[]
   object_count: number
 }
 
@@ -162,21 +176,8 @@ export interface ExplorationResponse {
   object_count: number
 }
 
-export interface RiskAlert {
-  object_name: string
-  danger_level: string
-  distance_zone: string
-  position: string
-}
-
-export interface RiskResponse {
-  success: boolean
-  message: string
-  has_danger: boolean
-  priority: string
-  alert_text: string
-  dangers: RiskAlert[]
-}
+// Alias de compatibilidad: RiskResponse = NavigationResponse
+export type RiskResponse = NavigationResponse
 
 // Resultado de detección en tiempo real (WebSocket)
 export interface RealtimeDetectionResult {
@@ -184,13 +185,16 @@ export interface RealtimeDetectionResult {
   frame_id: number
   objects: DetectedObject[]
   object_count: number
-  summary: string
+  summary: string               // Instrucciones de navegación para TTS
   processing_time_ms: number
   timestamp: number
   tracked_count?: number
   mode?: string
+  // Navegación unificada (siempre presente)
   has_danger?: boolean
   priority?: string
+  path_clear?: boolean
+  obstacle_details?: ObstacleDetail[]
   changes?: {
     appeared: string[]
     disappeared: string[]
@@ -373,9 +377,9 @@ export async function analyzeReading(imageFile: File): Promise<SmartReadingRespo
   return postImage<SmartReadingResponse>('/api/v1/analyze/lectura', imageFile, 'Error en lectura')
 }
 
-/** Modo Riesgo: detección de peligros */
+/** Modo Riesgo: redirige al pipeline unificado de navegación */
 export async function analyzeRisk(imageFile: File): Promise<RiskResponse> {
-  return postImage<RiskResponse>('/api/v1/analyze/riesgo', imageFile, 'Error en evaluación de riesgo')
+  return postImage<RiskResponse>('/api/v1/analyze/navegacion', imageFile, 'Error en evaluación de riesgo')
 }
 
 // ============================================================================

@@ -50,17 +50,18 @@ export const TTS_CONFIG = {
 };
 
 // Modos de análisis disponibles
+// Nota: "riesgo" fue unificado con "navegacion" en un solo pipeline
 export const ANALYSIS_MODES = {
   NAVEGACION: 'navegacion',
   EXPLORACION: 'exploracion',
   LECTURA: 'lectura',
-  RIESGO: 'riesgo',
 } as const;
 
 export type AnalysisMode = typeof ANALYSIS_MODES[keyof typeof ANALYSIS_MODES];
 
 // Modos que usan WebSocket (tiempo real con cámara)
-export const REALTIME_MODES: AnalysisMode[] = ['navegacion', 'riesgo'];
+// Navegación ahora incluye detección de riesgo integrada
+export const REALTIME_MODES: AnalysisMode[] = ['navegacion'];
 
 // URL WebSocket (convierte http → ws)
 export const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');

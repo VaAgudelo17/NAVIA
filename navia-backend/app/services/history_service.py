@@ -37,7 +37,7 @@ async def save_to_history(
     init_db() la inicialice durante el lifespan.
 
     Args:
-        mode: Modo de analisis (navegacion, exploracion, lectura, riesgo)
+        mode: Modo de analisis (navegacion, exploracion, lectura)
         result_data: Diccionario con el resultado completo
         result_summary: Resumen corto para mostrar en lista
         reading_mode: Sub-modo de lectura (solo para modo lectura)

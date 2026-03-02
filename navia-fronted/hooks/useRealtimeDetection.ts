@@ -2,7 +2,7 @@
  * Hook para detección en tiempo real (Web)
  *
  * Extrae frames del video via canvas y los envía al backend
- * por WebSocket. Soporta modos Navegación y Riesgo.
+ * por WebSocket. Soporta modo Navegación (con detección de riesgo integrada).
  */
 
 "use client"
@@ -49,11 +49,11 @@ export function useRealtimeDetection({
       ttsManagerRef.current.speakResult(
         data.summary,
         data.changes as any,
-        mode === 'riesgo' ? {
+        {
           has_danger: data.has_danger ?? false,
           priority: data.priority ?? 'none',
-          alert_text: data.summary,
-        } : undefined,
+          path_clear: data.path_clear ?? true,
+        },
       )
     }
   }, [ttsEnabled, mode])

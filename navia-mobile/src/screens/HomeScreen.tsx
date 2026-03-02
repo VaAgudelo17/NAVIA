@@ -1,11 +1,10 @@
 /**
  * Pantalla principal de NAVIA
  *
- * 4 modos:
- * - Navegación: tiempo real, instrucciones cortas de navegación
+ * 3 modos:
+ * - Navegación: tiempo real, instrucciones de navegación + detección de riesgo
  * - Exploración: foto, descripción estructurada del entorno
- * - Lectura: foto, OCR puro
- * - Riesgo: tiempo real, alertas de peligro
+ * - Lectura: foto, OCR + lectura inteligente
  *
  * TTS: Usa ttsManager con cola de prioridades para evitar
  * que las voces se cancelen entre sí. Cada interacción tiene
@@ -37,14 +36,12 @@ import {
   analyzeNavigation,
   analyzeExploration,
   analyzeReading,
-  analyzeRisk,
   checkHealth,
 } from '../services/api';
 import { ttsManager, TtsPriority } from '../services/ttsManager';
 import {
   NavigationResponse,
   ExplorationResponse,
-  RiskResponse,
   SmartReadingResponse,
   ReadingMode,
 } from '../types/api';
@@ -58,10 +55,9 @@ type AppState = 'home' | 'camera' | 'processing' | 'results' | 'error' | 'realti
 
 // Configuración de cada modo
 const MODE_CONFIG: Record<AnalysisMode, { label: string; icon: string; description: string }> = {
-  navegacion: { label: 'Navegación', icon: 'compass', description: 'Detecta obstáculos' },
+  navegacion: { label: 'Navegación', icon: 'compass', description: 'Navegación asistida con detección de riesgo' },
   exploracion: { label: 'Exploración', icon: 'eye', description: 'Describe el entorno' },
   lectura: { label: 'Lectura', icon: 'document-text', description: 'Lee textos' },
-  riesgo: { label: 'Riesgo', icon: 'warning', description: 'Alerta de peligros' },
 };
 
 export function HomeScreen() {
@@ -85,7 +81,6 @@ export function HomeScreen() {
   const [navResult, setNavResult] = useState<NavigationResponse | null>(null);
   const [explorationResult, setExplorationResult] = useState<ExplorationResponse | null>(null);
   const [smartResult, setSmartResult] = useState<SmartReadingResponse | null>(null);
-  const [riskResult, setRiskResult] = useState<RiskResponse | null>(null);
 
   // Estados de TTS
   const [isSpeakingState, setIsSpeakingState] = useState(false);
@@ -244,18 +239,7 @@ export function HomeScreen() {
           });
           break;
         }
-        case 'riesgo': {
-          const result = await analyzeRisk(imageUri);
-          setRiskResult(result);
-          const text = result.has_danger ? result.alert_text : 'Sin peligros detectados.';
-          ttsManager.speakFromBackend(text, TtsPriority.HIGH);
-          saveToHistory({
-            mode: 'riesgo',
-            resultSummary: text,
-            resultData: result as unknown as Record<string, unknown>,
-          });
-          break;
-        }
+        // "riesgo" fue unificado con "navegacion" en el pipeline
       }
       setAppState('results');
     } catch (err: any) {
@@ -277,7 +261,6 @@ export function HomeScreen() {
     setNavResult(null);
     setExplorationResult(null);
     setSmartResult(null);
-    setRiskResult(null);
     setError(null);
   };
 
@@ -294,10 +277,6 @@ export function HomeScreen() {
       if (navResult) ttsManager.speakFromBackend(navResult.instruction, TtsPriority.HIGH);
       else if (explorationResult) ttsManager.speakFromBackend(explorationResult.description, TtsPriority.HIGH);
       else if (smartResult) ttsManager.speakFromBackend(smartResult.narrative, TtsPriority.HIGH);
-      else if (riskResult) {
-        const text = riskResult.has_danger ? riskResult.alert_text : 'Sin peligros.';
-        ttsManager.speakFromBackend(text, TtsPriority.HIGH);
-      }
     } finally {
       setIsSpeakingState(false);
     }
@@ -477,14 +456,12 @@ export function HomeScreen() {
       navegacion: 'Navegación',
       exploracion: 'Exploración',
       lectura: 'Lectura',
-      riesgo: 'Riesgo',
     };
 
     const modeIcons: Record<string, string> = {
       navegacion: 'compass',
       exploracion: 'eye',
       lectura: 'document-text',
-      riesgo: 'warning',
     };
 
     return (
@@ -574,9 +551,8 @@ export function HomeScreen() {
     );
   };
 
-  // Vista de tiempo real (Navegación y Riesgo)
+  // Vista de tiempo real (Navegación con riesgo integrado)
   const renderRealtime = () => {
-    const isRiskMode = analysisMode === 'riesgo';
 
     return (
       <View style={styles.cameraContainer}>
@@ -604,28 +580,24 @@ export function HomeScreen() {
               )}
             </View>
 
-            {/* Indicador de peligro para modo Riesgo */}
-            {isRiskMode && (
+            {/* Indicador de peligro (navegación con riesgo integrado) */}
+            {latestResult?.has_danger && (
               <View style={styles.riskIndicatorContainer}>
                 <View
                   style={[
                     styles.riskIndicator,
                     {
-                      backgroundColor: latestResult?.has_danger
-                        ? (latestResult.priority === 'critical' ? '#EF4444' : '#F59E0B')
-                        : '#22C55E',
+                      backgroundColor: latestResult.priority === 'critical' ? '#EF4444' : '#F59E0B',
                     },
                   ]}
                 >
                   <Ionicons
-                    name={latestResult?.has_danger ? 'warning' : 'checkmark-circle'}
+                    name="warning"
                     size={48}
                     color="white"
                   />
                   <Text style={styles.riskIndicatorText}>
-                    {latestResult?.has_danger
-                      ? (latestResult.priority === 'critical' ? 'PELIGRO' : 'PRECAUCIÓN')
-                      : 'SEGURO'}
+                    {latestResult.priority === 'critical' ? 'PELIGRO' : 'PRECAUCIÓN'}
                   </Text>
                 </View>
               </View>
@@ -635,10 +607,10 @@ export function HomeScreen() {
             <View style={styles.realtimeSummaryContainer}>
               <View style={styles.realtimeSummary}>
                 <Text style={styles.realtimeSummaryText}>
-                  {latestResult?.summary || (isRiskMode ? 'Monitoreando peligros...' : 'Analizando entorno...')}
+                  {latestResult?.summary || 'Analizando entorno...'}
                 </Text>
-                {/* Lista de objetos solo en modo Navegación */}
-                {!isRiskMode && latestResult && latestResult.objects.length > 0 && (
+                {/* Lista de objetos detectados */}
+                {latestResult && latestResult.objects.length > 0 && (
                   <View style={styles.realtimeObjectList}>
                     {[...latestResult.objects]
                       .sort((a, b) => {
@@ -891,56 +863,53 @@ export function HomeScreen() {
           </View>
         )}
 
-        {/* Resultado de Riesgo */}
-        {riskResult && (
+        {/* Detalles de obstáculos (parte de navegación unificada) */}
+        {navResult && navResult.obstacle_details && navResult.obstacle_details.length > 0 && (
           <View>
             <View style={[
               styles.statusBadge,
               {
-                backgroundColor: riskResult.has_danger
-                  ? (riskResult.priority === 'critical' ? '#EF444420' : '#F59E0B20')
+                backgroundColor: navResult.has_danger
+                  ? (navResult.priority === 'critical' ? '#EF444420' : '#F59E0B20')
                   : '#22C55E20',
               },
             ]}>
               <Ionicons
-                name={riskResult.has_danger ? 'warning' : 'checkmark-circle'}
+                name={navResult.has_danger ? 'warning' : 'checkmark-circle'}
                 size={20}
-                color={riskResult.has_danger
-                  ? (riskResult.priority === 'critical' ? '#EF4444' : '#F59E0B')
+                color={navResult.has_danger
+                  ? (navResult.priority === 'critical' ? '#EF4444' : '#F59E0B')
                   : '#22C55E'}
               />
               <Text style={[
                 styles.statusBadgeText,
                 {
-                  color: riskResult.has_danger
-                    ? (riskResult.priority === 'critical' ? '#EF4444' : '#F59E0B')
+                  color: navResult.has_danger
+                    ? (navResult.priority === 'critical' ? '#EF4444' : '#F59E0B')
                     : '#22C55E',
                 },
               ]}>
-                {riskResult.has_danger
-                  ? (riskResult.priority === 'critical' ? 'PELIGRO' : 'PRECAUCIÓN')
+                {navResult.has_danger
+                  ? (navResult.priority === 'critical' ? 'PELIGRO' : 'PRECAUCIÓN')
                   : 'SEGURO'}
               </Text>
             </View>
-            <Text style={styles.resultDescription}>
-              {riskResult.has_danger ? riskResult.alert_text : 'No se detectaron peligros.'}
-            </Text>
-            {riskResult.dangers.length > 0 && (
-              <View style={styles.obstacleList}>
-                {riskResult.dangers.map((d, idx) => (
-                  <View key={idx} style={styles.objectItem}>
-                    <View style={styles.objectInfo}>
-                      <Text style={styles.objectName}>{d.object_name}</Text>
-                      <Text style={[styles.objectDistance, {
-                        color: d.danger_level === 'critical' ? '#EF4444' : '#F59E0B',
-                      }]}>
-                        {d.distance_zone === 'muy_cerca' ? 'Muy cerca' : 'Cerca'} - {d.position}
-                      </Text>
-                    </View>
+            <View style={styles.obstacleList}>
+              {navResult.obstacle_details.map((detail, idx) => (
+                <View key={idx} style={styles.objectItem}>
+                  <View style={styles.objectInfo}>
+                    <Text style={styles.objectName}>{detail.name}</Text>
+                    <Text style={[styles.objectDistance, {
+                      color: detail.risk_score >= 0.75 ? '#EF4444' :
+                             detail.risk_score >= 0.5 ? '#F59E0B' : '#F59E0B',
+                    }]}>
+                      {detail.proximity === 'muy_cerca' ? 'Muy cerca' : 'Cerca'} - {detail.position}
+                      {detail.movement === 'acercandose' ? ' - Se acerca' : ''}
+                    </Text>
                   </View>
-                ))}
-              </View>
-            )}
+                </View>
+              ))}
+            </View>
           </View>
         )}
       </View>

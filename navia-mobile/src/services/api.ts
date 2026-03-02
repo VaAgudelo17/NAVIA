@@ -98,9 +98,9 @@ export async function analyzeReading(
   return postImage<SmartReadingResponse>(API_ENDPOINTS.LECTURA, imageUri, 'Error en lectura');
 }
 
-/** Modo Riesgo: detección de peligros */
+/** Modo Riesgo: redirige al pipeline unificado de navegación */
 export async function analyzeRisk(imageUri: string): Promise<RiskResponse> {
-  return postImage<RiskResponse>(API_ENDPOINTS.RIESGO, imageUri, 'Error en evaluación de riesgo');
+  return postImage<RiskResponse>(API_ENDPOINTS.NAVEGACION, imageUri, 'Error en evaluación de riesgo');
 }
 
 // ============================================================================

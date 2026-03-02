@@ -3,21 +3,24 @@
 NAVIA Backend - Endpoint WebSocket para Detección en Tiempo Real
 ============================================================================
 Recibe frames de cámara via WebSocket, procesa con YOLO-World + Depth Anything,
-y devuelve resultados con zonas de distancia suavizadas.
+y devuelve resultados con navegación unificada (navegación + riesgo).
 
 Pipeline por frame:
 1. Decodificar base64 → imagen OpenCV
 2. YOLO-World v2 → detección de objetos (vocabulario abierto)
 3. Depth Anything V2 → mapa de profundidad
 4. ByteTrack → tracking espacial (IoU + Kalman filter)
-5. Clasificar objetos en zonas (muy_cerca / cerca / lejos)
-6. Exponential smoothing + zone persistence
-7. Prioridad semántica (high/medium/low)
-8. Solo hablar si zona persiste varios frames
+5. Exponential smoothing + zone persistence
+6. NavigationGuidanceService → pipeline unificado:
+   - Filtrado de clases relevantes para caminata
+   - Clasificación de altura (suelo/cuerpo/cabeza)
+   - Análisis de movimiento (se acerca/aleja/estático)
+   - Scoring de riesgo combinado
+   - Instrucciones priorizadas para TTS
 
 Protocolo:
 - Cliente envía: {"type": "frame", "data": "<base64 JPEG>", "frame_id": N}
-- Servidor responde: {"type": "detection", "objects": [...], "changes": {...}}
+- Servidor responde: {"type": "detection", "objects": [...], "guidance": {...}}
 ============================================================================
 """
 
@@ -34,8 +37,7 @@ from app.utils.image_utils import bytes_to_cv2_image, resize_image_if_needed
 from app.services.object_detection_service import get_object_detection_service
 from app.services.realtime_detection_service import RealtimeSessionState
 from app.services.depth_estimation_service import ZONE_LABELS
-from app.services.navigation_service import get_navigation_service
-from app.services.risk_service import get_risk_service
+from app.services.navigation_guidance_service import get_navigation_guidance_service
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +47,8 @@ router = APIRouter(prefix="/ws", tags=["WebSocket Tiempo Real"])
 @router.websocket("/realtime")
 async def realtime_detection(websocket: WebSocket):
     """
-    WebSocket para detección de objetos en tiempo real con profundidad.
+    WebSocket para detección de objetos en tiempo real con profundidad
+    y navegación unificada (navegación + riesgo en un solo pipeline).
     """
     await websocket.accept()
     logger.info("Nueva conexión WebSocket de tiempo real")
@@ -66,8 +69,7 @@ async def realtime_detection(websocket: WebSocket):
         "confidence_threshold": settings.WS_REALTIME_CONFIDENCE_THRESHOLD,
         "mode": "navegacion",
     }
-    nav_service = get_navigation_service()
-    risk_service = get_risk_service()
+    guidance_service = get_navigation_guidance_service()
 
     async def receive_loop():
         """Recibe frames y configuración del cliente."""
@@ -93,9 +95,11 @@ async def realtime_detection(websocket: WebSocket):
                 elif msg.get("type") == "config":
                     if "confidence_threshold" in msg:
                         config["confidence_threshold"] = msg["confidence_threshold"]
-                    if "mode" in msg and msg["mode"] in ("navegacion", "riesgo"):
-                        config["mode"] = msg["mode"]
-                        logger.info(f"Modo WebSocket cambiado a: {msg['mode']}")
+                    # "navegacion" ahora incluye riesgo unificado
+                    # Se acepta "navegacion" o "riesgo" por compatibilidad
+                    if "mode" in msg:
+                        config["mode"] = "navegacion"
+                        logger.info("Modo WebSocket: navegacion (unificado)")
 
                 elif msg.get("type") == "ping":
                     await websocket.send_json({"type": "pong"})
@@ -109,7 +113,7 @@ async def realtime_detection(websocket: WebSocket):
             frame_event.set()
 
     async def process_loop():
-        """Procesa frames con YOLO + Depth Anything + smoothing."""
+        """Procesa frames con YOLO + Depth Anything + smoothing + navegación unificada."""
         nonlocal connection_alive
         loop = asyncio.get_event_loop()
 
@@ -162,9 +166,13 @@ async def realtime_detection(websocket: WebSocket):
                     # Aplicar zonas suavizadas a los objetos
                     smoothed_zones = changes.get("smoothed_zones", {})
 
+                    # Actualizar distance_zone con zonas suavizadas
+                    for obj in result["objects"]:
+                        if obj.name_es in smoothed_zones:
+                            obj.distance_zone = smoothed_zones[obj.name_es]
+
                     objects_data = []
                     for obj in result["objects"]:
-                        # Usar zona suavizada si está disponible
                         zone = smoothed_zones.get(
                             obj.name_es, obj.distance_zone or "lejos"
                         )
@@ -183,17 +191,19 @@ async def realtime_detection(websocket: WebSocket):
                             "distance_zone": zone,
                             "distance_estimate": label,
                         }
-                        # Incluir prioridad si está disponible
                         if obj.priority:
                             obj_data["priority"] = obj.priority
                         objects_data.append(obj_data)
 
-                    # Generar summary según el modo activo
-                    mode = config.get("mode", "navegacion")
+                    # Pipeline unificado: navegación + riesgo
+                    guidance = guidance_service.generate_guidance(
+                        result["objects"], w, h,
+                        track_movement=True,
+                    )
 
                     response = {
                         "type": "detection",
-                        "mode": mode,
+                        "mode": "navegacion",
                         "frame_id": frame_id,
                         "objects": objects_data,
                         "object_count": result["object_count"],
@@ -201,22 +211,13 @@ async def realtime_detection(websocket: WebSocket):
                         "timestamp": int(time.time() * 1000),
                         "changes": changes,
                         "tracked_count": changes.get("tracked_count"),
+                        # --- Navegación unificada ---
+                        "summary": guidance["instruction"],
+                        "has_danger": guidance["has_danger"],
+                        "priority": guidance["priority"],
+                        "path_clear": guidance["path_clear"],
+                        "obstacle_details": guidance["obstacle_details"],
                     }
-
-                    if mode == "navegacion":
-                        nav_result = nav_service.generate_navigation_summary(
-                            result["objects"], w, h
-                        )
-                        response["summary"] = nav_result["instruction"]
-                    elif mode == "riesgo":
-                        risk_result = risk_service.evaluate_risk(
-                            result["objects"], w
-                        )
-                        response["summary"] = risk_result["alert_text"]
-                        response["has_danger"] = risk_result["has_danger"]
-                        response["priority"] = risk_result["priority"]
-                    else:
-                        response["summary"] = result["summary"]
 
                     await websocket.send_json(response)
 
@@ -243,6 +244,7 @@ async def realtime_detection(websocket: WebSocket):
     except Exception as e:
         logger.error(f"Error en sesión WebSocket: {e}")
     finally:
+        guidance_service.reset_movement_state()
         logger.info(
             f"Sesión WebSocket finalizada. "
             f"Frames procesados: {session_state.frame_count}"

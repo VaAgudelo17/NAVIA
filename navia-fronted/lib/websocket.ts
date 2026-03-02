@@ -1,6 +1,6 @@
 /**
  * Cliente WebSocket para detección en tiempo real (Web)
- * Soporta modos: navegacion y riesgo
+ * Usa pipeline unificado de navegación + riesgo
  */
 
 import { type RealtimeDetectionResult, type NaviaMode } from './api'

@@ -43,8 +43,7 @@ from app.utils.image_utils import (
 from app.services.ocr_service import get_ocr_service
 from app.services.object_detection_service import get_object_detection_service
 from app.services.scene_description_service import get_scene_description_service
-from app.services.navigation_service import get_navigation_service
-from app.services.risk_service import get_risk_service
+from app.services.navigation_guidance_service import get_navigation_guidance_service
 from app.services.smart_reading_service import get_smart_reading_service
 from app.services.exploration_service import get_exploration_service
 from app.services.history_service import save_to_history
@@ -430,17 +429,27 @@ async def quick_analysis(
 @router.post(
     "/navegacion",
     response_model=NavigationResponse,
-    summary="Modo Navegación - instrucciones de navegación",
+    summary="Modo Navegación - navegación asistida con evaluación de riesgo",
     description="""
-    Detecta obstáculos y genera instrucciones cortas de navegación.
-    Ejemplo: "Camino libre al frente. Silla cerca a la izquierda."
+    Pipeline unificado de navegación + riesgo para movilidad peatonal.
+    
+    **Pipeline completo:**
+    1. Detección de objetos (YOLO-World + Depth Anything)
+    2. Filtrado de clases relevantes para caminata
+    3. Clasificación de altura (suelo/cuerpo/cabeza)
+    4. Análisis de movimiento (se acerca/aleja/estático)
+    5. Scoring de riesgo combinado
+    6. Instrucciones priorizadas para TTS
+    
+    **Ejemplo:** "Cuidado: una bicicleta se acerca por la derecha.
+    Hay un bordillo muy cerca frente a ti."
     """
 )
 async def analyze_navigation(
     image: UploadFile = File(..., description="Imagen para navegación"),
     background_tasks: BackgroundTasks = None,
 ) -> NavigationResponse:
-    """Modo Navegación: detección de obstáculos + instrucciones espaciales."""
+    """Modo Navegación: pipeline unificado de navegación + riesgo."""
     try:
         start_time = time.time()
 
@@ -462,11 +471,12 @@ async def analyze_navigation(
                 instruction="Error al analizar la imagen.",
             )
 
-        # Generar instrucciones de navegación
+        # Pipeline unificado: navegación + riesgo
         h, w = cv2_image.shape[:2]
-        nav_service = get_navigation_service()
-        nav_result = nav_service.generate_navigation_summary(
-            result["objects"], w, h
+        guidance_service = get_navigation_guidance_service()
+        guidance = guidance_service.generate_guidance(
+            result["objects"], w, h,
+            track_movement=False,  # HTTP no tiene frames consecutivos
         )
 
         processing_time = (time.time() - start_time) * 1000
@@ -474,9 +484,12 @@ async def analyze_navigation(
         response = NavigationResponse(
             success=True,
             message="Navegación analizada",
-            instruction=nav_result["instruction"],
-            obstacles=nav_result["obstacles"],
-            path_clear=nav_result["path_clear"],
+            instruction=guidance["instruction"],
+            obstacles=guidance["obstacles"],
+            path_clear=guidance["path_clear"],
+            has_danger=guidance["has_danger"],
+            priority=guidance["priority"],
+            obstacle_details=guidance["obstacle_details"],
             object_count=result["object_count"],
         )
 
@@ -486,9 +499,10 @@ async def analyze_navigation(
                 save_to_history,
                 mode="navegacion",
                 result_data=response.model_dump(),
-                result_summary=nav_result["instruction"][:200],
+                result_summary=guidance["instruction"][:200],
                 processing_time_ms=processing_time,
                 object_count=result["object_count"],
+                has_danger=guidance["has_danger"],
             )
 
         return response
@@ -645,17 +659,22 @@ async def analyze_reading(
 @router.post(
     "/riesgo",
     response_model=RiskResponse,
-    summary="Modo Riesgo - detección de peligros",
+    summary="Modo Riesgo - detección de peligros (unificado con navegación)",
     description="""
-    Evalúa peligros en la imagen y genera alertas.
-    Ejemplo: "Peligro. Vehículo muy cerca a la izquierda."
+    Evalúa peligros en la imagen usando el pipeline unificado de navegación.
+    
+    **Nota:** Este endpoint ahora usa el mismo pipeline que /navegacion.
+    Se mantiene por compatibilidad. La respuesta incluye los mismos campos
+    de navegación + riesgo combinados.
+    
+    Ejemplo: "Cuidado: Carro muy cerca frente a ti."
     """
 )
 async def analyze_risk(
     image: UploadFile = File(..., description="Imagen para evaluar riesgo"),
     background_tasks: BackgroundTasks = None,
 ) -> RiskResponse:
-    """Modo Riesgo: clasificación de peligros y alertas."""
+    """Modo Riesgo: usa pipeline unificado de navegación + riesgo."""
     try:
         start_time = time.time()
 
@@ -676,31 +695,37 @@ async def analyze_risk(
                 message=f"Error: {result['error']}",
             )
 
-        # Evaluar riesgo
+        # Pipeline unificado: navegación + riesgo
         h, w = cv2_image.shape[:2]
-        risk_service = get_risk_service()
-        risk_result = risk_service.evaluate_risk(result["objects"], w)
+        guidance_service = get_navigation_guidance_service()
+        guidance = guidance_service.generate_guidance(
+            result["objects"], w, h,
+            track_movement=False,
+        )
 
         processing_time = (time.time() - start_time) * 1000
 
         response = RiskResponse(
             success=True,
             message="Riesgo evaluado",
-            has_danger=risk_result["has_danger"],
-            priority=risk_result["priority"],
-            alert_text=risk_result["alert_text"],
-            dangers=risk_result["dangers"],
+            instruction=guidance["instruction"],
+            obstacles=guidance["obstacles"],
+            path_clear=guidance["path_clear"],
+            has_danger=guidance["has_danger"],
+            priority=guidance["priority"],
+            obstacle_details=guidance["obstacle_details"],
+            object_count=result["object_count"],
         )
 
         # Guardar en historial
         if background_tasks:
             background_tasks.add_task(
                 save_to_history,
-                mode="riesgo",
+                mode="navegacion",
                 result_data=response.model_dump(),
-                result_summary=risk_result["alert_text"][:200],
+                result_summary=guidance["instruction"][:200],
                 processing_time_ms=processing_time,
-                has_danger=risk_result["has_danger"],
+                has_danger=guidance["has_danger"],
             )
 
         return response
