@@ -202,16 +202,18 @@ class ExplorationService:
             )
 
     # =========================================================================
-    # 1. FILTRADO SEMÁNTICO
+    # 1. FILTRADO SEMÁNTICO Y DEDUPLICACIÓN
     # =========================================================================
     def _filter_semantic(self, objects: List[DetectedObject]) -> List[DetectedObject]:
         """
-        Filtra objetos irrelevantes que no aportan valor.
+        Filtra objetos irrelevantes y elimina duplicados.
         
-        Elimina: grass, sky, floor, wall, background, texturas, etc.
-        Mantiene: personas, animales, vehículos, objetos manipulables, obstáculos
+        - Elimina: grass, sky, floor, wall, background, texturas, etc.
+        - Deduplica: si hay 2 "ventilador", solo queda el de mayor confianza
         """
         filtered = []
+        seen_names = {}  # {name_es: mejor_objeto}
+        
         for obj in objects:
             # Verificar tanto el nombre en inglés como español
             name_en = obj.name.lower() if obj.name else ""
@@ -220,10 +222,17 @@ class ExplorationService:
             # Ignorar clases irrelevantes
             if name_en in IGNORED_CLASSES or name_es in IGNORED_CLASSES:
                 continue
-                
-            filtered.append(obj)
+            
+            # Deduplicar: quedarse solo con el de mayor confianza
+            if name_es in seen_names:
+                # Ya existe, comparar confianza
+                if obj.confidence > seen_names[name_es].confidence:
+                    seen_names[name_es] = obj
+            else:
+                seen_names[name_es] = obj
         
-        return filtered
+        # Retornar solo los mejores de cada tipo
+        return list(seen_names.values())
 
     # =========================================================================
     # 1.5. COMBINAR PERSONA CON ACCESORIOS
