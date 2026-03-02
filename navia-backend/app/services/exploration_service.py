@@ -134,14 +134,18 @@ class ExplorationService:
             img_height, img_width = image.shape[:2]
             img_area = img_width * img_height
             
-            # 1. Detectar objetos
-            detection_result = self.detection_service.detect_objects(image)
+            # 1. Detectar objetos con umbral más alto para exploración (40%)
+            from app.core.config import settings
+            detection_result = self.detection_service.detect_objects(
+                image, 
+                confidence_threshold=settings.YOLO_EXPLORATION_CONFIDENCE
+            )
             all_objects = detection_result.get("objects", [])
             
             # LOG: Ver qué detectó YOLO
             if all_objects:
                 objs_info = [(o.name_es, f"{o.confidence:.0%}") for o in all_objects[:10]]
-                logger.info(f"[Exploración] YOLO detectó {len(all_objects)} objetos: {objs_info}")
+                logger.info(f"[Exploración] YOLO detectó {len(all_objects)} objetos (umbral {settings.YOLO_EXPLORATION_CONFIDENCE:.0%}): {objs_info}")
             else:
                 logger.info("[Exploración] YOLO no detectó ningún objeto")
             
