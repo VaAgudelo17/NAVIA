@@ -3080,7 +3080,7 @@ class ProsodyEnhancer:
     }
 
     _CURRENCY_SYMBOL = {
-        '$': 'dólares', '€': 'euros', '£': 'libras',
+        '$': 'pesos', '€': 'euros', '£': 'libras',
     }
 
     # Unidades, decenas, centenas para conversión a palabras
