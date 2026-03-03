@@ -467,114 +467,74 @@ class ImageQualityAnalyzer:
     """
 
     # --- Umbrales calibrados para fotos de celular ---
-    BLUR_THRESHOLD_CRITICAL = 30.0    # Laplacian variance < 30 = muy borroso
-    BLUR_THRESHOLD_WARNING = 60.0     # < 60 = algo borroso
-    DARK_THRESHOLD_CRITICAL = 40.0    # Media de brillo < 40 = muy oscuro
-    DARK_THRESHOLD_WARNING = 70.0     # < 70 = algo oscuro
-    BRIGHT_THRESHOLD_CRITICAL = 230.0 # Media de brillo > 230 = sobreexpuesto
-    BRIGHT_THRESHOLD_WARNING = 210.0  # > 210 = algo brillante
-    CONTRAST_THRESHOLD_CRITICAL = 20.0  # StdDev < 20 = sin contraste
-    CONTRAST_THRESHOLD_WARNING = 40.0   # < 40 = bajo contraste
+    BLUR_THRESHOLD_CRITICAL = 15.0    # Laplacian variance < 15 = completamente ilegible
+    BLUR_THRESHOLD_WARNING = 30.0     # No se usa (solo critical)
+    DARK_THRESHOLD_CRITICAL = 25.0    # Media de brillo < 25 = completamente oscuro
+    DARK_THRESHOLD_WARNING = 50.0     # No se usa (solo critical)
+    BRIGHT_THRESHOLD_CRITICAL = 248.0 # Media de brillo > 248 = sobreexpuesto (muy permisivo para screenshots/fondos blancos)
+    BRIGHT_THRESHOLD_WARNING = 240.0  # No se usa (solo critical)
+    CONTRAST_THRESHOLD_CRITICAL = 10.0  # StdDev < 10 = completamente sin contraste
+    CONTRAST_THRESHOLD_WARNING = 20.0   # No se usa (solo critical)
     SKEW_THRESHOLD_WARNING = 5.0      # Ángulo > 5° = algo inclinado
     SKEW_THRESHOLD_CRITICAL = 15.0    # > 15° = muy inclinado
     MIN_RESOLUTION = 640 * 480        # Mínimo para OCR decente
 
     def analyze(self, image: np.ndarray) -> ImageQualityReport:
-        """Ejecuta análisis completo de calidad."""
+        """
+        Ejecuta análisis de calidad simplificado para usuarios ciegos.
+
+        Solo reporta problemas CRÍTICOS (imagen ilegible).
+        No reporta warnings ni inclinación — un usuario ciego
+        no puede corregir esos detalles.
+        """
         report = ImageQualityReport()
         issues: List[ImageQualityIssue] = []
 
         # Convertir a gris una sola vez
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
 
-        # --- 1. Blur (nitidez) ---
+        # --- 1. Blur (nitidez) — solo critical ---
         blur_score, blur_value = self._check_blur(gray)
         report.metrics["blur_variance"] = blur_value
         report.metrics["blur_score"] = blur_score
         if blur_value < self.BLUR_THRESHOLD_CRITICAL:
             issues.append(ImageQualityIssue(
                 code="blur", severity="critical", score=blur_score,
-                message_es="La imagen está muy borrosa. Intenta mantener el teléfono más quieto y enfocar bien."
-            ))
-        elif blur_value < self.BLUR_THRESHOLD_WARNING:
-            issues.append(ImageQualityIssue(
-                code="blur", severity="warning", score=blur_score,
-                message_es="La imagen está algo borrosa. Intenta que la cámara enfoque mejor."
+                message_es="No pude leer. Intenta tomar otra foto."
             ))
 
-        # --- 2. Brillo ---
+        # --- 2. Brillo — solo critical (muy oscuro o sobreexpuesto) ---
         brightness = float(np.mean(gray))
         report.metrics["brightness"] = brightness
         if brightness < self.DARK_THRESHOLD_CRITICAL:
             bright_score = brightness / self.DARK_THRESHOLD_WARNING
             issues.append(ImageQualityIssue(
                 code="dark", severity="critical", score=max(bright_score, 0.0),
-                message_es="La imagen está muy oscura. Busca mejor iluminación o enciende la linterna."
-            ))
-        elif brightness < self.DARK_THRESHOLD_WARNING:
-            bright_score = brightness / self.DARK_THRESHOLD_WARNING
-            issues.append(ImageQualityIssue(
-                code="dark", severity="warning", score=bright_score,
-                message_es="La imagen está algo oscura. Podrías mejorar la iluminación."
+                message_es="No pude leer, la imagen está muy oscura. Intenta tomar otra foto con más luz."
             ))
         elif brightness > self.BRIGHT_THRESHOLD_CRITICAL:
             bright_score = max(1.0 - (brightness - self.BRIGHT_THRESHOLD_WARNING) / 45.0, 0.0)
             issues.append(ImageQualityIssue(
                 code="bright", severity="critical", score=bright_score,
-                message_es="La imagen está sobreexpuesta, con demasiada luz. Intenta evitar reflejos directos."
-            ))
-        elif brightness > self.BRIGHT_THRESHOLD_WARNING:
-            bright_score = max(1.0 - (brightness - self.BRIGHT_THRESHOLD_WARNING) / 45.0, 0.0)
-            issues.append(ImageQualityIssue(
-                code="bright", severity="warning", score=bright_score,
-                message_es="La imagen tiene mucha luz. Intenta reducir reflejos."
+                message_es="No pude leer, hay demasiada luz. Intenta tomar otra foto evitando reflejos."
             ))
 
-        # --- 3. Contraste ---
+        # --- 3. Contraste — solo critical ---
         contrast = float(np.std(gray))
         report.metrics["contrast"] = contrast
         if contrast < self.CONTRAST_THRESHOLD_CRITICAL:
             contrast_score = contrast / self.CONTRAST_THRESHOLD_WARNING
             issues.append(ImageQualityIssue(
                 code="low_contrast", severity="critical", score=max(contrast_score, 0.0),
-                message_es="La imagen tiene muy poco contraste. El texto no se distingue del fondo."
-            ))
-        elif contrast < self.CONTRAST_THRESHOLD_WARNING:
-            contrast_score = contrast / self.CONTRAST_THRESHOLD_WARNING
-            issues.append(ImageQualityIssue(
-                code="low_contrast", severity="warning", score=contrast_score,
-                message_es="La imagen tiene bajo contraste. Intenta que el documento tenga mejor iluminación."
+                message_es="No pude leer, no se distingue el texto. Intenta tomar otra foto."
             ))
 
-        # --- 4. Inclinación (skew) ---
-        skew_angle = self._detect_skew(gray)
-        abs_skew = abs(skew_angle)
-        report.metrics["skew_angle"] = skew_angle
-        if abs_skew > self.SKEW_THRESHOLD_CRITICAL:
-            skew_score = max(1.0 - abs_skew / 30.0, 0.0)
-            issues.append(ImageQualityIssue(
-                code="skewed", severity="critical", score=skew_score,
-                message_es="El documento está muy inclinado. Intenta alinear los bordes del documento con la cámara."
-            ))
-        elif abs_skew > self.SKEW_THRESHOLD_WARNING:
-            skew_score = max(1.0 - abs_skew / 30.0, 0.3)
-            issues.append(ImageQualityIssue(
-                code="skewed", severity="warning", score=skew_score,
-                message_es="El documento está algo inclinado. Intenta alinearlo mejor."
-            ))
-
-        # --- 5. Resolución ---
+        # --- 4. Resolución — solo si es extremadamente baja ---
         height, width = gray.shape[:2]
         total_pixels = width * height
         report.metrics["resolution"] = float(total_pixels)
         report.metrics["width"] = float(width)
         report.metrics["height"] = float(height)
-        if total_pixels < self.MIN_RESOLUTION:
-            res_score = total_pixels / self.MIN_RESOLUTION
-            issues.append(ImageQualityIssue(
-                code="low_res", severity="warning", score=res_score,
-                message_es="La imagen tiene baja resolución. Intenta acercarte más al documento."
-            ))
 
         # --- Calcular score global ---
         report.issues = issues
@@ -592,8 +552,7 @@ class ImageQualityAnalyzer:
             f"acceptable={report.is_acceptable}, "
             f"issues={[i.code for i in issues]}, "
             f"blur={report.metrics.get('blur_variance', 0):.1f}, "
-            f"brightness={brightness:.1f}, contrast={contrast:.1f}, "
-            f"skew={skew_angle:.1f}°"
+            f"brightness={brightness:.1f}, contrast={contrast:.1f}"
         )
 
         return report
@@ -650,33 +609,20 @@ class ImageQualityAnalyzer:
             return 0.0
 
     def _build_feedback(self, issues: List[ImageQualityIssue]) -> str:
-        """Construye texto de feedback combinado para TTS."""
+        """
+        Construye texto de feedback para TTS.
+        Para usuarios ciegos: un solo mensaje claro si hay problema crítico.
+        Sin warnings — solo habla cuando la foto no sirve.
+        """
         if not issues:
             return ""
 
-        # Primero los críticos, luego warnings
+        # Solo usar el primer problema crítico (mensaje más relevante)
         critical = [i for i in issues if i.severity == "critical"]
-        warnings = [i for i in issues if i.severity == "warning"]
-
-        parts = []
-
         if critical:
-            parts.append("Atención.")
-            for issue in critical:
-                parts.append(issue.message_es)
+            return critical[0].message_es
 
-        if warnings and len(critical) < 2:
-            # Solo dar warnings si no hay muchos problemas críticos
-            for issue in warnings:
-                parts.append(issue.message_es)
-
-        # Agregar sugerencia final
-        if critical:
-            parts.append("Te recomiendo tomar otra foto.")
-        elif warnings:
-            parts.append("La lectura puede continuar, pero los resultados podrían mejorar con una mejor foto.")
-
-        return " ".join(parts)
+        return ""
 
 
 # Singleton

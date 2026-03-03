@@ -3597,10 +3597,8 @@ class SmartReadingService:
 
         logger.info(f"[SmartReading/Gemini] {doc_type}, {word_count} palabras, narrativa: {narrative[:150]}...")
 
-        # Si calidad es mala y poco texto, agregar feedback
-        if quality_report.feedback_text and (
-            not has_text or confidence < 50
-        ):
+        # Feedback de calidad solo si imagen ilegible (critical)
+        if quality_report.feedback_text and not quality_report.is_acceptable:
             narrative = quality_report.feedback_text + " " + narrative
 
         quality_data = {
@@ -3765,10 +3763,9 @@ class SmartReadingService:
 
         logger.info(f"[SmartReading/Tesseract] Narrativa ({reading_mode}): {narrative[:150]}...")
 
-        # 8. Feedback de calidad si OCR pobre
-        if quality_report.feedback_text and (
-            not has_text or (confidence is not None and confidence < 50)
-        ):
+        # 8. Feedback de calidad solo si imagen ilegible (critical)
+        #    No agregar si el OCR logró leer — el frontend ya maneja el aviso.
+        if quality_report.feedback_text and not quality_report.is_acceptable:
             narrative = quality_report.feedback_text + " " + narrative
 
         # 9. Construir respuesta

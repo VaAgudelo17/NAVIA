@@ -135,14 +135,22 @@ export function HomeScreen() {
   }, []);
 
   const checkBackendConnection = async () => {
-    try {
-      await checkHealth();
-      setIsBackendConnected(true);
-    } catch {
-      setIsBackendConnected(false);
-      // Informar al usuario ciego que no hay conexión
-      ttsManager.speak('Sin conexión al servidor. Verifica tu conexión.', TtsPriority.HIGH);
+    const maxRetries = 5;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await checkHealth();
+        setIsBackendConnected(true);
+        console.log(`[NAVIA] Backend conectado (intento ${attempt})`);
+        return;
+      } catch {
+        console.warn(`[NAVIA] Health check intento ${attempt}/${maxRetries} falló`);
+        if (attempt < maxRetries) {
+          await new Promise(r => setTimeout(r, attempt * 1000));
+        }
+      }
     }
+    setIsBackendConnected(false);
+    ttsManager.speak('Sin conexión al servidor. Verifica tu conexión.', TtsPriority.HIGH);
   };
 
   // Abrir cámara
@@ -240,12 +248,9 @@ export function HomeScreen() {
         case 'lectura': {
           const result = await analyzeReading(imageUri);
           setSmartResult(result);
-          // Si hay problemas de calidad, hablar feedback primero
-          if (result.image_quality?.feedback_text) {
-            const qualityPriority = result.image_quality.is_acceptable
-              ? TtsPriority.HIGH
-              : TtsPriority.INTERRUPT;
-            ttsManager.speak(result.image_quality.feedback_text, qualityPriority);
+          // Solo hablar feedback de calidad si la imagen NO es aceptable (critical)
+          if (result.image_quality?.feedback_text && !result.image_quality.is_acceptable) {
+            ttsManager.speak(result.image_quality.feedback_text, TtsPriority.INTERRUPT);
           }
           ttsManager.speakFromBackend(result.narrative, TtsPriority.HIGH);
           saveToHistory({
@@ -852,29 +857,25 @@ export function HomeScreen() {
               {` • ${smartResult.reading_mode}`}
             </Text>
 
-            {/* Indicador de calidad de imagen */}
-            {smartResult.image_quality && smartResult.image_quality.issues.length > 0 && (
+            {/* Indicador de calidad de imagen — solo si es ilegible */}
+            {smartResult.image_quality && !smartResult.image_quality.is_acceptable && (
               <View style={[
                 styles.totalsHighlight,
                 {
-                  backgroundColor: smartResult.image_quality.is_acceptable
-                    ? COLORS.warning + '20'
-                    : COLORS.error + '20',
+                  backgroundColor: COLORS.error + '20',
                   marginTop: 8,
                 },
               ]}>
                 <Ionicons
-                  name={smartResult.image_quality.is_acceptable ? 'alert-circle' : 'warning'}
+                  name="warning"
                   size={16}
-                  color={smartResult.image_quality.is_acceptable ? COLORS.warning : COLORS.error}
+                  color={COLORS.error}
                 />
                 <Text style={[
                   styles.totalsText,
-                  {
-                    color: smartResult.image_quality.is_acceptable ? COLORS.warning : COLORS.error,
-                  },
+                  { color: COLORS.error },
                 ]}>
-                  {smartResult.image_quality.issues.map(i => i.message).join(' ')}
+                  {smartResult.image_quality.feedback_text || 'No pude leer. Intenta tomar otra foto.'}
                 </Text>
               </View>
             )}

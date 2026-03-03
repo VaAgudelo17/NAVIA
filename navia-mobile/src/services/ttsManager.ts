@@ -214,36 +214,62 @@ class TtsManager {
   // TIER 2: PIPER TTS VIA BACKEND (voz VITS natural)
   // ==========================================================================
 
+  /**
+   * Intenta hacer fetch al backend con retry.
+   * Reintenta hasta MAX_RETRIES veces antes de lanzar error.
+   */
+  private async fetchTtsWithRetry(text: string, maxRetries = 3, timeoutMs = 15000): Promise<Uint8Array> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const controller = new AbortController();
+        const fetchTimeout = setTimeout(() => controller.abort(), timeoutMs);
+
+        const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.TTS}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+          signal: controller.signal,
+        });
+
+        clearTimeout(fetchTimeout);
+
+        if (!response.ok) {
+          throw new Error(`TTS backend error: ${response.status}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+
+        if (bytes.length < 100) {
+          throw new Error('TTS response too small, likely empty');
+        }
+
+        return bytes;
+      } catch (error) {
+        lastError = error as Error;
+        console.warn(`[TTS] Intento ${attempt}/${maxRetries} falló:`, (error as Error).message);
+
+        if (attempt < maxRetries) {
+          // Esperar antes de reintentar (backoff: 500ms, 1000ms)
+          await new Promise(r => setTimeout(r, attempt * 500));
+        }
+      }
+    }
+
+    throw lastError!;
+  }
+
   private async playBackendTts(text: string): Promise<void> {
     const fileName = `navia_tts_${Date.now()}.wav`;
     let tempFile: InstanceType<typeof ExpoFile> | null = null;
 
     try {
-      // 1. Fetch del audio WAV desde el backend (POST con JSON body)
-      const controller = new AbortController();
-      const fetchTimeout = setTimeout(() => controller.abort(), 8000);
+      // 1. Fetch con retry (3 intentos, 15s timeout cada uno)
+      const bytes = await this.fetchTtsWithRetry(text);
 
-      const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.TTS}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(fetchTimeout);
-
-      if (!response.ok) {
-        throw new Error(`TTS backend error: ${response.status}`);
-      }
-
-      // 2. Leer respuesta como ArrayBuffer y escribir a disco con la nueva File API
-      const arrayBuffer = await response.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-
-      if (bytes.length < 100) {
-        throw new Error('TTS response too small, likely empty');
-      }
-
+      // 2. Escribir a disco
       tempFile = new ExpoFile(Paths.cache, fileName);
       tempFile.create({ overwrite: true });
       tempFile.write(bytes);
