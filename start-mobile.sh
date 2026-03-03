@@ -62,6 +62,6 @@ echo -e "Presiona ${YELLOW}Ctrl+C${NC} para detener"
 echo ""
 
 # Iniciar Expo
-npx expo start
+npx expo start --offline
 
 wait

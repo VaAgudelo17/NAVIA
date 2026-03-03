@@ -75,8 +75,19 @@ PEDESTRIAN_RELEVANT_CLASSES = {
     # --- BARRERAS Y ESTRUCTURAS ---
     "cerca", "portón", "árbol", "arbusto",
 
+    # --- MUROS Y PAREDES ---
+    "pared", "pared de ladrillo", "pared de vidrio",
+    "muro de piedra", "pilar", "columna",
+
+    # --- BALCONES Y TERRAZAS (peligro de caída) ---
+    "balcón", "barandal de balcón", "terraza",
+    "cornisa", "barandal",
+
     # --- PUERTAS Y ACCESOS ---
     "puerta", "puerta corrediza", "ascensor", "pasamanos",
+    "puerta abierta", "puerta cerrada", "puerta de vidrio",
+    "puerta giratoria", "reja", "puerta de garaje",
+    "salida de emergencia", "marco de puerta",
 
     # --- PELIGROS DOMÉSTICOS ---
     "cuchillo", "tijeras", "estufa", "horno",
@@ -143,9 +154,26 @@ DANGER_WEIGHT: Dict[str, float] = {
     "cerca": 0.5, "portón": 0.55,
     "árbol": 0.55, "arbusto": 0.4,
 
+    # --- Muros y paredes (obstáculo sólido, no se puede atravesar) ---
+    "pared": 0.6, "pared de ladrillo": 0.6,
+    "pared de vidrio": 0.7,  # Más peligroso: invisible
+    "muro de piedra": 0.6,
+    "pilar": 0.7, "columna": 0.7,  # Fácil de chocar de frente
+
+    # --- Balcones y terrazas (peligro de caída) ---
+    "balcón": 0.85, "barandal de balcón": 0.8,
+    "terraza": 0.75, "cornisa": 0.9,  # Máximo peligro: caída
+    "barandal": 0.7,
+
     # --- Puertas y accesos ---
     "puerta": 0.4, "puerta corrediza": 0.4,
     "ascensor": 0.35, "pasamanos": 0.2,
+    "puerta abierta": 0.35, "puerta cerrada": 0.5,  # Cerrada = obstáculo
+    "puerta de vidrio": 0.65,  # Peligro: invisible, fácil de chocar
+    "puerta giratoria": 0.6,  # Mecanismo en movimiento
+    "reja": 0.5, "puerta de garaje": 0.55,
+    "salida de emergencia": 0.2,  # Referencia útil, bajo peligro
+    "marco de puerta": 0.35,
 
     # --- Peligros domésticos ---
     "cuchillo": 0.7, "tijeras": 0.5,
@@ -660,6 +688,35 @@ class NavigationGuidanceService:
         """
         name_cap = name.capitalize()
         prox_label = PROXIMITY_LABELS.get(proximity, proximity)
+
+        # === FRASES ESPECÍFICAS PARA ESTRUCTURAS ===
+
+        # Balcones y cornisas: peligro de caída, siempre alertar
+        _BALCONY_CLASSES = {"balcón", "barandal de balcón", "terraza", "cornisa"}
+        if name in _BALCONY_CLASSES:
+            if proximity == "muy_cerca":
+                return f"Peligro: {name_cap} {prox_label} {position}, riesgo de caída"
+            elif proximity == "cerca":
+                return f"Precaución: {name_cap} {prox_label} {position}"
+            return ""
+
+        # Paredes y muros: indicar dirección para esquivar
+        _WALL_CLASSES = {"pared", "pared de ladrillo", "pared de vidrio", "muro de piedra", "pilar", "columna"}
+        if name in _WALL_CLASSES:
+            if proximity == "muy_cerca":
+                return f"Cuidado: {name_cap} {prox_label} {position}"
+            elif proximity == "cerca":
+                return f"{name_cap} {prox_label} {position}"
+            return ""
+
+        # Puertas: indicar si está abierta/cerrada
+        _DOOR_CLASSES = {"puerta abierta", "puerta cerrada", "puerta de vidrio", "puerta giratoria", "reja", "puerta de garaje", "marco de puerta"}
+        if name in _DOOR_CLASSES:
+            if proximity in ("muy_cerca", "cerca"):
+                return f"{name_cap} {prox_label} {position}"
+            return ""
+
+        # === FRASES GENÉRICAS ===
 
         # Objetos que se acercan: alerta de movimiento
         if movement == "acercandose":

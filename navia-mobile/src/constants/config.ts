@@ -2,10 +2,31 @@
  * Configuración de la aplicación NAVIA
  */
 
-// URL del backend - cambiar según el entorno
-// Para desarrollo local: usar la IP de tu computadora
-// Para producción: usar la URL del servidor
-export const API_BASE_URL = 'http://192.168.1.16:8000';
+import Constants from 'expo-constants';
+
+// URL del backend - se detecta automáticamente.
+// Expo inyecta la IP de tu máquina en hostUri (ej. "192.168.1.16:8081").
+// Extraemos la IP y apuntamos al puerto del backend (8000).
+// Así funciona en cualquier red sin cambiar código.
+const BACKEND_PORT = 8000;
+
+function getApiBaseUrl(): string {
+  // 1. Override manual (si defines EXPO_PUBLIC_API_URL en .env)
+  const envUrl = process.env.EXPO_PUBLIC_API_URL;
+  if (envUrl) return envUrl;
+
+  // 2. Auto-detectar IP del dev server de Expo
+  const hostUri = Constants.expoConfig?.hostUri; // "192.168.1.16:8081"
+  if (hostUri) {
+    const host = hostUri.split(':')[0];
+    return `http://${host}:${BACKEND_PORT}`;
+  }
+
+  // 3. Fallback
+  return `http://localhost:${BACKEND_PORT}`;
+}
+
+export const API_BASE_URL = getApiBaseUrl();
 
 // Endpoints de la API
 export const API_ENDPOINTS = {

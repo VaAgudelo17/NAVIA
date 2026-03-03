@@ -678,7 +678,7 @@ export function HomeScreen() {
             style={styles.stopRealtimeButton}
             onPress={() => {
               handleReset();
-              ttsManager.speak('Detenido.', TtsPriority.HIGH);
+              ttsManager.speak('Detenido.', TtsPriority.INTERRUPT);
             }}
             accessibilityLabel="Detener"
             accessibilityRole="button"

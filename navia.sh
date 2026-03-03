@@ -97,7 +97,7 @@ echo -e "  Presiona ${YELLOW}Ctrl+C${NC} para detener todo"
 echo ""
 
 cd "$MOBILE_DIR"
-npx expo start
+npx expo start --offline
 
 # Si expo se cierra, limpiar todo
 cleanup

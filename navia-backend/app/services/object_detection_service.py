@@ -128,6 +128,32 @@ WORLD_CLASSES_ES = {
     "ottoman": ("puf", "m"),
     "tv stand": ("mueble de televisor", "m"),
 
+    # ===================== MUROS, PAREDES Y ESTRUCTURAS =====================
+    "concrete wall": ("pared", "f"),
+    "brick wall": ("pared de ladrillo", "f"),
+    "glass wall": ("pared de vidrio", "f"),
+    "stone wall": ("muro de piedra", "m"),
+    "pillar": ("pilar", "m"),
+    "concrete column": ("columna", "f"),
+
+    # ===================== BALCONES Y TERRAZAS =====================
+    "balcony": ("balcón", "m"),
+    "balcony railing": ("barandal de balcón", "m"),
+    "terrace": ("terraza", "f"),
+    "ledge": ("cornisa", "f"),
+    "railing": ("barandal", "m"),
+
+    # ===================== PUERTAS ESPECÍFICAS =====================
+    "open door": ("puerta abierta", "f"),
+    "closed door": ("puerta cerrada", "f"),
+    "glass door": ("puerta de vidrio", "f"),
+    "revolving door": ("puerta giratoria", "f"),
+    "metal gate": ("reja", "f"),
+    "garage door": ("puerta de garaje", "f"),
+    "emergency exit door": ("salida de emergencia", "f"),
+    "doorway": ("marco de puerta", "m"),
+    "door frame": ("marco de puerta", "m"),
+
     # ===================== HOGAR / NAVEGACIÓN INTERIOR =====================
     # Prompts específicos para evitar confusiones entre objetos similares
     "table lamp": ("lámpara de mesa", "f"),
