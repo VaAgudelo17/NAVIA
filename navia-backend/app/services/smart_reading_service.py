@@ -2123,13 +2123,80 @@ class NarrativeGenerator:
 
     def _gen_identificacion(self, mode: str, text: str, ex: ExtractedData,
                             caption: Optional[str]) -> str:
-        """Narrativa natural para documentos de identidad."""
+        """Narrativa natural para documentos de identidad y credenciales."""
         if not text or not text.strip():
             return "Es un documento de identificación, pero no pude leer los datos."
 
         parts = []
 
-        # Tipo de documento
+        # Detectar credencial de empleado primero (prioridad sobre otros tipos)
+        is_credencial = bool(re.search(
+            r'\b(?:credencial|carnet|gafete|badge|empleado|trabajador|funcionario|colaborador|cargo\s*:|puesto\s*:|departamento\s*:)\b',
+            text, re.I))
+
+        if is_credencial:
+            # Nombre de empresa
+            empresa_match = re.search(
+                r'\b(?:empresa|compa[ñn][ií]a|organizaci[oó]n|corporaci[oó]n|instituci[oó]n)\s*:?\s*([^\n]{2,40})',
+                text, re.I)
+            # También buscar empresa en las primeras líneas (suele estar arriba)
+            first_lines = text.strip().split('\n')[:3]
+            empresa_candidate = None
+            for line in first_lines:
+                line = line.strip()
+                if len(line) > 3 and not re.search(r'\b(?:nombre|cargo|departamento|empleado|credencial|válido|fecha)\b', line, re.I):
+                    empresa_candidate = line
+                    break
+
+            if empresa_match:
+                parts.append(f"Es una credencial de empleado de {_cf(empresa_match.group(1).strip())}.")
+            elif empresa_candidate:
+                parts.append(f"Es una credencial de empleado de {_cf(empresa_candidate)}.")
+            else:
+                parts.append("Es una credencial de empleado.")
+
+            # Nombre del titular
+            name_match = re.search(
+                r'\b(?:nombre|nombres?|name)\s*:?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-Za-záéíóúñ]+){0,4})',
+                text, re.I)
+            apellido_match = re.search(
+                r'\b(?:apellido|apellidos?|surname)\s*:?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-Za-záéíóúñ]+){0,2})',
+                text, re.I)
+            if name_match and apellido_match:
+                parts.append(f"Pertenece a {name_match.group(1)} {apellido_match.group(1)}.")
+            elif name_match:
+                parts.append(f"Pertenece a {name_match.group(1)}.")
+
+            # Cargo / puesto
+            cargo_match = re.search(r'\b(?:cargo|puesto|posici[oó]n)\s*:?\s*([^\n]{2,40})', text, re.I)
+            if cargo_match:
+                parts.append(f"Cargo: {_cf(cargo_match.group(1).strip())}.")
+
+            # Departamento / área
+            depto_match = re.search(r'\b(?:departamento|[aá]rea|secci[oó]n|divisi[oó]n)\s*:?\s*([^\n]{2,40})', text, re.I)
+            if depto_match:
+                parts.append(f"Departamento: {_cf(depto_match.group(1).strip())}.")
+
+            # Número de empleado / código
+            cod_match = re.search(
+                r'\b(?:c[oó]digo|n[úu]mero|no\.?|ficha|legajo|ID)\s*(?:de\s+)?(?:emplead[oa])?\s*:?\s*([\w\d\-]{3,15})\b',
+                text, re.I)
+            if cod_match:
+                parts.append(f"Código de empleado: {cod_match.group(1)}.")
+            elif ex.ids:
+                parts.append(f"Código: {ex.ids[0]}.")
+
+            # Vigencia
+            vig_match = re.search(r'\b(?:v[aá]lido\s+hasta|vigencia|vencimiento|expira|exp\.?)\s*:?\s*([^\n]{4,15})', text, re.I)
+            if vig_match:
+                parts.append(f"Válida hasta: {_cf(vig_match.group(1).strip())}.")
+
+            if mode != "resumen":
+                parts.append("No olvides portar siempre tu credencial dentro de las instalaciones.")
+
+            return " ".join(parts)
+
+        # --- Documentos de identidad personal ---
         is_cedula = bool(re.search(r'\bc[eé]dula\b', text, re.I))
         is_passport = bool(re.search(r'\bpasaporte|passport\b', text, re.I))
         is_license = bool(re.search(r'\blicencia\s+de\s+(?:conducir|conducci[oó]n)\b', text, re.I))

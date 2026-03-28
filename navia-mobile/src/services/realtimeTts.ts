@@ -134,12 +134,10 @@ export class RealtimeTtsManager {
 
     // Peligro high: prioridad alta
     if (guidanceData?.has_danger && guidanceData.priority === 'high') {
-      // Cooldown global: evita repetición aunque el guidance_key cambie
-      // (p.ej. obstáculo oscila entre "frente a ti" y "lateral" en zona límite)
       if (now - this.lastHighDangerSpeak < REALTIME_CONFIG.ttsMinInterval) return;
       if (now - this.lastSpeakTime < REALTIME_CONFIG.ttsMinInterval) return;
       if (ttsManager.isSpeaking()) return;
-      if (summary === this.lastSummary) return;  // no repetir la misma frase
+      if (summary === this.lastSummary) return;
 
       this.lastSummary = summary;
       this.lastSpeakTime = now;

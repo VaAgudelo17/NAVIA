@@ -64,10 +64,18 @@ export const COLORS = {
 };
 
 // Configuración de Text-to-Speech
+// language: se usa como fallback si resolveVoice() no encuentra un voice identifier.
+// iOS reconoce 'es-ES' (Monica, Siri España).
+// Android reconoce 'es-ES', 'es-MX', etc. según lo que el usuario tenga instalado.
+import { Platform } from 'react-native';
+
 export const TTS_CONFIG = {
-  language: 'es-ES',
-  pitch: 1.05,   // ligeramente más agudo (más femenino)
-  rate: 0.75,     // más lento = más natural
+  language: Platform.OS === 'ios' ? 'es-ES' : 'es-MX',
+  pitch: 1.0,
+  rate: 0.78,
+  // Para modo lectura: más lento y con pausas marcadas
+  readingRate: 0.60,
+  readingPitch: 0.97,
 };
 
 // Modos de análisis disponibles

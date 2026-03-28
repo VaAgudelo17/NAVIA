@@ -55,7 +55,7 @@ export function SettingsScreen({ visible, onClose }: SettingsScreenProps) {
         tension: 65,
         friction: 11,
       }).start();
-      ttsManager.speak('Configuración visual. Elige un tema de color o tamaño de letra.', TtsPriority.HIGH);
+      ttsManager.speak('Abriste la configuración visual. Puedes elegir el tema de color que mejor te funcione, o ajustar el tamaño de la letra.', TtsPriority.HIGH);
     } else {
       Animated.timing(slideAnim, {
         toValue: SCREEN_HEIGHT,
@@ -68,20 +68,21 @@ export function SettingsScreen({ visible, onClose }: SettingsScreenProps) {
   const handleThemeSelect = (id: ThemeId) => {
     setThemeId(id);
     const t = THEMES[id];
+    const nombre = t.ttsName ?? t.name;
     ttsManager.stop();
-    ttsManager.speak(`Tema ${t.name} seleccionado. ${t.description}.`, TtsPriority.INTERRUPT);
+    ttsManager.speak(`Perfecto, elegiste el tema ${nombre}. ${t.description}.`, TtsPriority.INTERRUPT);
   };
 
   const handleFontSelect = (id: FontSizeId) => {
     setFontSizeId(id);
     const f = FONT_SIZES[id];
     ttsManager.stop();
-    ttsManager.speak(`Letra ${f.name}. ${f.description}.`, TtsPriority.INTERRUPT);
+    ttsManager.speak(`Listo, cambiaste el tamaño de letra a ${f.name}. ${f.description}.`, TtsPriority.INTERRUPT);
   };
 
   const handleClose = () => {
     ttsManager.stop();
-    ttsManager.speak('Configuración guardada.', TtsPriority.INTERRUPT);
+    ttsManager.speak('Configuración guardada. De vuelta al inicio.', TtsPriority.INTERRUPT);
     onClose();
   };
 

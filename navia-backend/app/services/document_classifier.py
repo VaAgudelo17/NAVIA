@@ -1589,15 +1589,27 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:saldo\s+actual|saldo\s+restante|recarga)\b', re.I), 8),
     ],
     "credencial": [
-        # Palabra clave directa
-        (re.compile(r'\b(?:credencial|de\s+identificaci[oó]n|identification\s+card|ID\s+empleado|badge)\b', re.I), 14),
-        (re.compile(r'\b(?:empleado|trabajador|funcionario|colaborador|staff)\b', re.I), 12),
-        (re.compile(r'\b(?:cargo|puesto|posici[oó]n|departamento|área)\b', re.I), 10),
-        (re.compile(r'\b(?:v[aál]lido\s+hasta|vence\s+el|validez|fecha\s+de\s+vencimiento)\b', re.I), 10),
-        (re.compile(r'\b(?:empresa|compa[ñn][ií]a|organizaci[oó]n|corporaci[oó]n)\b', re.I), 8),
-        (re.compile(r'\b(?:gafete|identificador|access\s+card|employee\s+ID)\b', re.I), 12),
+        # Palabra clave directa — máximo peso
+        (re.compile(r'\b(?:credencial|carnet|gafete|badge|identification\s+card|access\s+card|employee\s+ID|ID\s+emplead[oa])\b', re.I), 16),
+        (re.compile(r'\b(?:empleado|trabajador|funcionario|colaborador|staff|personal)\b', re.I), 12),
+        # Cargo / puesto con dos puntos (muy específico de credencial)
+        (re.compile(r'\b(?:cargo|puesto|posici[oó]n)\s*:', re.I), 14),
+        (re.compile(r'\b(?:cargo|puesto|posici[oó]n)\b', re.I), 9),
+        # Departamento con dos puntos (muy específico de credencial)
+        (re.compile(r'\b(?:departamento|[aá]rea|secci[oó]n|divisi[oó]n)\s*:', re.I), 12),
+        (re.compile(r'\b(?:departamento|[aá]rea\s+de\s+trabajo)\b', re.I), 8),
+        # Validez — común en credenciales
+        (re.compile(r'\b(?:v[aá]lido\s+hasta|vence\s+el|validez|vencimiento|expira|exp\.?\s*:)\b', re.I), 10),
+        # Empresa / institución emisora
+        (re.compile(r'\b(?:empresa|compa[ñn][ií]a|organizaci[oó]n|corporaci[oó]n|instituci[oó]n)\b', re.I), 8),
+        # Identificador único de credencial
+        (re.compile(r'\b(?:identificador|c[oó]digo\s+(?:de\s+)?emplead[oa]|n[úu]mero\s+(?:de\s+)?emplead[oa]|ficha|legajo)\b', re.I), 14),
+        # Frases de uso personal / acceso
+        (re.compile(r'\b(?:uso\s+personal|intransferible|portar\s+(?:este|el)\s+(?:carnet|gafete|documento))\b', re.I), 12),
+        (re.compile(r'\b(?:acceso\s+(?:de\s+)?(?:personal|visitantes?|veh[ií]culos?)|nivel\s+de\s+acceso)\b', re.I), 10),
+        # Visita / contratista
         (re.compile(r'\b(?:visita|visitante|contratista|proveedor)\b', re.I), 10),
-        (re.compile(r'\b(?:acceso\s+(?:de\s+)?(?:personal|visitantes?|veh[ií]culos?))\b', re.I), 10),
+        # Seguridad / recepción
         (re.compile(r'\b(?:vigilante|seguridad|recepci[oó]n|porter[ií]a)\b', re.I), 6),
     ],
 }
@@ -1666,6 +1678,26 @@ class SubtypeClassifier:
 
             raw_scores[subtype] = total
             reasons[subtype] = sub_reasons
+
+        # --- Ajuste por longitud del documento ---
+        # Documentos cortos (<60 palabras) suelen ser credenciales, etiquetas o tarjetas,
+        # no formularios ni contratos. Penalizar subtipos de documentos largos si el
+        # texto es muy corto, y dar bonus a subtipos de documentos compactos.
+        SHORT_DOC_THRESHOLD = 60
+        if word_count < SHORT_DOC_THRESHOLD and word_count > 0:
+            short_boost_types = {"credencial", "etiqueta", "tarjeta_presentacion", "ticket_transporte", "boleto"}
+            short_penalize_types = {"formulario", "contrato", "acta", "certificado"}
+            boost_factor = max(0.1, (SHORT_DOC_THRESHOLD - word_count) / SHORT_DOC_THRESHOLD)
+            for st in short_boost_types:
+                if st in raw_scores and raw_scores[st] > 0:
+                    extra = raw_scores[st] * boost_factor * 0.4
+                    raw_scores[st] += extra
+                    reasons[st].append(f"Boost doc-corto ({word_count} words, +{extra:.0f})")
+            for st in short_penalize_types:
+                if st in raw_scores and raw_scores[st] > 0:
+                    penalty = raw_scores[st] * boost_factor * 0.3
+                    raw_scores[st] = max(0, raw_scores[st] - penalty)
+                    reasons[st].append(f"Penalización doc-corto ({word_count} words, -{penalty:.0f})")
 
         if not raw_scores:
             return "desconocido", 0.3, {}, ["Sin subtipos candidatos"], False, ""

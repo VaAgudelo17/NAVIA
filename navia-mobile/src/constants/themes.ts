@@ -34,6 +34,8 @@ export interface ThemeColors {
 
 interface ThemeDef {
   name: string;
+  /** Nombre alternativo para TTS (sin caracteres especiales como "/") */
+  ttsName?: string;
   description: string;
   preview: [string, string, string]; // [bg, text, accent]
   colors: ThemeColors;
@@ -78,7 +80,8 @@ export const THEMES: Record<ThemeId, ThemeDef> = {
   },
   amarillo_negro: {
     name: 'Amarillo / Negro',
-    description: 'Mejor para baja visión',
+    ttsName: 'Amarillo y Negro',
+    description: 'Ideal para baja visión',
     preview: ['#000000', '#FFE600', '#FFE600'],
     colors: {
       background: '#000000',
@@ -96,7 +99,8 @@ export const THEMES: Record<ThemeId, ThemeDef> = {
   },
   blanco_negro: {
     name: 'Blanco / Negro',
-    description: 'Para percepción de luz',
+    ttsName: 'Blanco y Negro',
+    description: 'Útil si percibes luz',
     preview: ['#ffffff', '#000000', '#000000'],
     colors: {
       background: '#ffffff',
@@ -114,7 +118,8 @@ export const THEMES: Record<ThemeId, ThemeDef> = {
   },
   azul_amarillo: {
     name: 'Azul / Amarillo',
-    description: 'Daltonismo-friendly',
+    ttsName: 'Azul y Amarillo',
+    description: 'Ideal si tienes daltonismo',
     preview: ['#001133', '#ffffff', '#FFE600'],
     colors: {
       background: '#001133',
@@ -140,9 +145,9 @@ interface FontSizeDef {
 }
 
 export const FONT_SIZES: Record<FontSizeId, FontSizeDef> = {
-  pequeno: { name: 'Pequeño',  description: 'Texto compacto',   scale: 0.88 },
-  mediano: { name: 'Mediano',  description: 'Tamaño estándar',  scale: 1.0  },
-  grande:  { name: 'Grande',   description: 'Texto ampliado',   scale: 1.25 },
+  pequeno: { name: 'Pequeña',  description: 'Texto más compacto',  scale: 0.88 },
+  mediano: { name: 'Mediana',  description: 'Tamaño estándar',     scale: 1.0  },
+  grande:  { name: 'Grande',   description: 'Texto más grande',    scale: 1.25 },
 };
 
 /** Escala un tamaño de fuente según la preferencia del usuario */

@@ -97,13 +97,21 @@ class PiperTtsService:
 
     def _synthesize_piper(self, text: str) -> bytes:
         """Síntesis con Piper TTS."""
-        sample_rate = settings.TTS_SAMPLE_RATE
+        from piper.config import SynthesisConfig
 
         try:
             audio_buffer = io.BytesIO()
 
+            # length_scale > 1 = más lento → más natural y menos robótico
+            # noise_scale controla variación de tono (más variado = menos monótono)
+            syn_config = SynthesisConfig(
+                length_scale=1.15,   # 15% más lento que el default
+                noise_scale=0.667,   # variación de tono natural (default Piper)
+                noise_w_scale=0.8,   # variación de duración de fonemas
+            )
+
             with wave.open(audio_buffer, 'wb') as wav_file:
-                self._voice.synthesize_wav(text, wav_file)
+                self._voice.synthesize_wav(text, wav_file, syn_config=syn_config)
 
             audio_buffer.seek(0)
             return audio_buffer.read()

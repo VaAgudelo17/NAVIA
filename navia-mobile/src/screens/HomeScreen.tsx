@@ -126,8 +126,13 @@ export function HomeScreen() {
 
   const isRealtimeMode = REALTIME_MODES.includes(analysisMode);
 
+  // Ref para evitar que el useEffect deshabilite el TTS
+  // mientras está anunciando "Voz desactivada / activada"
+  const skipTtsSync = useRef(false);
+
   // Sincronizar ttsEnabled con ttsManager
   useEffect(() => {
+    if (skipTtsSync.current) return;
     ttsManager.setEnabled(ttsEnabled);
   }, [ttsEnabled]);
 
@@ -272,7 +277,7 @@ export function HomeScreen() {
 
           // Narrative o mensaje por defecto
           const message = result.narrative || 'No se detectó texto claro en la imagen.';
-          ttsManager.speak(message, TtsPriority.HIGH);
+          ttsManager.speakReading(message, TtsPriority.HIGH);
           
           saveToHistory({
             mode: 'lectura',
@@ -338,7 +343,7 @@ export function HomeScreen() {
     try {
       if (navResult) ttsManager.speakFromBackend(navResult.instruction, TtsPriority.HIGH);
       else if (explorationResult) ttsManager.speakFromBackend(explorationResult.description, TtsPriority.HIGH);
-      else if (smartResult) ttsManager.speakFromBackend(smartResult.narrative, TtsPriority.HIGH);
+      else if (smartResult) ttsManager.speakReading(smartResult.narrative, TtsPriority.HIGH);
     } finally {
       setIsSpeakingState(false);
     }
@@ -401,6 +406,7 @@ export function HomeScreen() {
             : 'Sin conexión al servidor'}
         </Text>
       </View>
+
 
       {/* Selector de modo - grid 2x2 */}
       <View style={styles.modeSelector}>
@@ -475,18 +481,21 @@ export function HomeScreen() {
       <TouchableOpacity
         style={styles.ttsToggle}
         onPress={() => {
-          const newValue = !ttsEnabled;
-          setTtsEnabled(newValue);
-          // Siempre habilitar temporalmente para que se escuche la confirmación
-    ttsManager.setEnabled(true);
-    if (!ttsEnabled) {
-      ttsManager.stop();
-      ttsManager.speak('Voz desactivada.', TtsPriority.INTERRUPT);
-      setTimeout(() => ttsManager.setEnabled(false), 3000);
-    } else {
-      ttsManager.stop();
-      ttsManager.speak('Voz activada.', TtsPriority.INTERRUPT);
-    }
+          ttsManager.stop();
+          ttsManager.setEnabled(true);
+          if (ttsEnabled) {
+            // Desactivando: hablar primero, luego deshabilitar
+            skipTtsSync.current = true;
+            ttsManager.speak('Voz desactivada.', TtsPriority.INTERRUPT);
+            setTimeout(() => {
+              setTtsEnabled(false);
+              skipTtsSync.current = false;
+            }, 4000);
+          } else {
+            // Activando: habilitar y hablar
+            setTtsEnabled(true);
+            ttsManager.speak('Voz activada.', TtsPriority.INTERRUPT);
+          }
         }}
         accessibilityLabel={ttsEnabled ? 'Desactivar voz' : 'Activar voz'}
         accessibilityRole="switch"
