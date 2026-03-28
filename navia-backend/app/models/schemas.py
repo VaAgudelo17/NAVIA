@@ -210,3 +210,25 @@ class PreferencesResponse(BaseResponse):
 
 class PreferencesUpdateRequest(BaseModel):
     preferences: Dict[str, str]
+
+
+# ============================================================================
+# CÓDIGOS DE BARRAS / QR
+# ============================================================================
+
+class DetectedCode(BaseModel):
+    """Código detectado en la imagen."""
+    type: str
+    data: str
+    format_name: str
+    bounding_box: Optional[Dict[str, int]] = None
+    confidence: float = 1.0
+
+
+class BarcodeResponse(BaseResponse):
+    """Respuesta del escaneo de códigos QR y barras."""
+    codes: List[DetectedCode] = []
+    has_codes: bool = False
+    summary: str
+    count: int = 0
+    product_info: Optional[Dict[str, Any]] = None

@@ -21,6 +21,7 @@ from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass, field
 
 from app.core.config import settings
+from app.services.barcode_service import get_barcode_reader
 
 logger = logging.getLogger(__name__)
 
@@ -778,6 +779,11 @@ class NarrativeGenerator:
             "resultado_lab": self._gen_resultado_lab,
             "tabla_nutricional": self._gen_tabla_nutricional,
             "calendario": self._gen_calendario,
+
+            # NUEVOS TIPOS
+            "factura_servicio": self._gen_factura,
+            "ticket_transporte": self._gen_boleto,
+            "credencial": self._gen_identificacion,
 
             # INTERFAZ_DIGITAL (nuevos subtipos → generadores existentes)
             "app_menu": self._gen_menu,
@@ -3515,6 +3521,7 @@ class SmartReadingService:
         Pipeline completo de lectura inteligente.
 
         Estrategia:
+        0. Primero intentar detectar códigos QR/barras (más rápido)
         1. Analizar calidad de imagen (siempre, local)
         2. Pipeline Tesseract local + Clasificador jerárquico v3
 
@@ -3525,11 +3532,22 @@ class SmartReadingService:
         Returns:
             dict compatible con SmartReadingResponse
         """
-        # 0. Analizar calidad de imagen ANTES de todo
+        # 0. PRIMERO: Intentar detectar códigos QR/barras
+        logger.info("[SmartReading] Intentando detectar códigos QR/barras...")
+        barcode_reader = get_barcode_reader()
+        barcode_result = barcode_reader.read(image)
+        
+        if barcode_result.has_codes:
+            logger.info(f"[SmartReading] Código detectado: {barcode_result.summary}")
+            return self._build_barcode_response(barcode_result, image)
+        
+        logger.info("[SmartReading] No se detectaron códigos QR/barras, usando OCR...")
+
+        # 1. Analizar calidad de imagen ANTES de todo
         quality_analyzer = self._get_quality_analyzer()
         quality_report = quality_analyzer.analyze(image)
 
-        # 1. Pipeline Tesseract local + Clasificador v3
+        # 2. Pipeline Tesseract local + Clasificador v3
         logger.info("[SmartReading] Usando Tesseract + Clasificador v3")
         return self._analyze_with_tesseract(image, quality_report, reading_mode)
 
@@ -3625,6 +3643,82 @@ class SmartReadingService:
             "extracted_fields": extracted_fields,
             "visual_caption": None,
             "image_quality": quality_data,
+        }
+
+    def _build_barcode_response(self, barcode_result, image: np.ndarray) -> dict:
+        """
+        Construye la respuesta cuando se detecta un código QR o de barras.
+        También corre OCR sobre la imagen completa para capturar texto circundante.
+        """
+        # Obtener información del código
+        codes_data = []
+        for code in barcode_result.codes:
+            codes_data.append({
+                "type": code.type,
+                "data": code.data,
+                "format": code.format_name,
+            })
+
+        # Determinar el tipo de documento
+        if barcode_result.codes[0].type == "QR_CODE":
+            doc_type = "codigo_qr"
+            doc_label = "Código QR"
+        else:
+            doc_type = "codigo_barras"
+            doc_label = "Código de barras"
+
+        # Construir narrative base desde el resumen del QR
+        narrative = barcode_result.summary
+
+        # Correr OCR para detectar texto circundante al código
+        surrounding_text = ""
+        ocr_word_count = 0
+        OCR_CONFIDENCE_THRESHOLD = 60.0  # % mínimo para considerar texto válido
+        try:
+            ocr_result = self._get_ocr().extract_text(image)
+            surrounding_text = ocr_result.get("text", "").strip()
+            ocr_word_count = ocr_result.get("word_count", 0)
+            ocr_confidence = ocr_result.get("confidence") or 0.0
+            logger.info(f"[SmartReading/Barcode] OCR: {ocr_word_count} palabras, {ocr_confidence:.0f}% confianza")
+
+            # Descartar texto con baja confianza (es ruido/basura)
+            if ocr_confidence < OCR_CONFIDENCE_THRESHOLD:
+                logger.info(f"[SmartReading/Barcode] Texto descartado por baja confianza ({ocr_confidence:.0f}% < {OCR_CONFIDENCE_THRESHOLD}%)")
+                surrounding_text = ""
+                ocr_word_count = 0
+        except Exception as e:
+            logger.warning(f"[SmartReading/Barcode] OCR falló: {e}")
+
+        # Combinar narrativa del QR con texto circundante si es significativo
+        # Mínimo 4 palabras y confianza aceptable
+        if ocr_word_count >= 4 and surrounding_text:
+            preview = surrounding_text[:200] + ("..." if len(surrounding_text) > 200 else "")
+            narrative = f"{narrative}. Alrededor del código hay texto que dice: {preview}"
+
+        # Construir raw_text para compatibilidad
+        raw_text = "; ".join([f"{c['type']}: {c['data']}" for c in codes_data])
+        if surrounding_text:
+            raw_text += f"\n{surrounding_text}"
+
+        return {
+            "success": True,
+            "message": f"Se detectó {len(barcode_result.codes)} código(s)",
+            "narrative": narrative,
+            "document_type": doc_type,
+            "document_type_label": doc_label,
+            "confidence": 0.99,
+            "reading_mode": "detallado",
+            "raw_text": raw_text,
+            "has_text": True,
+            "ocr_confidence": 0.99,
+            "word_count": len(barcode_result.codes) + ocr_word_count,
+            "extracted_fields": {
+                "codes": codes_data,
+                "product_info": barcode_result.product_info,
+            },
+            "visual_caption": None,
+            "image_quality": None,
+            "classification": None,
         }
 
     def _analyze_with_tesseract(

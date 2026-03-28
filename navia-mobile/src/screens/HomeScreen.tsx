@@ -192,8 +192,7 @@ export function HomeScreen() {
       if (photo?.uri) {
         setCapturedImage(photo.uri);
         setAppState('processing');
-        ttsManager.speak('Foto capturada.', TtsPriority.HIGH);
-        await processImage(photo.uri);
+        await processImage(photo.uri, 'Foto capturada. Procesando imagen, por favor espera.');
       }
     } catch (err) {
       console.error('Error capturing photo:', err);
@@ -217,8 +216,10 @@ export function HomeScreen() {
   };
 
   // Procesar imagen según el modo
-  const processImage = async (imageUri: string) => {
-    ttsManager.speak('Procesando imagen, por favor espera.', TtsPriority.HIGH);
+  const processImage = async (imageUri: string, processingMessage = 'Procesando imagen, por favor espera.') => {
+    // Detener cualquier audio anterior antes de empezar un nuevo análisis
+    ttsManager.stop();
+    ttsManager.speak(processingMessage, TtsPriority.HIGH);
 
     try {
       switch (analysisMode) {
@@ -833,11 +834,11 @@ export function HomeScreen() {
             <Text style={styles.resultDescription}>{smartResult.narrative}</Text>
 
             {/* Totales destacados (si hay) */}
-            {smartResult.extracted_fields.totals.length > 0 && (
+            {(smartResult.extracted_fields?.totals?.length ?? 0) > 0 && (
               <View style={styles.totalsHighlight}>
                 <Ionicons name="cash" size={16} color={COLORS.warning} />
                 <Text style={styles.totalsText}>
-                  {smartResult.extracted_fields.totals.join(' | ')}
+                  {smartResult.extracted_fields!.totals.join(' | ')}
                 </Text>
               </View>
             )}

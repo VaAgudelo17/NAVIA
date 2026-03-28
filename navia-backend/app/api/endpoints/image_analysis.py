@@ -32,7 +32,9 @@ from app.models.schemas import (
     RiskResponse,
     SmartReadingResponse,
     ErrorResponse,
-    DetectedObject
+    DetectedObject,
+    BarcodeResponse,
+    DetectedCode
 )
 from app.utils.image_utils import (
     validate_image,
@@ -47,6 +49,7 @@ from app.services.navigation_guidance_service import get_navigation_guidance_ser
 from app.services.smart_reading_service import get_smart_reading_service
 from app.services.exploration_service import get_exploration_service
 from app.services.history_service import save_to_history
+from app.services.barcode_service import get_barcode_reader
 
 # Configurar logging
 logger = logging.getLogger(__name__)
@@ -735,3 +738,107 @@ async def analyze_risk(
     except Exception as e:
         logger.error(f"Error en evaluación de riesgo: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# ENDPOINT: CÓDIGOS DE BARRAS / QR
+# ============================================================================
+
+@router.post(
+    "/barcode",
+    response_model=BarcodeResponse,
+    summary="Detectar códigos QR y de barras",
+    description="""
+    Detecta y decodifica códigos QR y códigos de barras en una imagen.
+
+    **Códigos soportados:**
+    - Códigos QR
+    - EAN-13, EAN-8
+    - UPC-A, UPC-E
+    - Code 128, Code 39, Code 93
+    - ITF, Codabar
+
+    **Para códigos QR detecta:**
+    - URLs (indica el dominio)
+    - Redes WiFi (SSID)
+    - Contactos (vCard)
+    - Geolocalización
+    - Textos genéricos
+
+    **Para códigos de barras:**
+    - Códigos de producto (EAN/UPC)
+    - Indica el país de origen según el código
+    """,
+    responses={
+        400: {"model": ErrorResponse, "description": "Imagen inválida"}
+    }
+)
+async def read_barcodes(
+    image: UploadFile = File(..., description="Imagen con códigos QR o de barras")
+) -> BarcodeResponse:
+    """
+    Lee códigos QR y de barras de una imagen.
+    
+    Args:
+        image: Archivo de imagen con códigos
+        
+    Returns:
+        BarcodeResponse con los códigos detectados y resumen
+    """
+    try:
+        # Validar imagen
+        await validate_image(image)
+        await image.seek(0)
+        
+        # Leer imagen
+        content = await image.read()
+        cv2_image = bytes_to_cv2_image(content)
+        
+        if cv2_image is None:
+            return BarcodeResponse(
+                success=False,
+                message="No se pudo procesar la imagen",
+                codes=[],
+                has_codes=False,
+                summary="Error al procesar la imagen"
+            )
+        
+        # Redimensionar si es necesario
+        cv2_image = resize_image_if_needed(cv2_image)
+        
+        # Leer códigos
+        barcode_reader = get_barcode_reader()
+        result = barcode_reader.read(cv2_image)
+        
+        # Convertir a schema
+        codes = []
+        for code in result.codes:
+            codes.append(DetectedCode(
+                type=code.type,
+                data=code.data,
+                format_name=code.format_name,
+                bounding_box=dict(zip(["x", "y", "w", "h"], code.bounding_box)) if code.bounding_box else None,
+                confidence=code.confidence
+            ))
+        
+        return BarcodeResponse(
+            success=result.has_codes,
+            message=f"Se detectaron {len(codes)} código(s)" if result.has_codes else "No se detectaron códigos",
+            codes=codes,
+            has_codes=result.has_codes,
+            summary=result.summary,
+            count=len(codes),
+            product_info=result.product_info
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error leyendo códigos de barras: {e}")
+        return BarcodeResponse(
+            success=False,
+            message=f"Error: {str(e)}",
+            codes=[],
+            has_codes=False,
+            summary="Error al procesar la imagen"
+        )

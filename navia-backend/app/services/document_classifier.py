@@ -143,7 +143,7 @@ _MACRO_TO_SUBTYPES: Dict[str, List[str]] = {
         "etiqueta", "tarjeta", "documento_informativo",
         "receta_medica", "boleto", "identificacion", "horario",
         "instrucciones", "resultado_lab", "tabla_nutricional",
-        "calendario",
+        "calendario", "factura_servicio", "ticket_transporte", "credencial",
     ],
     "INTERFAZ_DIGITAL": [
         "app_menu", "app_settings", "app_login", "app_form",
@@ -181,6 +181,9 @@ _SUBTYPE_TO_READING_MODE: Dict[str, str] = {
     "resultado_lab": "structured_fields",
     "tabla_nutricional": "structured_fields",
     "calendario": "list_items",
+    "factura_servicio": "structured_fields",
+    "ticket_transporte": "structured_fields",
+    "credencial": "structured_fields",
 
     # INTERFAZ_DIGITAL
     "app_menu": "list_items",
@@ -829,7 +832,10 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\bfactura\b', re.I), 10),
         (re.compile(r'\bfactura\s+(?:electr[oó]nica|de\s+venta|de\s+compra|comercial)\b', re.I), 12),
         (re.compile(r'\bn[úu]mero\s+de\s+factura\b', re.I), 10),
+        (re.compile(r'\bn[úu]mero\s+de\s+control\b', re.I), 12),
         (re.compile(r'\bfact\.?\s*(?:No\.?|N[úu]m\.?|#)\s*\d+', re.I), 10),
+        (re.compile(r'\bcontrol\s+fiscal\b', re.I), 10),
+        (re.compile(r'\btimbre\b', re.I), 8),
         # Identificación fiscal
         (re.compile(r'\bR\.?I\.?F\.?\b', re.I), 7),
         (re.compile(r'\bN\.?I\.?T\.?\b', re.I), 7),
@@ -838,38 +844,44 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\bR\.?F\.?C\.?\b', re.I), 6),
         # Totales y montos
         (re.compile(r'\btotal\s*:?\s*[\$\€Bs\.]*\s*[\d,.]+', re.I), 7),
-        (re.compile(r'\bsubtotal\b', re.I), 6),
+        (re.compile(r'\bsubtotal\b', re.I), 8),
         (re.compile(r'\bi\.?v\.?a\.?\b', re.I), 7),
         (re.compile(r'\bimpuesto\b', re.I), 6),
         (re.compile(r'\bdescuento\b', re.I), 5),
         # Estructura de factura
         (re.compile(r'\bcantidad\b.*\bprecio\b', re.I | re.S), 6),
         (re.compile(r'\bprecio\s+unitario\b', re.I), 7),
-        (re.compile(r'\bbase\s+imponible\b', re.I), 8),
-        (re.compile(r'\bforma\s+de\s+pago\b', re.I), 6),
+        (re.compile(r'\bbase\s+imponible\b', re.I), 12),
+        (re.compile(r'\bforma\s+de\s+pago\b', re.I), 8),
         (re.compile(r'\bcondiciones?\s+de\s+pago\b', re.I), 6),
         (re.compile(r'\bfecha\s+de\s+(?:emisi[oó]n|vencimiento|pago)\b', re.I), 5),
         # Proveedor / cliente
         (re.compile(r'\b(?:proveedor|vendedor|emisor|cliente|comprador|receptor)\b', re.I), 5),
         (re.compile(r'\braz[oó]n\s+social\b', re.I), 7),
+        # Keywords negativos (rechaza si aparecen)
+        (re.compile(r'\b(?:cancelado|pagado|en\s+concepto\s+de)\b', re.I), -5),
     ],
     "recibo": [
         (re.compile(r'\brecibo\b', re.I), 10),
         (re.compile(r'\brecib[oí]\s+de\b', re.I), 10),
         (re.compile(r'\brecibo\s+de\s+(?:caja|pago|cobro|arrendamiento|alquiler|n[oó]mina|sueldo)\b', re.I), 12),
-        (re.compile(r'\bpagado\b', re.I), 6),
+        (re.compile(r'\bpagado\b', re.I), 10),
+        (re.compile(r'\bcancelado\b', re.I), 10),
         (re.compile(r'\bmonto\s+pagado\b', re.I), 8),
         (re.compile(r'\bcomprobante\b', re.I), 7),
-        (re.compile(r'\bcomprobante\s+de\s+(?:pago|dep[oó]sito|transferencia)\b', re.I), 10),
+        (re.compile(r'\bcomprobante\s+de\s+(?:pago|dep[oó]uito|transferencia)\b', re.I), 10),
+        (re.compile(r'\bpagadero\s+a\b', re.I), 12),
+        (re.compile(r'\bfolio\b', re.I), 8),
+        (re.compile(r'\breferencia\s+de\s+pago\b', re.I), 10),
+        (re.compile(r'\ben\s+concepto\s+de\b', re.I), 10),
         # Pagos
-        (re.compile(r'\b(?:abonado|cancelado|saldo)\b', re.I), 6),
-        (re.compile(r'\b(?:efectivo|tarjeta|transferencia|cheque|dep[oó]sito)\b', re.I), 5),
+        (re.compile(r'\b(?:abonado|saldo)\b', re.I), 6),
+        (re.compile(r'\b(?:efectivo|tarjeta|transferencia|cheque|dep[oó]uito)\b', re.I), 5),
         (re.compile(r'\b(?:n[oó]mina|sueldo|salario|quincena)\b', re.I), 7),
         (re.compile(r'\brecib[ií]\s+(?:conforme|de\s+conformidad)\b', re.I), 9),
-        # Servicios públicos
-        (re.compile(r'\b(?:servicio\s+de\s+(?:agua|luz|gas|electricidad|internet|tel[eé]fono))\b', re.I), 8),
-        (re.compile(r'\b(?:per[ií]odo\s+de\s+(?:facturaci[oó]n|consumo))\b', re.I), 7),
-        (re.compile(r'\b(?:lectura\s+(?:anterior|actual)|consumo\s+(?:kWh|m3))\b', re.I), 8),
+        # Keywords negativos (rechaza si aparecen)
+        (re.compile(r'\bn[úu]mero\s+de\s+control\b', re.I), -8),
+        (re.compile(r'\bbase\s+imponible\b', re.I), -8),
     ],
     "carta": [
         (re.compile(r'\bestimat[oa]\b', re.I), 8),
@@ -1345,36 +1357,41 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:favoritos|recientes|historial|categor[ií]as?)\b', re.I), 4),
     ],
     "app_settings": [
-        (re.compile(r'\b(?:configuraci[oó]n|ajustes?|settings?)\b', re.I), 10),
+        (re.compile(r'\b(?:configuraci[oó]n|ajustes?|settings?)\b', re.I), 12),
         (re.compile(r'\b(?:configuraci[oó]n\s+(?:general|avanzada|del\s+sistema|de\s+red))\b', re.I), 12),
-        (re.compile(r'\b(?:Wi-?Fi|Bluetooth|datos?\s+m[oó]viles|NFC|GPS)\b', re.I), 8),
-        (re.compile(r'\b(?:brillo|brightness|volumen|volume|sonido|sound)\b', re.I), 7),
-        (re.compile(r'\b(?:modo\s+(?:oscuro|claro|avi[oó]n|nocturno|no\s+molestar)|dark\s+mode)\b', re.I), 8),
-        (re.compile(r'\b(?:activar|desactivar|enable|disable|toggle|switch)\b', re.I), 6),
-        (re.compile(r'\b(?:cuenta|account|privacidad|privacy|seguridad|security)\b', re.I), 5),
+        (re.compile(r'\b(?:preferencias|personalizar|customize)\b', re.I), 10),
+        (re.compile(r'\b(?:Wi-?Fi|Bluetooth|datos?\s+m[oó]viles|NFC|GPS)\b', re.I), 10),
+        (re.compile(r'\b(?:brillo|brightness|volumen|volume|sonido|sound)\b', re.I), 10),
+        (re.compile(r'\b(?:modo\s+(?:oscuro|claro|avi[oó]n|nocturno|no\s+molestar)|dark\s+mode)\b', re.I), 10),
+        (re.compile(r'\b(?:activar|desactivar|enable|disable|toggle|switch)\b', re.I), 8),
+        (re.compile(r'\b(?:cuenta|account|privacidad|privacy|seguridad|security)\b', re.I), 7),
         # Ajustes específicos
-        (re.compile(r'\b(?:notificaciones|almacenamiento|storage|bater[ií]a|battery)\b', re.I), 6),
-        (re.compile(r'\b(?:idioma|language|regi[oó]n|zona\s+horaria|time\s+zone)\b', re.I), 6),
-        (re.compile(r'\b(?:pantalla|display|fondo\s+de\s+pantalla|wallpaper)\b', re.I), 5),
-        (re.compile(r'\b(?:actualizaci[oó]n|update|versi[oó]n|version|acerca\s+de|about)\b', re.I), 5),
-        (re.compile(r'\b(?:accesibilidad|accessibility|talkback|voiceover)\b', re.I), 7),
-        (re.compile(r'\b(?:respaldo|backup|restaurar|restore|restablecer|reset)\b', re.I), 6),
+        (re.compile(r'\b(?:notificaciones|almacenamiento|storage|bater[ií]a|battery)\b', re.I), 8),
+        (re.compile(r'\b(?:idioma|language|regi[oó]n|zona\s+horaria|time\s+zone)\b', re.I), 8),
+        (re.compile(r'\b(?:pantalla|display|fondo\s+de\s+pantalla|wallpaper)\b', re.I), 7),
+        (re.compile(r'\b(?:actualizaci[oó]n|update|versi[oó]n|version|acerca\s+de|about)\b', re.I), 7),
+        (re.compile(r'\b(?:accesibilidad|accessibility|talkback|voiceover)\b', re.I), 9),
+        (re.compile(r'\b(?:respaldo|backup|restaurar|restore|restablecer|reset)\b', re.I), 8),
+        # Keywords negativos
+        (re.compile(r'\b(?:iniciar\s+sesi[oó]n|registrar|log\s*in|sign\s*in)\b', re.I), -10),
     ],
     "app_login": [
-        (re.compile(r'\b(?:iniciar?\s+sesi[oó]n|log\s*in|sign\s*in)\b', re.I), 10),
-        (re.compile(r'\b(?:registr(?:ar(?:se)?|o)|sign\s*up|create\s+account|crear\s+cuenta)\b', re.I), 9),
+        (re.compile(r'\b(?:iniciar?\s+sesi[oó]n|log\s*in|sign\s*in)\b', re.I), 12),
+        (re.compile(r'\b(?:registr(?:ar(?:se)?|o)|sign\s*up|create\s+account|crear\s+cuenta|nuevo\s+usuario)\b', re.I), 12),
         (re.compile(r'\b(?:contrase[ñn]a|password|clave)\b', re.I), 8),
-        (re.compile(r'\b(?:olvidaste?\s+(?:tu\s+)?contrase[ñn]a|forgot\s+(?:your\s+)?password|recuperar\s+(?:contrase[ñn]a|cuenta))\b', re.I), 10),
+        (re.compile(r'\b(?:olvidaste?\s+(?:tu\s+)?contrase[ñn]a|forgot\s+(?:your\s+)?password|recuperar\s+(?:contrase[ñn]a|cuenta))\b', re.I), 12),
         (re.compile(r'\b(?:bienvenid[oa]|welcome)\b', re.I), 5),
         (re.compile(r'\b(?:usuario|user(?:name)?|correo|email)\b', re.I), 5),
         # Autenticación
-        (re.compile(r'\b(?:iniciar\s+con\s+(?:Google|Facebook|Apple|Twitter|GitHub))\b', re.I), 9),
-        (re.compile(r'\b(?:sign\s+in\s+with\s+(?:Google|Facebook|Apple))\b', re.I), 9),
-        (re.compile(r'\b(?:verificaci[oó]n|c[oó]digo\s+de\s+verificaci[oó]n|OTP|c[oó]digo\s+SMS)\b', re.I), 8),
-        (re.compile(r'\b(?:autenticaci[oó]n|dos\s+pasos|two[\s-]factor|2FA|MFA)\b', re.I), 8),
+        (re.compile(r'\b(?:iniciar\s+con\s+(?:Google|Facebook|Apple|Twitter|GitHub|Microsoft))\b', re.I), 10),
+        (re.compile(r'\b(?:sign\s+in\s+with\s+(?:Google|Facebook|Apple|Microsoft))\b', re.I), 10),
+        (re.compile(r'\b(?:verificaci[oó]n|c[oó]digo\s+de\s+verificaci[oó]n|OTP|c[oó]digo\s+SMS)\b', re.I), 10),
+        (re.compile(r'\b(?:autenticaci[oó]n|dos\s+pasos|two[\s-]factor|2FA|MFA)\b', re.I), 10),
         (re.compile(r'\b(?:recordar(?:me)?|remember\s+me|mantener\s+sesi[oó]n)\b', re.I), 7),
         (re.compile(r'\b(?:aceptar?\s+t[eé]rminos|terms\s+(?:of\s+service|and\s+conditions))\b', re.I), 6),
         (re.compile(r'\b(?:pol[ií]tica\s+de\s+privacidad|privacy\s+policy)\b', re.I), 5),
+        # Keywords negativos
+        (re.compile(r'\b(?:Wi-?Fi|Bluetooth|bater[ií]a|brillo|volumen)\b', re.I), -8),
     ],
     "app_form": [
         (re.compile(r'\b(?:enviar|submit|guardar|save|cancelar|cancel)\b', re.I), 6),
@@ -1434,16 +1451,19 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:cupón|cupon|promo\s*code|c[oó]digo\s+(?:de\s+)?descuento)\b', re.I), 6),
     ],
     "notificacion": [
-        (re.compile(r'\bnotificaci[oó]n(?:es)?\b', re.I), 10),
-        (re.compile(r'\b(?:centro\s+de\s+notificaciones|notification\s+center)\b', re.I), 10),
-        (re.compile(r'\b(?:permitir|bloquear|dismiss|allow|deny|descartar)\b', re.I), 6),
+        (re.compile(r'\bnotificaci[oó]n(?:es)?\b', re.I), 12),
+        (re.compile(r'\b(?:centro\s+de\s+notificaciones|notification\s+center)\b', re.I), 12),
+        (re.compile(r'\b(?:permitir|bloquear|dismiss|allow|deny|descartar)\b', re.I), 8),
         (re.compile(r'\bhace\s+\d+\s+(?:min(?:utos?)?|horas?|seg(?:undos?)?|d[ií]as?)', re.I), 8),
         # Tipos de notificación
-        (re.compile(r'\b(?:alerta|alert|aviso|recordatorio|reminder)\b', re.I), 6),
-        (re.compile(r'\b(?:nueva\s+(?:notificaci[oó]n|alerta|actualizaci[oó]n))\b', re.I), 8),
+        (re.compile(r'\b(?:alerta|alert|aviso|recordatorio|reminder)\b', re.I), 8),
+        (re.compile(r'\b(?:nueva\s+(?:notificaci[oó]n|alerta|actualizaci[oó]n))\b', re.I), 10),
         (re.compile(r'\b(?:push|banner|badge|popup|emergente)\b', re.I), 5),
         (re.compile(r'\b(?:silenciar|mute|no\s+molestar|do\s+not\s+disturb)\b', re.I), 6),
         (re.compile(r'\b(?:marcar\s+como\s+le[ií]d[oa]|mark\s+as\s+read|borrar\s+todo|clear\s+all)\b', re.I), 7),
+        (re.compile(r'\b(?:ahora|mismo|justo\s+ahora|right\s+now)\b', re.I), 6),
+        # Keywords negativos
+        (re.compile(r'\b(?:WhatsApp|Telegram|en\s+l[ií]na|typing|escribiendo)\b', re.I), -10),
     ],
     "mapa": [
         # Palabra clave directa
@@ -1485,18 +1505,19 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
     # ===== TEXTO_CONVERSACIONAL =====
     "chat": [
         # Nombres de apps de mensajería
-        (re.compile(r'\b(?:WhatsApp|Telegram|Messenger|Signal|iMessage|Viber|Line|WeChat)\b', re.I), 10),
+        (re.compile(r'\b(?:WhatsApp|Telegram|Messenger|Signal|iMessage|Viber|Line|WeChat)\b', re.I), 12),
         (re.compile(r'\b(?:escribir?\s+(?:un\s+)?mensaje|type\s+a\s+message)\b', re.I), 10),
         # Header de WhatsApp (lista de chats)
         (re.compile(r'\bChats\b.*\b(?:Archivados|Buscar|buscar)\b', re.I | re.S), 12),
         (re.compile(r'\bArchivados\s+\d+', re.I), 10),
+        (re.compile(r'\b(?:llamada\s+de\s+voz|videoLLamada|voice\s+call)\b', re.I), 10),
         # Timestamps de mensajes (señal MUY fuerte de chat)
         (re.compile(r'\d{1,2}:\d{2}\s*(?:p\.?m\.?|a\.?m\.?|PM|AM)', re.I), 8),
         # Estado de conexión
-        (re.compile(r'\b(?:en\s+l[ií]nea|online)\b', re.I), 8),
+        (re.compile(r'\b(?:en\s+l[ií]na|online)\b', re.I), 10),
         (re.compile(r'\b(?:[uú]lt(?:ima)?\s*vez|last\s+seen)\b', re.I), 8),
-        (re.compile(r'\b(?:visto\s+a\s+las?\b|visto\s+\d)', re.I), 8),
-        (re.compile(r'\b(?:escribiendo|typing)\b', re.I), 8),
+        (re.compile(r'\b(?:visto\s+a\s+las?\b|visto\s+\d)', re.I), 10),
+        (re.compile(r'\b(?:escribiendo|typing)\b', re.I), 12),
         (re.compile(r'\b(?:conectad[oa]|desconectad[oa]|ausente|ocupad[oa]|away)\b', re.I), 5),
         # Expresiones informales (cada match suma)
         (re.compile(r'\b(?:jaja[ja]*|jeje[je]*|haha[ha]*|jiji[ji]*)\b', re.I), 6),
@@ -1518,6 +1539,8 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:responder|reenviar|eliminar\s+(?:para\s+(?:m[ií]|todos))|forward|delete)\b', re.I), 5),
         (re.compile(r'\b(?:mensaje\s+(?:de\s+voz|eliminado|reenviado)|missed\s+call|llamada\s+perdida)\b', re.I), 7),
         (re.compile(r'\b(?:cifrado\s+de\s+extremo|end[\s-]to[\s-]end\s+encrypt)\b', re.I), 6),
+        # Keywords negativos (rechaza si aparecen) -区分chat vs notificacion
+        (re.compile(r'\b(?:permitir|bloquear|centro\s+de\s+notificaciones)\b', re.I), -8),
     ],
     "comentario": [
         (re.compile(r'\b(?:comentar(?:io)?|comment|responder|reply|respuesta)\b', re.I), 7),
@@ -1535,6 +1558,47 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
     # ===== IMAGEN_VISUAL =====
     "imagen_visual": [
         # No tiene keywords — se clasifica por exclusión/regla de texto insuficiente
+    ],
+
+    # ===== TIPOS ADICIONALES =====
+    "factura_servicio": [
+        # Palabra clave directa
+        (re.compile(r'\b(?:factura\s+de\s+servicio|factura\s+de\s+(?:agua|luz|gas|electricidad|internet|tel[eé]fono|m[oó]vil))\b', re.I), 14),
+        (re.compile(r'\b(?:servicio\s+de\s+(?:agua|luz|gas|electricidad|internet|tel[eé]fono|m[oó]vil))\b', re.I), 12),
+        (re.compile(r'\b(?:servicios?\s+p[uú]blicos?|servicios?\s+domiciliarios?)\b', re.I), 12),
+        (re.compile(r'\b(?:per[ií]odo\s+de\s+facturaci[oó]n|consumo\s+del\s+per[ií]odo)\b', re.I), 12),
+        (re.compile(r'\b(?:lectura\s+anterior|lectura\s+actual)\b', re.I), 10),
+        (re.compile(r'\b(?:cargo\s+fijo|cargo\s+variable|tarifa\s+(?:basic[oa]|social|residencial|comercial))\b', re.I), 10),
+        (re.compile(r'\b(?:subtotal|total\s+a\s+pagar|monto\s+total)\b', re.I), 8),
+        (re.compile(r'\b(?:fecha\s+l[ií]mite\s+de\s+pago|vence\s+el|fecha\s+de\s+vencimiento)\b', re.I), 10),
+        (re.compile(r'\b(?:kWh|m3|metros\s+c[uú]bicos|gigabytes?|GB|MB)\b', re.I), 10),
+        (re.compile(r'\b(?:n[úu]mero\s+de\s+cliente|c[oó]digo\s+de\s+servicio|referencia\s+bancaria)\b', re.I), 10),
+        (re.compile(r'\b(?:medidor|n[úu]mero\s+de\s+medidor|lectura\s+del\s+medidor)\b', re.I), 10),
+        (re.compile(r'\b(?:consumo\s+(?:m3|kWh)|metros?\s+c[uú]bicos?|kilovatios?)\b', re.I), 10),
+    ],
+    "ticket_transporte": [
+        # Palabra clave directa
+        (re.compile(r'\b(?:boleto\s+(?:de\s+)?(?:transporte|bus|metro)|pasaje\s+(?:simple|ida|ida\s+y\s+vuelta))\b', re.I), 14),
+        (re.compile(r'\b(?:tarjeta\s+de\s+transporte|recarga\s+de\s+saldo|tarjet[eá]s?\s+magn[eé]tica)\b', re.I), 12),
+        (re.compile(r'\b(?:parada|de\s+bajada|estaci[oó]n\s+de\s+(?:subida|bajada))\b', re.I), 10),
+        (re.compile(r'\b(?:ruta\s+\d+|l[ií]nea\s+\d+|circuito\s+\d+|tramo)\b', re.I), 12),
+        (re.compile(r'\b(?:valsol|pasaje|subsecretar[ií]a\s+de\s+transporte|autoridad\s+metropolitana)\b', re.I), 12),
+        (re.compile(r'\b(?:tiempo\s+de\s+validez|vigencia\s+del\s+pasaje)\b', re.I), 10),
+        (re.compile(r'\b(?:viaje\s+(?:sencillo|de\s+ida|redondo)|single\s+trip|round\s+trip)\b', re.I), 12),
+        (re.compile(r'\b(?:tarifa\s+(?:general|estudiantil|adulto\s+mayor|discapacitado))\b', re.I), 10),
+        (re.compile(r'\b(?:saldo\s+actual|saldo\s+restante|recarga)\b', re.I), 8),
+    ],
+    "credencial": [
+        # Palabra clave directa
+        (re.compile(r'\b(?:credencial|de\s+identificaci[oó]n|identification\s+card|ID\s+empleado|badge)\b', re.I), 14),
+        (re.compile(r'\b(?:empleado|trabajador|funcionario|colaborador|staff)\b', re.I), 12),
+        (re.compile(r'\b(?:cargo|puesto|posici[oó]n|departamento|área)\b', re.I), 10),
+        (re.compile(r'\b(?:v[aál]lido\s+hasta|vence\s+el|validez|fecha\s+de\s+vencimiento)\b', re.I), 10),
+        (re.compile(r'\b(?:empresa|compa[ñn][ií]a|organizaci[oó]n|corporaci[oó]n)\b', re.I), 8),
+        (re.compile(r'\b(?:gafete|identificador|access\s+card|employee\s+ID)\b', re.I), 12),
+        (re.compile(r'\b(?:visita|visitante|contratista|proveedor)\b', re.I), 10),
+        (re.compile(r'\b(?:acceso\s+(?:de\s+)?(?:personal|visitantes?|veh[ií]culos?))\b', re.I), 10),
+        (re.compile(r'\b(?:vigilante|seguridad|recepci[oó]n|porter[ií]a)\b', re.I), 6),
     ],
 }
 
@@ -1784,6 +1848,9 @@ _LABELS: Dict[str, str] = {
     "resultado_lab": "Resultado de laboratorio",
     "tabla_nutricional": "Tabla nutricional",
     "calendario": "Calendario",
+    "factura_servicio": "Factura de servicio",
+    "ticket_transporte": "Ticket de transporte",
+    "credencial": "Credencial de empleado",
 
     # INTERFAZ_DIGITAL
     "app_menu": "Menú de aplicación",

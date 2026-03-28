@@ -284,8 +284,12 @@ class TtsManager {
           resolve();
         }, 60000);
 
+        let wasPlaying = false;
         sound.setOnPlaybackStatusUpdate((status) => {
-          if (status.isLoaded && status.didJustFinish) {
+          if (!status.isLoaded) return;
+          if (status.isPlaying) wasPlaying = true;
+          // Detectar fin por didJustFinish O por transición isPlaying true→false
+          if (status.didJustFinish || (wasPlaying && !status.isPlaying)) {
             clearTimeout(safetyTimeout);
             resolve();
           }

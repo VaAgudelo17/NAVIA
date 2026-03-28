@@ -184,7 +184,7 @@ export interface SmartReadingResponse {
   has_text: boolean;
   ocr_confidence: number | null;
   word_count: number;
-  extracted_fields: ExtractedFields;
+  extracted_fields: ExtractedFields | null;
   visual_caption: string | null;
   image_quality: ImageQuality | null;
 }
