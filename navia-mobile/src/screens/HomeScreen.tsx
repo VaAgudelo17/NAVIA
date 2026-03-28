@@ -188,7 +188,7 @@ export function HomeScreen() {
     } else {
       setAppState('camera');
       ttsManager.stop();
-      ttsManager.speak('Cámara activada. Toca el botón central para capturar.', TtsPriority.INTERRUPT);
+      ttsManager.speak('Cámara lista. Toca la pantalla para capturar.', TtsPriority.INTERRUPT);
     }
   };
 
@@ -555,6 +555,7 @@ export function HomeScreen() {
 
     return (
       <View style={styles.resultsContainer}>
+        {/* Solo el historial hace scroll */}
         <ScrollView contentContainerStyle={styles.resultsContent}>
           {/* Header */}
           <View style={styles.historyHeader}>
@@ -614,31 +615,31 @@ export function HomeScreen() {
               </TouchableOpacity>
             );
           })}
+        </ScrollView>
 
-          {/* Botones */}
-          <View style={styles.resultActions}>
-            {historyItems.length > 0 && (
-              <Button
-                title="Borrar Historial"
-                onPress={handleClearHistory}
-                variant="outline"
-                size="large"
-                icon={<Ionicons name="trash" size={20} color={COLORS.error} />}
-                style={styles.resultActionButton}
-              />
-            )}
+        {/* Botones fijos — siempre visibles sin necesidad de bajar */}
+        <View style={styles.historyFixedActions}>
+          {historyItems.length > 0 && (
             <Button
-              title="Volver"
-              onPress={() => {
-                handleReset();
-                ttsManager.speak('Volviendo al inicio.', TtsPriority.HIGH);
-              }}
+              title="Borrar Historial"
+              onPress={handleClearHistory}
+              variant="outline"
               size="large"
-              icon={<Ionicons name="arrow-back" size={20} color={COLORS.background} />}
+              icon={<Ionicons name="trash" size={20} color={COLORS.error} />}
               style={styles.resultActionButton}
             />
-          </View>
-        </ScrollView>
+          )}
+          <Button
+            title="Volver"
+            onPress={() => {
+              handleReset();
+              ttsManager.speak('Volviendo al inicio.', TtsPriority.HIGH);
+            }}
+            size="large"
+            icon={<Ionicons name="arrow-back" size={20} color={COLORS.background} />}
+            style={styles.resultActionButton}
+          />
+        </View>
       </View>
     );
   };
@@ -778,12 +779,20 @@ export function HomeScreen() {
   };
 
   // Vista de cámara (Exploración y Lectura)
+  // Toca cualquier parte de la cámara para capturar — más accesible para personas ciegas
   const renderCamera = () => (
     <View style={styles.cameraContainer}>
       <CameraView ref={cameraRef} style={styles.camera} facing="back">
-        <View style={styles.cameraOverlay}>
+        <TouchableOpacity
+          style={styles.cameraOverlay}
+          onPress={handleCapture}
+          activeOpacity={0.9}
+          accessibilityLabel="Toca la pantalla para capturar foto"
+          accessibilityRole="button"
+        >
           <View style={styles.cameraFrame} />
-        </View>
+          <Text style={styles.cameraTapHint}>Toca para capturar</Text>
+        </TouchableOpacity>
       </CameraView>
 
       <View style={styles.cameraControls}>
@@ -797,15 +806,6 @@ export function HomeScreen() {
           accessibilityRole="button"
         >
           <Ionicons name="close" size={32} color={COLORS.text} />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.captureButton}
-          onPress={handleCapture}
-          accessibilityLabel="Capturar foto"
-          accessibilityRole="button"
-        >
-          <View style={styles.captureButtonInner} />
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -1232,6 +1232,16 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    gap: 20,
+  },
+  cameraTapHint: {
+    color: COLORS.text,
+    fontSize: 15,
+    opacity: 0.7,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 20,
   },
   cameraFrame: {
     width: SCREEN_WIDTH - 48,
@@ -1523,6 +1533,16 @@ const styles = StyleSheet.create({
   resultActions: {
     flexDirection: 'row',
     gap: 12,
+  },
+  historyFixedActions: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    paddingBottom: 32,
+    backgroundColor: COLORS.background,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
   },
   resultActionButton: {
     flex: 1,
