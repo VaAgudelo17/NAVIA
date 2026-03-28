@@ -62,7 +62,7 @@ echo -e "      PID: $BACKEND_PID"
 echo ""
 
 # Esperar a que el backend inicie
-sleep 4
+sleep 15
 
 # ============================================================================
 # 2. FRONTEND WEB
@@ -97,7 +97,7 @@ echo -e "  Presiona ${YELLOW}Ctrl+C${NC} para detener todo"
 echo ""
 
 cd "$MOBILE_DIR"
-npx expo start --offline
+npx expo start
 
 # Si expo se cierra, limpiar todo
 cleanup

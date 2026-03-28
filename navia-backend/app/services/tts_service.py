@@ -1,13 +1,13 @@
 """
-============================================================================
-NAVIA Backend - Servicio de Text-to-Speech (Piper TTS)
-============================================================================
+========================================================================
+NAVIA Backend - Servicio de Text-to-Speech (Piper TTS + gTTS Fallback)
+========================================================================
 Genera audio WAV a partir de texto en español usando Piper TTS.
-Piper usa modelos VITS (ONNX) que corren eficientemente en CPU.
+Si Piper no está disponible, usa gTTS como fallback.
 
-El modelo se descarga automáticamente la primera vez (~100MB).
-Inferencia típica: ~0.5-1.5 segundos por oración en CPU.
-============================================================================
+Piper usa modelos VITS (ONNX) que corren eficientemente en CPU.
+gTTS usa los servicios de Google para síntesis de voz.
+========================================================================
 """
 
 import io
@@ -23,19 +23,16 @@ logger = logging.getLogger(__name__)
 
 class PiperTtsService:
     """
-    Servicio de síntesis de voz con Piper TTS.
-
-    Carga el modelo VITS en español de forma lazy (al primer uso).
-    Genera audio WAV mono 16-bit.
+    Servicio de síntesis de voz con Piper TTS y gTTS fallback.
     """
 
     def __init__(self):
         self._voice = None
-        self._synthesize_fn = None
         self._loaded = False
+        self._use_gtts = False
 
     def _ensure_loaded(self):
-        """Carga el modelo Piper en el primer uso."""
+        """Carga el modelo Piper o usa gTTS como fallback."""
         if self._loaded:
             return
 
@@ -44,7 +41,6 @@ class PiperTtsService:
 
             model_name = settings.TTS_MODEL_NAME
 
-            # Buscar modelo en directorio de modelos
             models_dir = Path(settings.MODELS_DIR) if hasattr(settings, 'MODELS_DIR') else Path("models")
             model_path = models_dir / f"{model_name}.onnx"
             config_path = models_dir / f"{model_name}.onnx.json"
@@ -53,7 +49,6 @@ class PiperTtsService:
                 logger.info(f"Cargando modelo Piper TTS desde: {model_path}")
                 self._voice = PiperVoice.load(str(model_path), str(config_path))
             else:
-                # Intentar descarga automática
                 logger.info(f"Modelo no encontrado en {model_path}, intentando descarga...")
                 self._voice = PiperVoice.load(model_name)
 
@@ -61,61 +56,77 @@ class PiperTtsService:
             logger.info(f"Piper TTS cargado: {model_name}")
 
         except ImportError:
-            logger.warning("piper-tts no instalado. TTS backend no disponible.")
-            raise RuntimeError("piper-tts no está instalado")
+            logger.warning("piper-tts no instalado. Usando gTTS como fallback.")
+            self._use_gtts = True
+            self._loaded = True
         except Exception as e:
-            logger.error(f"Error cargando Piper TTS: {e}")
-            raise RuntimeError(f"No se pudo cargar Piper TTS: {e}")
+            logger.warning(f"Error cargando Piper TTS: {e}. Usando gTTS como fallback.")
+            self._use_gtts = True
+            self._loaded = True
 
     def synthesize(self, text: str) -> bytes:
         """
         Sintetiza texto a audio WAV.
-
-        Args:
-            text: Texto en español a sintetizar
-
-        Returns:
-            Audio WAV como bytes (mono, 16-bit, 22050 Hz)
         """
         self._ensure_loaded()
 
         if not text or not text.strip():
             raise ValueError("El texto no puede estar vacío")
 
-        # Truncar textos muy largos
         max_len = settings.TTS_MAX_TEXT_LENGTH
         if len(text) > max_len:
             text = text[:max_len]
 
+        if self._use_gtts:
+            return self._synthesize_gtts(text)
+        else:
+            return self._synthesize_piper(text)
+
+    def _synthesize_piper(self, text: str) -> bytes:
+        """Síntesis con Piper TTS."""
         sample_rate = settings.TTS_SAMPLE_RATE
 
         try:
             audio_buffer = io.BytesIO()
 
             with wave.open(audio_buffer, 'wb') as wav_file:
-                # synthesize_wav configura formato WAV automáticamente
                 self._voice.synthesize_wav(text, wav_file)
 
             audio_buffer.seek(0)
             return audio_buffer.read()
 
         except Exception as e:
-            logger.error(f"Error sintetizando audio: {e}")
+            logger.error(f"Error sintetizando con Piper: {e}")
+            raise RuntimeError(f"Error en síntesis TTS: {e}")
+
+    def _synthesize_gtts(self, text: str) -> bytes:
+        """Síntesis con gTTS (Google TTS) como fallback."""
+        try:
+            from gtts import gTTS
+
+            mp3_buffer = io.BytesIO()
+            tts = gTTS(text=text, lang='es', slow=False)
+            tts.write_to_fp(mp3_buffer)
+            mp3_buffer.seek(0)
+
+            return mp3_buffer.read()
+
+        except ImportError:
+            raise RuntimeError("gTTS no está instalado. Ejecuta: pip install gTTS")
+        except Exception as e:
+            logger.error(f"Error sintetizando con gTTS: {e}")
             raise RuntimeError(f"Error en síntesis TTS: {e}")
 
     def get_info(self) -> dict:
         """Información del servicio TTS."""
         return {
             "status": "loaded" if self._loaded else "not_loaded",
+            "backend": "gTTS" if self._use_gtts else "piper",
             "model": settings.TTS_MODEL_NAME,
             "sample_rate": settings.TTS_SAMPLE_RATE,
             "enabled": settings.TTS_ENABLED,
         }
 
-
-# ============================================================================
-# SINGLETON
-# ============================================================================
 
 _tts_service: Optional[PiperTtsService] = None
 
