@@ -42,65 +42,68 @@ logger = logging.getLogger(__name__)
 # Todo lo demás (comida, decoración, electrónica, ropa, etc.) se ignora.
 
 PEDESTRIAN_RELEVANT_CLASSES = {
-    # --- PERSONAS (impredecibles, requieren atención) ---
+    # ── PERSONAS ──────────────────────────────────────────────────────────────
+    # Siempre relevantes: se mueven, son impredecibles
     "persona", "niño", "bebé", "persona en silla de ruedas",
 
-    # --- ANIMALES que obstruyen el paso ---
-    "perro", "gato", "cachorro",
+    # ── ANIMALES ──────────────────────────────────────────────────────────────
+    # Domésticos (comunes en interiores y calle)
+    "perro", "cachorro", "gato",
+    # Grandes (rurales o eventos, pueden bloquear o atacar)
+    "caballo", "vaca", "cerdo", "oveja", "burro",
 
-    # --- VEHÍCULOS (peligro crítico) ---
+    # ── VEHÍCULOS ─────────────────────────────────────────────────────────────
+    # Peligro máximo: matan
     "carro", "autobús", "camión", "motocicleta", "bicicleta",
     "scooter eléctrico", "taxi", "ambulancia", "patrulla",
 
-    # --- OBSTÁCULOS DE SUELO (riesgo de tropiezo/caída) ---
-    "escaleras", "escalera mecánica", "borde de acera",
-    "tapa de alcantarilla", "reductor de velocidad",
-    "alfombra", "tapete", "maleta", "mochila", "patineta",
-    "pelota", "caja de cartón", "bolsa plástica",
+    # ── PELIGROS DE SUELO (tropiezo / caída) ──────────────────────────────────
+    "escaleras", "escalera mecánica",
+    "escalón",                  # un solo peldaño: más peligroso porque no se espera
+    "borde de acera",           # desnivel, fácil de tropezar
+    "tapa de alcantarilla",     # hueco o superficie resbaladiza
+    "reductor de velocidad",    # resalto en la vía
+    "maleta", "mochila", "patineta", "caja de cartón",  # objetos inesperados en el piso
 
-    # --- OBSTÁCULOS A NIVEL CORPORAL ---
-    "silla", "mesa", "escritorio", "banco", "mostrador",
-    "mesa de centro", "mesa de comedor", "taburete",
-    "mecedora", "sofá", "sillón", "cama",
+    # ── OBSTÁCULOS A NIVEL CORPORAL (colisión frontal) ────────────────────────
+    # Muebles principales (suficientes — no necesitamos cada variante)
+    "silla", "mesa", "sofá", "cama", "escritorio",
+    "banco", "mostrador", "mesa de comedor",
+    # Vehículos de paso lento
     "carrito de compras", "cochecito de bebé", "silla de ruedas",
-    "contenedor de basura", "contenedor de reciclaje",
-    "aspiradora", "tabla de planchar",
+    # Contenedores grandes en la calle
+    "contenedor de basura",
 
-    # --- INFRAESTRUCTURA DE CALLE ---
-    "poste", "farola", "hidrante", "semáforo",
-    "señal de pare", "cono de tráfico", "barrera vial",
-    "señal de construcción", "señal de estacionamiento",
-    "parquímetro", "buzón",
+    # ── INFRAESTRUCTURA DE CALLE ──────────────────────────────────────────────
+    "poste", "farola",          # columnas en la acera, fácil de chocar
+    "árbol",                    # tronco puede estar en el camino
+    "andamio",                  # zona de construcción, muy peligroso
+    "cono de tráfico",          # señal de zona de peligro/obras
+    "barrera vial",             # cierra el paso
+    "cerca", "portón",          # delimitan el camino
+    "semáforo",                 # referencia y obstáculo físico
+    "hidrante",                 # obstáculo bajo a nivel de rodilla
+    "señal de piso mojado",     # piso resbaladizo
 
-    # --- BARRERAS Y ESTRUCTURAS ---
-    "cerca", "portón", "árbol", "arbusto",
-
-    # --- MUROS Y PAREDES ---
+    # ── PAREDES Y ESTRUCTURAS SÓLIDAS ───────────────────────────────────────
     "pared", "pared de ladrillo", "pared de vidrio",
-    "muro de piedra", "pilar", "columna",
+    "pilar", "columna",
 
-    # --- BALCONES Y TERRAZAS (peligro de caída) ---
-    "balcón", "barandal de balcón", "terraza",
-    "cornisa", "barandal",
+    # ── PELIGROS DE CAÍDA ────────────────────────────────────────────────────
+    "balcón", "cornisa",
+    "barandal de balcón", "barandal",
 
-    # --- PUERTAS Y ACCESOS ---
-    "puerta", "puerta corrediza", "ascensor", "pasamanos",
-    "puerta abierta", "puerta cerrada", "puerta de vidrio",
-    "puerta giratoria", "reja", "puerta de garaje",
-    "salida de emergencia", "marco de puerta",
+    # ── PUERTAS Y ACCESOS ────────────────────────────────────────────────────
+    "puerta", "puerta abierta", "puerta cerrada",
+    "puerta de vidrio", "puerta giratoria", "puerta corrediza",
+    "reja", "ascensor",
 
-    # --- PELIGROS DOMÉSTICOS ---
-    "cuchillo", "tijeras", "estufa", "horno",
+    # ── COCINA / LAVANDERÍA (interior) ───────────────────────────────────────
+    "estufa", "horno",
+    "refrigerador", "lavadora", "secadora",
 
-    # --- SEÑALES DE SEGURIDAD ---
-    "señal de advertencia", "señal de piso mojado",
-    "señal de salida",
-
-    # --- ELECTRODOMÉSTICOS GRANDES EN EL PASO ---
-    "refrigerador", "lavadora", "secadora", "lavavajillas",
-
-    # --- OBJETOS DE BAÑO (resbaladizos) ---
-    "inodoro", "lavamanos", "bañera", "ducha", "báscula",
+    # ── BAÑO (navegación interior) ────────────────────────────────────────────
+    "inodoro", "lavamanos", "bañera",
 }
 
 
@@ -111,89 +114,204 @@ PEDESTRIAN_RELEVANT_CLASSES = {
 # Escala 0.0 - 1.0 donde 1.0 = máximo peligro.
 
 DANGER_WEIGHT: Dict[str, float] = {
-    # --- Vehículos: máximo peligro ---
-    "carro": 1.0, "autobús": 1.0, "camión": 1.0,
-    "motocicleta": 0.95, "bicicleta": 0.85,
-    "scooter eléctrico": 0.85, "taxi": 1.0,
+    # ── VEHÍCULOS: máximo peligro ─────────────────────────────────────────────
+    "carro": 1.0, "autobús": 1.0, "camión": 1.0, "taxi": 1.0,
     "ambulancia": 1.0, "patrulla": 1.0,
+    "motocicleta": 0.95,
+    "bicicleta": 0.85, "scooter eléctrico": 0.85,
 
-    # --- Obstáculos de suelo: alto riesgo de caída ---
-    "escaleras": 0.9, "escalera mecánica": 0.9,
-    "borde de acera": 0.85, "tapa de alcantarilla": 0.8,
-    "reductor de velocidad": 0.7,
-    "alfombra": 0.3, "tapete": 0.3,
-    "maleta": 0.5, "mochila": 0.4,
-    "patineta": 0.6, "pelota": 0.4,
-    "caja de cartón": 0.4, "bolsa plástica": 0.3,
+    # ── PERSONAS: impredecibles, siempre relevantes ───────────────────────────
+    "niño": 0.75,                   # más impredecible que adulto
+    "persona": 0.70,
+    "persona en silla de ruedas": 0.65,
+    "bebé": 0.60,
 
-    # --- Personas y animales: impredecibles ---
-    "persona": 0.6, "niño": 0.65, "bebé": 0.5,
-    "persona en silla de ruedas": 0.6,
-    "perro": 0.7, "gato": 0.5, "cachorro": 0.5,
+    # ── ANIMALES ─────────────────────────────────────────────────────────────
+    "caballo": 0.90,                # grande y puede asustar/golpear
+    "vaca": 0.85, "cerdo": 0.75, "burro": 0.80, "oveja": 0.65,
+    "perro": 0.75,                  # puede atacar o cruzarse
+    "cachorro": 0.55, "gato": 0.50,
 
-    # --- Infraestructura de calle ---
-    "poste": 0.75, "farola": 0.7, "hidrante": 0.65,
-    "semáforo": 0.5, "señal de pare": 0.4,
-    "cono de tráfico": 0.6, "barrera vial": 0.7,
-    "señal de construcción": 0.55,
-    "señal de estacionamiento": 0.3,
-    "parquímetro": 0.5, "buzón": 0.45,
+    # ── PELIGROS DE SUELO: caída / tropiezo ───────────────────────────────────
+    "escaleras": 0.90, "escalera mecánica": 0.90,
+    "cornisa": 0.90,                # caída al vacío
+    "balcón": 0.88, "barandal de balcón": 0.82,
+    "borde de acera": 0.85,
+    "tapa de alcantarilla": 0.80,
+    "barandal": 0.72,
+    "reductor de velocidad": 0.65,
+    "escalón": 0.80,                # un solo peldaño: muy peligroso porque no se espera
+    "patineta": 0.65,
+    "maleta": 0.55,
+    "mochila": 0.45,
+    "caja de cartón": 0.40,
 
-    # --- Muebles y objetos grandes ---
-    "silla": 0.55, "mesa": 0.6, "escritorio": 0.55,
-    "banco": 0.5, "mostrador": 0.55,
-    "mesa de centro": 0.55, "mesa de comedor": 0.6,
-    "taburete": 0.5, "mecedora": 0.5,
-    "sofá": 0.5, "sillón": 0.5, "cama": 0.45,
-    "carrito de compras": 0.6, "cochecito de bebé": 0.6,
-    "silla de ruedas": 0.6,
-    "contenedor de basura": 0.55, "contenedor de reciclaje": 0.5,
-    "aspiradora": 0.4, "tabla de planchar": 0.45,
+    # ── ESTRUCTURAS SÓLIDAS: colisión frontal ─────────────────────────────────
+    "pared de vidrio": 0.80,        # invisible, muy peligrosa
+    "pared": 0.65, "pared de ladrillo": 0.65,
+    "pilar": 0.75, "columna": 0.75,
+    "poste": 0.75, "farola": 0.70,
+    "árbol": 0.60,
 
-    # --- Barreras y estructuras ---
-    "cerca": 0.5, "portón": 0.55,
-    "árbol": 0.55, "arbusto": 0.4,
+    # ── BARRERAS Y CIERRES ────────────────────────────────────────────────────
+    "andamio": 0.80,                # zona de obras, muy peligroso
+    "barrera vial": 0.75,
+    "cerca": 0.60, "portón": 0.60, "reja": 0.60,
+    "cono de tráfico": 0.60,
+    "contenedor de basura": 0.55,
 
-    # --- Muros y paredes (obstáculo sólido, no se puede atravesar) ---
-    "pared": 0.6, "pared de ladrillo": 0.6,
-    "pared de vidrio": 0.7,  # Más peligroso: invisible
-    "muro de piedra": 0.6,
-    "pilar": 0.7, "columna": 0.7,  # Fácil de chocar de frente
+    # ── PUERTAS: barrera o peligro de colisión ────────────────────────────────
+    "puerta de vidrio": 0.75,       # invisible
+    "puerta giratoria": 0.65,       # mecanismo en movimiento
+    "puerta cerrada": 0.55,         # obstáculo directo
+    "puerta": 0.50, "puerta corrediza": 0.50,
+    "puerta abierta": 0.35,         # menos peligro pero delimita el espacio
+    "reja": 0.60, "ascensor": 0.40,
 
-    # --- Balcones y terrazas (peligro de caída) ---
-    "balcón": 0.85, "barandal de balcón": 0.8,
-    "terraza": 0.75, "cornisa": 0.9,  # Máximo peligro: caída
-    "barandal": 0.7,
+    # ── COCINA: peligros en interiores ───────────────────────────────────────
+    "estufa": 0.70,                 # quemadura + obstáculo
+    "horno": 0.65,
+    "refrigerador": 0.50, "lavadora": 0.45, "secadora": 0.45,
 
-    # --- Puertas y accesos ---
-    "puerta": 0.4, "puerta corrediza": 0.4,
-    "ascensor": 0.35, "pasamanos": 0.2,
-    "puerta abierta": 0.35, "puerta cerrada": 0.5,  # Cerrada = obstáculo
-    "puerta de vidrio": 0.65,  # Peligro: invisible, fácil de chocar
-    "puerta giratoria": 0.6,  # Mecanismo en movimiento
-    "reja": 0.5, "puerta de garaje": 0.55,
-    "salida de emergencia": 0.2,  # Referencia útil, bajo peligro
-    "marco de puerta": 0.35,
+    # ── MUEBLES: obstáculos físicos en el paso ────────────────────────────────
+    "mesa de comedor": 0.65, "mesa": 0.62,
+    "escritorio": 0.60, "mostrador": 0.60,
+    "silla": 0.58, "banco": 0.55,
+    "cama": 0.55, "sofá": 0.52,
+    "carrito de compras": 0.65, "cochecito de bebé": 0.65,
+    "silla de ruedas": 0.60,
 
-    # --- Peligros domésticos ---
-    "cuchillo": 0.7, "tijeras": 0.5,
-    "estufa": 0.6, "horno": 0.55,
+    # ── SEÑALES / REFERENCIAS ─────────────────────────────────────────────────
+    "señal de piso mojado": 0.65,   # piso resbaladizo
+    "semáforo": 0.50,               # referencia de cruce + obstáculo físico
+    "hidrante": 0.60,               # bajo, fácil de chocar
 
-    # --- Señales de seguridad ---
-    "señal de advertencia": 0.5, "señal de piso mojado": 0.6,
-    "señal de salida": 0.2,
-
-    # --- Electrodomésticos grandes ---
-    "refrigerador": 0.45, "lavadora": 0.4,
-    "secadora": 0.4, "lavavajillas": 0.35,
-
-    # --- Baño ---
-    "inodoro": 0.35, "lavamanos": 0.35,
-    "bañera": 0.45, "ducha": 0.35, "báscula": 0.35,
+    # ── BAÑO (navegación interior) ────────────────────────────────────────────
+    "bañera": 0.55,
+    "inodoro": 0.45, "lavamanos": 0.40,
 }
 
 # Peso por defecto para objetos relevantes sin peso específico
 _DEFAULT_DANGER_WEIGHT = 0.4
+
+# Objetos intrínsecamente peligrosos → alert_type = "peligro" sin importar distancia.
+# Incluye: vehículos, riesgos de caída, peligros térmicos, superficies invisibles.
+PELIGRO_CLASSES: set = {
+    # Vehículos
+    "carro", "autobús", "camión", "taxi", "ambulancia", "patrulla",
+    "motocicleta", "bicicleta", "scooter eléctrico",
+    # Animales que pueden golpear o asustar
+    "caballo", "vaca", "burro", "cerdo",
+    # Caídas
+    "escaleras", "escalera mecánica", "escalón", "balcón", "cornisa",
+    "borde de acera", "tapa de alcantarilla", "barandal de balcón",
+    # Peligros térmicos
+    "estufa", "horno",
+    # Superficies invisibles / peligro de colisión oculta
+    "pared de vidrio", "puerta de vidrio",
+    # Andamios y obras
+    "andamio",
+}
+
+# ============================================================================
+# LISTA NEGRA — NUNCA reportar como obstáculo
+# ============================================================================
+# Objetos que YOLO detecta con frecuencia pero que NO bloquean el paso de una
+# persona caminando. Incluirlos causaría alertas falsas e innecesarias.
+#
+# Categorías:
+#  • Elementos decorativos de pared/techo (espejo, cortina, ventana)
+#  • Calzado y ropa (pequeños, en el piso no obstruyen el paso)
+#  • Artículos de higiene personal (diminutos)
+#  • Electrónica (no en la trayectoria de caminar)
+
+IGNORE_CLASSES: set = {
+    # ── Elementos de pared / techo ────────────────────────────────────────────
+    "espejo", "espejo de baño", "espejo compacto",
+    "cortina", "cortina de baño", "persiana",
+    "ventana",                      # superficie vertical transparente en la pared
+    "candelabro", "lámpara", "foco",
+    # ── Calzado y ropa ────────────────────────────────────────────────────────
+    "zapato", "tenis", "tacón", "bota", "sandalia", "pantufla",
+    "ropa", "camisa", "pantalón", "sombrero",
+    # ── Higiene personal (objetos pequeños) ───────────────────────────────────
+    "toalla de mano", "toalla de baño",
+    "champú", "jabón", "pasta dental", "cepillo de dientes",
+    "papel higiénico", "rollo de papel",
+    # ── Vajilla y utensilios ──────────────────────────────────────────────────
+    "taza", "vaso", "plato", "tazón",
+    "tenedor", "cuchillo", "cuchara",
+    "botella", "lata",
+    # ── Electrónica ──────────────────────────────────────────────────────────
+    "teléfono", "computadora portátil", "teclado", "mouse",
+    "televisión", "control remoto", "tablet",
+    "cámara",
+    # ── Decoración y arte ─────────────────────────────────────────────────────
+    "cuadro", "planta", "florero", "jarrón",
+    "almohada", "cojín",
+}
+
+# Altura máxima (fracción del alto de imagen, desde arriba) para que un objeto
+# en zona superior sea considerado obstáculo válido.
+# Por encima de este umbral (objetos en el techo / parte alta de la pared)
+# se ignoran, EXCEPTO si son clases de peligro crítico (escaleras, balcón, etc.).
+# 0.25 = ignorar si el centro del bbox está en el 25% superior de la imagen.
+_TOP_ZONE_THRESHOLD = 0.25
+
+
+# ============================================================================
+# FILTROS DE CALIDAD PARA NAVEGACIÓN
+# ============================================================================
+
+# Objetos críticos: se aceptan con umbral de confianza más bajo
+# porque un falso negativo (no detectar un carro) es peor que un falso positivo
+CRITICAL_OBJECTS = {
+    # Vehículos
+    "carro", "autobús", "camión", "motocicleta", "bicicleta",
+    "taxi", "ambulancia", "patrulla", "scooter eléctrico",
+    # Personas
+    "persona", "niño", "bebé",
+    # Animales grandes (pueden ser peligrosos o bloquear el paso)
+    "perro", "caballo", "vaca", "cerdo", "burro",
+}
+
+# Confianza mínima para objetos críticos (más permisivo)
+MIN_CONFIDENCE_CRITICAL = 0.22
+# Confianza mínima para el resto de objetos relevantes
+MIN_CONFIDENCE_GENERAL = 0.28
+# Área mínima del bounding box como fracción del área total de la imagen
+# Objetos que ocupan menos del 0.3% de la imagen son probablemente ruido
+MIN_BBOX_AREA_FRACTION = 0.003
+
+# Objetos con alta tasa de confusión visual → requieren mayor confianza
+# Clave: nombre en español, Valor: umbral mínimo de confianza
+HIGH_CONFUSION_OBJECTS: Dict[str, float] = {
+    # Baño: muy frecuentemente confundidos — umbral alto
+    "inodoro": 0.70,        # confundido con silla (muy común)
+    "bañera": 0.70,         # confundida con cama/sofá (muy común)
+    "lavamanos": 0.65,      # confundido con mesa/mostrador
+    # Muebles confundidos con objetos sobre ellos o similares
+    "cama": 0.62,           # confundida con cobija/ropa de cama encima
+    "mesa": 0.60,           # confundida con juego de mesa u objetos planos encima
+    "sofá": 0.58,           # confundido con cojines/cobija encima
+    "escritorio": 0.62,     # confundido con armario/closet vertical
+    # Objetos de suelo: difíciles de distinguir de texturas
+    "tapa de alcantarilla": 0.60,
+    "reductor de velocidad": 0.60,
+    "escalón": 0.60,        # confundido con sombra o desnivel del piso
+    # Objetos portátiles: se confunden entre sí y con otros objetos
+    "mochila": 0.55,        # confundida con bolso/caja
+    "caja de cartón": 0.60, # confundida con contenedor/maleta/cajón
+    "maleta": 0.55,
+    # Electrodomésticos similares entre sí
+    "secadora": 0.58,       # muy similar a lavadora
+    # Estructuras que se confunden con paredes o fondos
+    "andamio": 0.55,        # confundido con cerca/estructura metálica
+    # Balcones/cornisas: críticos pero a veces confundidos con ventanas/paredes
+    "balcón": 0.55,
+    "cornisa": 0.60,
+    "barandal de balcón": 0.55,
+}
 
 
 # ============================================================================
@@ -286,7 +404,7 @@ class NavigationGuidanceService:
             return self._empty_result()
 
         # --- PASO 1: Filtrar clases relevantes para caminata ---
-        relevant = self._filter_pedestrian_relevant(objects)
+        relevant = self._filter_pedestrian_relevant(objects, img_width, img_height)
 
         if not relevant:
             self._previous_bboxes.clear()
@@ -338,7 +456,13 @@ class NavigationGuidanceService:
             self._previous_bboxes = current_bboxes
 
         # --- PASO 3: Ordenar por riesgo (mayor primero) ---
-        analyzed.sort(key=lambda x: (-x["risk_score"], -x["confidence"]))
+        # Los objetos al frente tienen prioridad sobre los laterales.
+        # Un sofá muy cerca a la derecha no debe eclipsar una mesa al frente.
+        def _sort_key(a):
+            front_bonus = 0.3 if a["position"] == "frente a ti" else 0.0
+            return -(a["risk_score"] + front_bonus)
+
+        analyzed.sort(key=_sort_key)
 
         # --- PASO 4: Determinar estado del camino ---
         center_obstacles = [
@@ -346,12 +470,51 @@ class NavigationGuidanceService:
             if a["position"] == "frente a ti"
             and a["proximity"] in ("muy_cerca", "cerca")
         ]
-        path_clear = len(center_obstacles) == 0
+        # También considerar objetos en el centro clasificados como "lejos" pero con
+        # peso de peligro alto: el modelo de profundidad puede subestimar distancias
+        # para superficies planas (puertas cerradas, paredes, vidrios).
+        # Se usa umbral de confianza más bajo (0.35) para objetos bloqueantes como
+        # puertas cerradas, que YOLO no siempre detecta con alta confianza.
+        lejos_front_high_conf = [
+            a for a in analyzed
+            if a["position"] == "frente a ti"
+            and a["proximity"] == "lejos"
+            and a["confidence"] >= (0.35 if DANGER_WEIGHT.get(a["name_es"], 0) >= 0.55 else 0.45)
+            and DANGER_WEIGHT.get(a["name_es"], 0) >= 0.55
+        ]
+        path_clear = len(center_obstacles) == 0 and len(lejos_front_high_conf) == 0
 
         # --- PASO 5: Determinar prioridad global ---
         max_score = analyzed[0]["risk_score"] if analyzed else 0
         priority = self._score_to_priority(max_score)
         has_danger = priority in ("critical", "high")
+
+        # --- PASO 5b: Determinar tipo de alerta visual ---
+        # "peligro"  → objeto intrínsecamente peligroso (vehículo, escalera, balcón,
+        #              estufa...) sin importar posición ni distancia.
+        # "atencion" → obstáculo FRENTE al usuario que puede impedir su paso
+        #              (cerca/muy_cerca o acercándose), pero no es clase peligrosa.
+        #              Objetos laterales NUNCA activan "atencion" — no bloquean el paso.
+        # None       → camino libre o solo objetos lejanos/laterales sin riesgo.
+        alert_type: Optional[str] = None
+        if analyzed:
+            has_peligro_class = any(
+                a["name_es"] in PELIGRO_CLASSES for a in analyzed
+            )
+            # Solo obstáculos frontales CERCANOS cuentan para "atencion"
+            # (no activar para objetos lejanos aunque bloqueen técnicamente el path)
+            has_front_blocking = any(
+                a for a in analyzed
+                if a["position"] == "frente a ti"
+                and (
+                    a["proximity"] in ("muy_cerca", "cerca")
+                    or a["movement"] == "acercandose"
+                )
+            )
+            if has_peligro_class:
+                alert_type = "peligro"
+            elif has_front_blocking:
+                alert_type = "atencion"
 
         # --- PASO 6: Generar instrucciones ---
         instruction = self._generate_instructions(analyzed, path_clear)
@@ -362,6 +525,7 @@ class NavigationGuidanceService:
             "path_clear": path_clear,
             "has_danger": has_danger,
             "priority": priority,
+            "alert_type": alert_type,
             "obstacle_details": [
                 {
                     "name": a["name_es"],
@@ -380,18 +544,70 @@ class NavigationGuidanceService:
     # ====================================================================
 
     def _filter_pedestrian_relevant(
-        self, objects: List[DetectedObject]
+        self, objects: List[DetectedObject], img_width: int, img_height: int
     ) -> List[DetectedObject]:
         """
-        Filtra solo objetos relevantes para movilidad peatonal.
-
-        Ignora automáticamente: cielo, césped, paredes, comida,
-        decoración, electrónica pequeña, ropa, maquillaje, joyería, etc.
+        Filtra objetos relevantes para movilidad peatonal aplicando tres criterios:
+        1. Clase relevante (lista blanca de obstáculos peatonales)
+        2. Confianza mínima (más permisivo para objetos críticos como carros/personas)
+        3. Área mínima del bounding box (descarta detecciones diminutas = ruido)
         """
-        return [
-            obj for obj in objects
-            if obj.name_es in PEDESTRIAN_RELEVANT_CLASSES
-        ]
+        img_area = img_width * img_height
+        filtered = []
+
+        for obj in objects:
+            # Criterio 0: lista negra — nunca reportar estos objetos
+            if obj.name_es in IGNORE_CLASSES:
+                logger.debug(f"[Nav/Filter] '{obj.name_es}' en lista negra → ignorado")
+                continue
+
+            # Criterio 1: clase relevante para caminata
+            if obj.name_es not in PEDESTRIAN_RELEVANT_CLASSES:
+                continue
+
+            # Criterio 2: confianza mínima según criticidad del objeto
+            if obj.name_es in CRITICAL_OBJECTS:
+                min_conf = MIN_CONFIDENCE_CRITICAL
+            elif obj.name_es in HIGH_CONFUSION_OBJECTS:
+                min_conf = HIGH_CONFUSION_OBJECTS[obj.name_es]
+            else:
+                min_conf = MIN_CONFIDENCE_GENERAL
+
+            if obj.confidence < min_conf:
+                logger.debug(
+                    f"[Nav/Filter] '{obj.name_es}' descartado por confianza baja "
+                    f"({obj.confidence:.2f} < {min_conf})"
+                )
+                continue
+
+            # Criterio 3: área mínima del bounding box
+            if obj.bounding_box and img_area > 0:
+                bbox = obj.bounding_box
+                bbox_area = (bbox.x_max - bbox.x_min) * (bbox.y_max - bbox.y_min)
+                if bbox_area / img_area < MIN_BBOX_AREA_FRACTION:
+                    logger.debug(
+                        f"[Nav/Filter] '{obj.name_es}' descartado por bbox diminuto "
+                        f"({bbox_area/img_area*100:.2f}% < {MIN_BBOX_AREA_FRACTION*100}%)"
+                    )
+                    continue
+
+            # Criterio 4: zona de altura — ignorar objetos en la parte superior de la
+            # imagen (cortinas, lámparas, elementos colgantes) a menos que sean
+            # clases de peligro crítico (balcón, escaleras, etc.) que pueden aparecer
+            # legítimamente arriba.
+            if obj.bounding_box and img_height > 0:
+                center_y = (obj.bounding_box.y_min + obj.bounding_box.y_max) / 2
+                top_ratio = center_y / img_height
+                if top_ratio < _TOP_ZONE_THRESHOLD and obj.name_es not in PELIGRO_CLASSES:
+                    logger.debug(
+                        f"[Nav/Filter] '{obj.name_es}' descartado por zona superior "
+                        f"(center_y={top_ratio:.2f} < {_TOP_ZONE_THRESHOLD})"
+                    )
+                    continue
+
+            filtered.append(obj)
+
+        return filtered
 
     # ====================================================================
     # PASO 2: POSICIÓN ESPACIAL
@@ -410,9 +626,9 @@ class NavigationGuidanceService:
         center_x = (bbox.x_min + bbox.x_max) / 2
         ratio = center_x / img_width if img_width > 0 else 0.5
 
-        if ratio < 0.33:
+        if ratio < 0.28:
             return "a tu izquierda"
-        elif ratio > 0.66:
+        elif ratio > 0.72:
             return "a tu derecha"
         else:
             return "frente a ti"
@@ -594,69 +810,86 @@ class NavigationGuidanceService:
         path_clear: bool,
     ) -> str:
         """
-        Genera instrucciones de navegación priorizadas para TTS.
+        Genera instrucción combinada frente + lateral en una sola frase.
 
-        Reglas:
-          1. Máximo 3 instrucciones (evitar sobrecarga cognitiva)
-          2. Primero alertas críticas (objetos cercanos, en movimiento, peligrosos)
-          3. Luego obstáculos secundarios
-          4. Formato: claro, corto, orientado a acción
-
-        Args:
-            analyzed: Lista de objetos analizados ordenados por riesgo
-            path_clear: Si el camino central está libre
-
-        Returns:
-            Texto de instrucciones para TTS
+        Formato:
+          - Obstáculo al frente + lateral notable → "Atención: silla al frente, cama a la izquierda."
+          - Solo frente bloqueado                → "Atención: silla muy cerca al frente."
+          - Frente libre + lateral notable        → "Camino libre al frente, cama a la izquierda."
+          - Nada relevante                        → "Camino libre."
         """
         if not analyzed:
             return "Camino libre."
 
-        phrases = []
-        max_phrases = 3
-
-        # Filtrar solo obstáculos que merecen mención
-        # (no mencionar objetos lejanos sin movimiento)
+        # Filtrar obstáculos que merecen mención
         mentionable = [
             a for a in analyzed
             if a["proximity"] in ("muy_cerca", "cerca")
             or a["movement"] == "acercandose"
+            or (
+                a["proximity"] == "lejos"
+                and a["position"] == "frente a ti"
+                and a["confidence"] >= 0.45
+                and DANGER_WEIGHT.get(a["name_es"], 0) >= 0.55
+            )
         ]
 
         if not mentionable:
             return "Camino libre."
 
-        for item in mentionable:
-            if len(phrases) >= max_phrases:
-                break
+        # Separar frente y laterales
+        front_obs = [a for a in mentionable if a["position"] == "frente a ti"]
+        lateral_obs = [
+            a for a in mentionable
+            if a["position"] != "frente a ti"
+            and (a["proximity"] in ("muy_cerca", "cerca") or a["movement"] == "acercandose")
+        ]
 
-            name = item["name_es"]
-            position = item["position"]
-            proximity = item["proximity"]
-            movement = item["movement"]
-            height = item["height_zone"]
-            score = item["risk_score"]
+        # --- Parte del frente ---
+        if front_obs:
+            top = front_obs[0]
+            # Objetos lejanos pero peligrosos (escaleras, balcón, etc.)
+            if top["proximity"] == "lejos":
+                name_cap = top["name_es"].capitalize()
+                if top["name_es"] in PELIGRO_CLASSES:
+                    front_phrase = f"¡Cuidado! {name_cap} al frente"
+                else:
+                    front_phrase = f"Atención: {name_cap} al frente"
+            else:
+                front_phrase = self._build_phrase(
+                    top["name_es"], top["position"], top["proximity"],
+                    top["movement"], top["height_zone"], top["risk_score"],
+                )
+            # Quitar punto final si lo tuviera (lo añadimos al combinar)
+            front_phrase = front_phrase.rstrip(".")
+        else:
+            front_phrase = "Camino libre al frente"
 
-            phrase = self._build_phrase(
-                name, position, proximity, movement, height, score
-            )
-            if phrase:
-                phrases.append(phrase)
+        # --- Parte lateral (máximo 1 objeto) ---
+        lateral_phrase = ""
+        if lateral_obs:
+            best = lateral_obs[0]
+            lat = self._build_phrase(
+                best["name_es"], best["position"], best["proximity"],
+                best["movement"], best["height_zone"], best["risk_score"],
+            ).rstrip(".")
+            if lat:
+                # Lateral siempre en minúscula al combinarse
+                lateral_phrase = lat[0].lower() + lat[1:]
 
-        # Añadir indicación de camino libre si aplica
-        if path_clear and phrases:
-            # Solo si hay obstáculos laterales pero el centro está libre
-            has_center_obstacle = any(
-                a["position"] == "frente a ti" and a["proximity"] != "lejos"
-                for a in mentionable
-            )
-            if not has_center_obstacle:
-                phrases.append("El camino al frente está libre")
-
-        if not phrases:
-            return "Camino libre."
-
-        return ". ".join(phrases) + "."
+        # --- Combinar ---
+        # Si el frente está libre: lateral primero, luego confirmación del frente.
+        #   "Cama a tu derecha, el camino al frente está libre."
+        # Si hay obstáculo al frente: el aviso del frente va primero (es lo prioritario).
+        #   "Atención: silla muy cerca al frente, cama a tu izquierda."
+        if front_obs and lateral_phrase:
+            return f"{front_phrase}, {lateral_phrase}."
+        elif not front_obs and lateral_phrase:
+            lat_cap = lateral_phrase[0].upper() + lateral_phrase[1:]
+            return f"{lat_cap}, el camino al frente está libre."
+        elif front_phrase:
+            return front_phrase + "."
+        return "Camino libre."
 
     @staticmethod
     def _build_phrase(
@@ -688,62 +921,55 @@ class NavigationGuidanceService:
         """
         name_cap = name.capitalize()
         prox_label = PROXIMITY_LABELS.get(proximity, proximity)
+        is_front = position == "frente a ti"
 
-        # === FRASES ESPECÍFICAS PARA ESTRUCTURAS ===
+        # ── Objetos que merecen "¡Cuidado!" — usa PELIGRO_CLASSES (fuente única) ──
+        _CUIDADO_CLASSES = PELIGRO_CLASSES
 
-        # Balcones y cornisas: peligro de caída, siempre alertar
-        _BALCONY_CLASSES = {"balcón", "barandal de balcón", "terraza", "cornisa"}
-        if name in _BALCONY_CLASSES:
-            if proximity == "muy_cerca":
-                return f"Peligro: {name_cap} {prox_label} {position}, riesgo de caída"
-            elif proximity == "cerca":
-                return f"Precaución: {name_cap} {prox_label} {position}"
-            return ""
+        # ── Objetos que merecen "Precaución" (solo al frente) ────────────────
+        _PRECAUCION_CLASSES = {
+            "persona", "niño", "bebé", "persona en silla de ruedas",
+            "perro", "caballo", "vaca", "cerdo", "burro",
+            "mesa", "silla", "sofá", "cama", "escritorio",
+            "mesa de comedor", "mostrador", "banco",
+            "carrito de compras", "cochecito de bebé", "silla de ruedas",
+            "pared", "pared de ladrillo", "pared de vidrio", "pilar", "columna",
+            "andamio", "barrera vial", "contenedor de basura",
+            "estufa", "horno", "refrigerador",
+        }
 
-        # Paredes y muros: indicar dirección para esquivar
-        _WALL_CLASSES = {"pared", "pared de ladrillo", "pared de vidrio", "muro de piedra", "pilar", "columna"}
-        if name in _WALL_CLASSES:
-            if proximity == "muy_cerca":
-                return f"Cuidado: {name_cap} {prox_label} {position}"
-            elif proximity == "cerca":
-                return f"{name_cap} {prox_label} {position}"
-            return ""
-
-        # Puertas: indicar si está abierta/cerrada
-        _DOOR_CLASSES = {"puerta abierta", "puerta cerrada", "puerta de vidrio", "puerta giratoria", "reja", "puerta de garaje", "marco de puerta"}
-        if name in _DOOR_CLASSES:
-            if proximity in ("muy_cerca", "cerca"):
-                return f"{name_cap} {prox_label} {position}"
-            return ""
-
-        # === FRASES GENÉRICAS ===
-
-        # Objetos que se acercan: alerta de movimiento
+        # Objeto acercándose: alerta solo si viene al frente
         if movement == "acercandose":
-            if score >= 0.75:
-                return f"Cuidado: {name_cap} se acerca {position}"
-            else:
+            if is_front:
+                if name in _CUIDADO_CLASSES:
+                    return f"¡Cuidado! {name_cap} se acerca {position}"
                 return f"Atención: {name_cap} se acerca {position}"
+            # Lateral acercándose: informativo sin prefijo
+            return f"{name_cap} se acerca {position}"
 
-        # Objetos muy cerca: alerta de proximidad
+        # Objeto muy cerca
         if proximity == "muy_cerca":
-            # Añadir info de altura solo si es relevante
             height_info = ""
             if height == "suelo":
                 height_info = " a nivel del suelo"
             elif height == "cabeza":
                 height_info = " a nivel de la cabeza"
 
-            if score >= 0.75:
-                return f"Cuidado: {name_cap} {prox_label} {position}{height_info}"
+            if is_front:
+                # Al frente: usar prefijo según peligro
+                if name in _CUIDADO_CLASSES:
+                    return f"¡Cuidado! {name_cap} {prox_label} {position}{height_info}"
+                if name in _PRECAUCION_CLASSES:
+                    return f"Atención: {name_cap} {prox_label} {position}{height_info}"
+                return f"{name_cap} {prox_label} {position}{height_info}"
             else:
+                # Lateral muy cerca: solo informativo, sin prefijo
                 return f"{name_cap} {prox_label} {position}{height_info}"
 
-        # Objetos cerca
+        # Objeto a unos metros: solo informativo sin prefijo (frente o lateral)
         if proximity == "cerca":
             return f"{name_cap} {prox_label} {position}"
 
-        # Objetos lejanos que se acercan (ya cubierto arriba)
         return ""
 
     # ====================================================================
@@ -759,6 +985,7 @@ class NavigationGuidanceService:
             "path_clear": True,
             "has_danger": False,
             "priority": "none",
+            "alert_type": None,
             "obstacle_details": [],
         }
 

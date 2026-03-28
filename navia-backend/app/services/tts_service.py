@@ -32,28 +32,41 @@ class PiperTtsService:
         self._use_gtts = False
 
     def _ensure_loaded(self):
-        """Carga el modelo Piper o usa gTTS como fallback."""
+        """Carga el backend TTS configurado (gTTS o Piper)."""
         if self._loaded:
             return
 
+        backend = getattr(settings, 'TTS_BACKEND', 'gtts')
+
+        if backend == 'gtts':
+            # gTTS: voz femenina de Google, requiere internet en el servidor
+            logger.info("TTS backend: gTTS (voz femenina Google)")
+            self._use_gtts = True
+            self._loaded = True
+            return
+
+        # backend == 'piper'
         try:
             from piper import PiperVoice
 
             model_name = settings.TTS_MODEL_NAME
-
             models_dir = Path(settings.MODELS_DIR) if hasattr(settings, 'MODELS_DIR') else Path("models")
             model_path = models_dir / f"{model_name}.onnx"
             config_path = models_dir / f"{model_name}.onnx.json"
 
             if model_path.exists() and config_path.exists():
                 logger.info(f"Cargando modelo Piper TTS desde: {model_path}")
-                self._voice = PiperVoice.load(str(model_path), str(config_path))
+                try:
+                    self._voice = PiperVoice.load(str(model_path), config_path=str(config_path))
+                except TypeError:
+                    self._voice = PiperVoice.load(str(model_path), str(config_path))
+                self._loaded = True
+                logger.info(f"Piper TTS cargado: {model_name}")
             else:
-                logger.info(f"Modelo no encontrado en {model_path}, intentando descarga...")
-                self._voice = PiperVoice.load(model_name)
-
-            self._loaded = True
-            logger.info(f"Piper TTS cargado: {model_name}")
+                raise FileNotFoundError(
+                    f"Modelo Piper no encontrado: {model_path}. "
+                    f"Cambia TTS_BACKEND=gtts o descarga el modelo."
+                )
 
         except ImportError:
             logger.warning("piper-tts no instalado. Usando gTTS como fallback.")
@@ -137,3 +150,9 @@ def get_tts_service() -> PiperTtsService:
     if _tts_service is None:
         _tts_service = PiperTtsService()
     return _tts_service
+
+
+def reset_tts_service() -> None:
+    """Fuerza recarga del servicio TTS (útil tras instalar modelo)."""
+    global _tts_service
+    _tts_service = None

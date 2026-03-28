@@ -1,53 +1,22 @@
 /**
- * TTS Queue Manager para NAVIA
- *
- * Singleton que controla TODA la síntesis de voz en la app.
- * Resuelve los problemas de voces que se cancelan entre sí
- * usando una cola con prioridades.
- *
- * SIEMPRE usa Piper TTS (voz natural VITS) para TODO el audio,
- * incluyendo INTERRUPT. Cae a expo-speech solo si el backend
- * no responde (fallback automático).
+ * TTS Manager para NAVIA
+ * Usa expo-speech (voz del celular)
  */
 
 import * as Speech from 'expo-speech';
-import { Audio } from 'expo-av';
-import { File as ExpoFile, Paths } from 'expo-file-system';
-import { TTS_CONFIG, API_BASE_URL, API_ENDPOINTS } from '../constants/config';
-
-// ============================================================================
-// PRIORIDADES
-// ============================================================================
+import { TTS_CONFIG } from '../constants/config';
 
 export enum TtsPriority {
-  /** Alertas de peligro, errores. Interrumpe todo y habla ya. */
   INTERRUPT = 0,
-  /** Resultados de análisis, descripciones. Se encola tras el speech actual. */
   HIGH = 1,
-  /** Feedback de UI ("Modo Navegación"). Se descarta si algo está sonando. */
   LOW = 2,
 }
-
-// ============================================================================
-// TIPOS INTERNOS
-// ============================================================================
-
-interface QueueItem {
-  text: string;
-  priority: TtsPriority;
-  useBackend: boolean;
-}
-
-// ============================================================================
-// TTS MANAGER
-// ============================================================================
 
 class TtsManager {
   private static instance: TtsManager;
 
-  private queue: QueueItem[] = [];
-  private playing = false;
-  private currentSound: Audio.Sound | null = null;
+  private queue: Array<{ text: string; priority: TtsPriority }> = [];
+  private speaking = false;
   private enabled = true;
 
   private constructor() {}
@@ -59,284 +28,102 @@ class TtsManager {
     return TtsManager.instance;
   }
 
-  // ==========================================================================
-  // API PÚBLICA
-  // ==========================================================================
-
-  /**
-   * Habla usando Piper TTS del backend (voz natural) para TODAS
-   * las prioridades, incluyendo INTERRUPT.
-   * Cae a expo-speech automáticamente si el backend no responde.
-   */
   speak(text: string, priority: TtsPriority = TtsPriority.HIGH): void {
-    if (!this.enabled || !text?.trim()) return;
-    this.enqueue(text.trim(), priority, true);
+    console.log('[TTS] speak llamado:', text?.substring(0, 30), 'enabled:', this.enabled);
+    if (!this.enabled || !text?.trim()) {
+      console.log('[TTS] speak ignorado');
+      return;
+    }
+    this.enqueue(text.trim(), priority);
   }
 
-  /**
-   * Habla con Piper TTS del backend (voz natural). Para descripciones largas.
-   * Si el backend no responde, cae a expo-speech automáticamente.
-   */
   speakFromBackend(text: string, priority: TtsPriority = TtsPriority.HIGH): void {
+    console.log('[TTS] speakFromBackend llamado:', text?.substring(0, 30));
     if (!this.enabled || !text?.trim()) return;
-    this.enqueue(text.trim(), priority, true);
+    this.enqueue(text.trim(), priority);
   }
 
-  /**
-   * Detiene todo: speech actual + limpia la cola.
-   */
   stop(): void {
     this.queue = [];
-    this.stopCurrent();
+    Speech.stop();
+    this.speaking = false;
   }
 
-  /**
-   * ¿Está hablando o hay algo en cola?
-   */
   isSpeaking(): boolean {
-    return this.playing;
+    return this.speaking;
   }
 
-  /**
-   * Activa o desactiva el TTS globalmente.
-   */
   setEnabled(value: boolean): void {
     this.enabled = value;
-    if (!value) {
-      this.stop();
-    }
+    if (!value) this.stop();
   }
 
   isEnabled(): boolean {
     return this.enabled;
   }
 
-  // ==========================================================================
-  // COLA DE PRIORIDADES
-  // ==========================================================================
-
-  private enqueue(text: string, priority: TtsPriority, useBackend: boolean): void {
-    // INTERRUPT: limpia todo y ejecuta inmediatamente
+  private enqueue(text: string, priority: TtsPriority): void {
+    console.log('[TTS] enqueue:', priority, 'speaking:', this.speaking);
+    
+    // INTERRUPT: limpia todo y habla ahora
     if (priority === TtsPriority.INTERRUPT) {
       this.queue = [];
-      this.stopCurrent();
-      // Pequeño delay para asegurar que stop() terminó
-      setTimeout(() => {
-        this.queue.push({ text, priority, useBackend }); // Usa Piper backend (fallback a expo-speech si falla)
-        this.processQueue();
-      }, 50);
+      Speech.stop();
+      setTimeout(() => this.speakNow(text), 100);
       return;
     }
 
-    // LOW: descartar si algo está sonando o hay cola
-    if (priority === TtsPriority.LOW) {
-      if (this.playing || this.queue.length > 0) {
+    // HIGH: si está hablando, descartar
+    if (priority === TtsPriority.HIGH) {
+      if (this.speaking) {
+        console.log('[TTS] HIGH descartado porque ya está hablando');
         return;
       }
     }
 
-    this.queue.push({ text, priority, useBackend });
+    // LOW: solo si no hay nada
+    if (priority === TtsPriority.LOW) {
+      if (this.speaking || this.queue.length > 0) return;
+    }
+
+    this.queue.push({ text, priority });
     this.processQueue();
   }
 
-  private async processQueue(): Promise<void> {
-    if (this.playing || this.queue.length === 0) return;
+  private processQueue(): void {
+    if (this.speaking || this.queue.length === 0) return;
 
-    // Ordenar: INTERRUPT (0) primero, LOW (2) último
     this.queue.sort((a, b) => a.priority - b.priority);
-
     const item = this.queue.shift()!;
-    this.playing = true;
-
-    try {
-      if (item.useBackend) {
-        try {
-          await this.playBackendTts(item.text);
-        } catch {
-          // Fallback a expo-speech
-          console.log('[TTS] Backend falló, usando expo-speech como fallback');
-          await this.playExpoSpeech(item.text);
-        }
-      } else {
-        await this.playExpoSpeech(item.text);
-      }
-    } catch (err) {
-      console.warn('[TTS] Error reproduciendo:', err);
-    } finally {
-      this.playing = false;
-      // Procesar siguiente en cola
-      if (this.queue.length > 0) {
-        this.processQueue();
-      }
-    }
+    this.speakNow(item.text);
   }
 
-  // ==========================================================================
-  // TIER 1: EXPO-SPEECH (instantáneo, device-side)
-  // ==========================================================================
-
-  private playExpoSpeech(text: string): Promise<void> {
-    return new Promise<void>((resolve) => {
-      // Safety timeout: si los callbacks no se disparan en 30s, resolver de todas formas
-      const safetyTimeout = setTimeout(() => {
-        console.warn('[TTS] Safety timeout en expo-speech, forzando resolve');
-        resolve();
-      }, 30000);
-
-      // Limpiar cualquier speech anterior
-      Speech.stop();
-
-      // Pequeño delay después de stop() para que el sistema limpie
-      setTimeout(() => {
-        Speech.speak(text, {
-          language: TTS_CONFIG.language,
-          pitch: TTS_CONFIG.pitch,
-          rate: TTS_CONFIG.rate,
-          onDone: () => {
-            clearTimeout(safetyTimeout);
-            resolve();
-          },
-          onError: (err) => {
-            clearTimeout(safetyTimeout);
-            console.warn('[TTS] expo-speech error:', err);
-            resolve();
-          },
-          onStopped: () => {
-            clearTimeout(safetyTimeout);
-            resolve();
-          },
-        });
-      }, 100);
+  private speakNow(text: string): void {
+    this.speaking = true;
+    console.log('[TTS] speakNow llamado:', text.substring(0, 50));
+    
+    Speech.speak(text, {
+      language: TTS_CONFIG.language,
+      pitch: TTS_CONFIG.pitch,
+      rate: TTS_CONFIG.rate,
+      onDone: () => {
+        this.speaking = false;
+        if (this.queue.length > 0) {
+          this.processQueue();
+        }
+      },
+      onError: (err) => {
+        console.warn('[TTS] error:', err);
+        this.speaking = false;
+        if (this.queue.length > 0) {
+          this.processQueue();
+        }
+      },
+      onStopped: () => {
+        this.speaking = false;
+      },
     });
   }
-
-  // ==========================================================================
-  // TIER 2: PIPER TTS VIA BACKEND (voz VITS natural)
-  // ==========================================================================
-
-  /**
-   * Intenta hacer fetch al backend con retry.
-   * Reintenta hasta MAX_RETRIES veces antes de lanzar error.
-   */
-  private async fetchTtsWithRetry(text: string, maxRetries = 3, timeoutMs = 15000): Promise<Uint8Array> {
-    let lastError: Error | null = null;
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        const controller = new AbortController();
-        const fetchTimeout = setTimeout(() => controller.abort(), timeoutMs);
-
-        const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.TTS}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
-          signal: controller.signal,
-        });
-
-        clearTimeout(fetchTimeout);
-
-        if (!response.ok) {
-          throw new Error(`TTS backend error: ${response.status}`);
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        const bytes = new Uint8Array(arrayBuffer);
-
-        if (bytes.length < 100) {
-          throw new Error('TTS response too small, likely empty');
-        }
-
-        return bytes;
-      } catch (error) {
-        lastError = error as Error;
-        console.warn(`[TTS] Intento ${attempt}/${maxRetries} falló:`, (error as Error).message);
-
-        if (attempt < maxRetries) {
-          // Esperar antes de reintentar (backoff: 500ms, 1000ms)
-          await new Promise(r => setTimeout(r, attempt * 500));
-        }
-      }
-    }
-
-    throw lastError!;
-  }
-
-  private async playBackendTts(text: string): Promise<void> {
-    const fileName = `navia_tts_${Date.now()}.wav`;
-    let tempFile: InstanceType<typeof ExpoFile> | null = null;
-
-    try {
-      // 1. Fetch con retry (3 intentos, 15s timeout cada uno)
-      const bytes = await this.fetchTtsWithRetry(text);
-
-      // 2. Escribir a disco
-      tempFile = new ExpoFile(Paths.cache, fileName);
-      tempFile.create({ overwrite: true });
-      tempFile.write(bytes);
-
-      // 3. Reproducir con expo-av
-      const { sound } = await Audio.Sound.createAsync({ uri: tempFile.uri });
-      this.currentSound = sound;
-
-      await new Promise<void>((resolve, reject) => {
-        const safetyTimeout = setTimeout(() => {
-          console.warn('[TTS] Safety timeout en audio backend');
-          resolve();
-        }, 60000);
-
-        let wasPlaying = false;
-        sound.setOnPlaybackStatusUpdate((status) => {
-          if (!status.isLoaded) return;
-          if (status.isPlaying) wasPlaying = true;
-          // Detectar fin por didJustFinish O por transición isPlaying true→false
-          if (status.didJustFinish || (wasPlaying && !status.isPlaying)) {
-            clearTimeout(safetyTimeout);
-            resolve();
-          }
-        });
-        sound.playAsync().catch((err) => {
-          clearTimeout(safetyTimeout);
-          reject(err);
-        });
-      });
-
-      // 4. Limpiar
-      await sound.unloadAsync().catch(() => {});
-      this.currentSound = null;
-
-      try { tempFile.delete(); } catch {}
-    } catch (error) {
-      // Limpiar archivo temporal si existe
-      try { if (tempFile?.exists) tempFile.delete(); } catch {}
-      throw error; // El caller hará fallback a expo-speech
-    }
-  }
-
-  // ==========================================================================
-  // CONTROL
-  // ==========================================================================
-
-  private stopCurrent(): void {
-    // Parar expo-speech
-    Speech.stop();
-
-    // Parar expo-av sound
-    if (this.currentSound) {
-      try {
-        this.currentSound.stopAsync().catch(() => {});
-        this.currentSound.unloadAsync().catch(() => {});
-      } catch {
-        // Ya estaba detenido/descargado
-      }
-      this.currentSound = null;
-    }
-
-    this.playing = false;
-  }
 }
-
-// ============================================================================
-// EXPORT SINGLETON
-// ============================================================================
 
 export const ttsManager = TtsManager.getInstance();

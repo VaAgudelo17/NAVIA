@@ -20,6 +20,7 @@ import {
 } from '../services/storage';
 import { AnalysisMode } from '../constants/config';
 import { ReadingMode } from '../types/api';
+import { ThemeId, FontSizeId, THEMES, FONT_SIZES, ThemeColors } from '../constants/themes';
 
 // ============================================================================
 // TIPOS DEL CONTEXTO
@@ -30,12 +31,20 @@ interface PreferencesContextType {
   analysisMode: AnalysisMode;
   readingMode: ReadingMode;
   ttsEnabled: boolean;
-  isLoaded: boolean; // true cuando las preferencias se cargaron de storage
+  themeId: ThemeId;
+  fontSizeId: FontSizeId;
+  isLoaded: boolean;
+
+  // Tema activo (colores resueltos)
+  theme: ThemeColors;
+  fontScale: number;
 
   // Setters (guardan automaticamente)
   setAnalysisMode: (mode: AnalysisMode) => void;
   setReadingMode: (mode: ReadingMode) => void;
   setTtsEnabled: (enabled: boolean) => void;
+  setThemeId: (id: ThemeId) => void;
+  setFontSizeId: (id: FontSizeId) => void;
 }
 
 const PreferencesContext = createContext<PreferencesContextType | undefined>(undefined);
@@ -52,6 +61,8 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
   const [analysisMode, setAnalysisModeState] = useState<AnalysisMode>(DEFAULT_PREFERENCES.analysisMode);
   const [readingMode, setReadingModeState] = useState<ReadingMode>(DEFAULT_PREFERENCES.readingMode);
   const [ttsEnabled, setTtsEnabledState] = useState<boolean>(DEFAULT_PREFERENCES.ttsEnabled);
+  const [themeId, setThemeIdState] = useState<ThemeId>(DEFAULT_PREFERENCES.themeId);
+  const [fontSizeId, setFontSizeIdState] = useState<FontSizeId>(DEFAULT_PREFERENCES.fontSizeId);
   const [isLoaded, setIsLoaded] = useState(false);
 
   // Cargar preferencias al montar
@@ -62,6 +73,8 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         setAnalysisModeState(prefs.analysisMode);
         setReadingModeState(prefs.readingMode);
         setTtsEnabledState(prefs.ttsEnabled);
+        setThemeIdState(prefs.themeId);
+        setFontSizeIdState(prefs.fontSizeId);
       } catch (error) {
         console.warn('Error cargando preferencias, usando defaults:', error);
       } finally {
@@ -86,14 +99,30 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
     savePreferences({ ttsEnabled: enabled });
   }, []);
 
+  const setThemeId = useCallback((id: ThemeId) => {
+    setThemeIdState(id);
+    savePreferences({ themeId: id });
+  }, []);
+
+  const setFontSizeId = useCallback((id: FontSizeId) => {
+    setFontSizeIdState(id);
+    savePreferences({ fontSizeId: id });
+  }, []);
+
   const value: PreferencesContextType = {
     analysisMode,
     readingMode,
     ttsEnabled,
+    themeId,
+    fontSizeId,
     isLoaded,
+    theme: THEMES[themeId].colors,
+    fontScale: FONT_SIZES[fontSizeId].scale,
     setAnalysisMode,
     setReadingMode,
     setTtsEnabled,
+    setThemeId,
+    setFontSizeId,
   };
 
   return (

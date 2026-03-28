@@ -266,9 +266,9 @@ class DepthEstimationService:
         Se usa cuando Depth Anything no está disponible.
         """
         ratio = bbox_area / img_area if img_area > 0 else 0
-        if ratio > 0.25:
+        if ratio > 0.15:    # antes 0.25: advierte "muy cerca" desde el 15% del frame
             return "muy_cerca"
-        elif ratio > 0.06:
+        elif ratio > 0.04:  # antes 0.06: detecta "cerca" desde el 4% del frame
             return "cerca"
         return "lejos"
 

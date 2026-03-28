@@ -37,8 +37,8 @@ from app.core.config import settings
 from app.utils.image_utils import bytes_to_cv2_image, resize_image_if_needed
 from app.services.object_detection_service import get_object_detection_service
 from app.services.realtime_detection_service import RealtimeSessionState
-from app.services.depth_estimation_service import ZONE_LABELS
-from app.services.navigation_guidance_service import get_navigation_guidance_service
+from app.services.depth_estimation_service import ZONE_LABELS, DepthEstimationService
+from app.services.navigation_guidance_service import get_navigation_guidance_service, IGNORE_CLASSES, PEDESTRIAN_RELEVANT_CLASSES
 from app.services.history_service import save_to_history
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,7 @@ async def realtime_detection(websocket: WebSocket):
 
     session_state = RealtimeSessionState()
     detector = get_object_detection_service()
+    detector.configure_for_navigation()
 
     latest_frame = {"data": None, "frame_id": None}
     frame_event = asyncio.Event()
@@ -72,6 +73,12 @@ async def realtime_detection(websocket: WebSocket):
         "mode": "navegacion",
     }
     guidance_service = get_navigation_guidance_service()
+
+    # Umbral de profundidad para detectar superficie plana grande al frente (pared/puerta).
+    # 0.42: suficientemente alto para ignorar fluctuaciones normales del depth map,
+    # pero detectable cuando hay una puerta/pared a ~1-1.5m.
+    _WALL_DEPTH_THRESHOLD = 0.42
+    _last_wall_warning_frame = [-15]  # cooldown de 15 frames (~5s a 3fps)
 
     # --- Estadísticas de sesión para historial ---
     session_stats = {
@@ -185,6 +192,13 @@ async def realtime_detection(websocket: WebSocket):
 
                     objects_data = []
                     for obj in result["objects"]:
+                        # Excluir del display objetos en lista negra o irrelevantes
+                        # para navegación (evita mostrar cortinas, espejos, etc.)
+                        if obj.name_es in IGNORE_CLASSES:
+                            continue
+                        if obj.name_es not in PEDESTRIAN_RELEVANT_CLASSES:
+                            continue
+
                         zone = smoothed_zones.get(
                             obj.name_es, obj.distance_zone or "lejos"
                         )
@@ -213,6 +227,70 @@ async def realtime_detection(websocket: WebSocket):
                         track_movement=True,
                     )
 
+                    # --- Detección de obstáculo grande / pared por profundidad ---
+                    # YOLO no detecta bien superficies planas (paredes, puertas grandes).
+                    # Si el mapa de profundidad muestra el centro MUY cercano y guidance
+                    # dice "camino libre", anulamos ese resultado.
+                    depth_map = result.get("depth_map")
+                    if (
+                        depth_map is not None
+                        and guidance["path_clear"]
+                        and (session_stats["frames_processed"] - _last_wall_warning_frame[0]) >= 15
+                    ):
+                        directional = DepthEstimationService.compute_directional_depth(depth_map)
+                        center_depth = directional["centro"]
+                        if center_depth > _WALL_DEPTH_THRESHOLD:
+                            guidance["path_clear"] = False
+                            guidance["has_danger"] = True
+                            guidance["alert_type"] = "atencion"
+
+                            # Si YOLO detectó un objeto específico al frente, usarlo.
+                            # Solo decir "algo" / "obstáculo" si no hay detección específica.
+                            front_obj = next(
+                                (o for o in result["objects"]
+                                 if o.bounding_box.x_min < w * 0.65
+                                 and o.bounding_box.x_max > w * 0.35),
+                                None,
+                            )
+                            obj_name = front_obj.name_es.capitalize() if front_obj else None
+
+                            if center_depth > 0.72:
+                                guidance["priority"] = "critical"
+                                if obj_name:
+                                    guidance["instruction"] = f"¡Cuidado! {obj_name} muy cerca al frente, detente."
+                                else:
+                                    guidance["instruction"] = "¡Cuidado! Superficie muy cerca al frente, detente."
+                            elif center_depth > 0.50:
+                                guidance["priority"] = "high"
+                                if obj_name:
+                                    guidance["instruction"] = f"Atención: {obj_name} bloqueando el camino al frente."
+                                else:
+                                    guidance["instruction"] = "Atención: algo bloqueando el camino al frente."
+                            else:
+                                guidance["priority"] = "high"
+                                if obj_name:
+                                    guidance["instruction"] = f"Atención: {obj_name} al frente, reduce la velocidad."
+                                else:
+                                    guidance["instruction"] = "Atención: obstáculo al frente, reduce la velocidad."
+                            _last_wall_warning_frame[0] = session_stats["frames_processed"]
+                            # Asignar guidance_key fija para detecciones de pared/superficie
+                            # para que el cooldown de 12s del TTS aplique correctamente.
+                            guidance["_wall_key"] = f"{obj_name or 'superficie'}:frente a ti"
+                            logger.info(
+                                f"[WallDetect] depth={center_depth:.2f} → "
+                                f"{guidance['instruction']}"
+                            )
+
+                    # Clave única por obstáculo sin incluir proximidad.
+                    # Evita que cambios de zona (cerca↔muy_cerca) re-disparen el TTS.
+                    top_obs = (guidance.get("obstacle_details") or [{}])[0]
+                    if guidance.get("_wall_key"):
+                        guidance_key = guidance["_wall_key"]
+                    elif top_obs.get("name"):
+                        guidance_key = f"{top_obs['name']}:{top_obs['position']}"
+                    else:
+                        guidance_key = ""
+
                     response = {
                         "type": "detection",
                         "mode": "navegacion",
@@ -229,9 +307,25 @@ async def realtime_detection(websocket: WebSocket):
                         "priority": guidance["priority"],
                         "path_clear": guidance["path_clear"],
                         "obstacle_details": guidance["obstacle_details"],
+                        "guidance_key": guidance_key,
+                        "alert_type": guidance.get("alert_type"),
                     }
 
                     await websocket.send_json(response)
+
+                    # --- Log cada 10 frames para seguimiento en terminal ---
+                    if session_stats["frames_processed"] % 10 == 0:
+                        obj_summary = ", ".join(
+                            f"{o['name_es']}({o['distance_zone']})"
+                            for o in objects_data[:5]
+                        ) or "ninguno"
+                        logger.info(
+                            f"[Nav f#{session_stats['frames_processed']}] "
+                            f"objetos=[{obj_summary}] | "
+                            f"alert={guidance.get('alert_type') or 'none'} "
+                            f"priority={guidance['priority']} | "
+                            f"\"{guidance['instruction'][:60]}\""
+                        )
 
                     # --- Acumular estadísticas de sesión ---
                     session_stats["frames_processed"] += 1
@@ -266,6 +360,7 @@ async def realtime_detection(websocket: WebSocket):
     except Exception as e:
         logger.error(f"Error en sesión WebSocket: {e}")
     finally:
+        detector.configure_for_full()
         guidance_service.reset_movement_state()
 
         # --- Guardar resumen de sesión en historial ---

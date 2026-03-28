@@ -10,6 +10,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { CameraView } from 'expo-camera';
+import * as Haptics from 'expo-haptics';
 import { RealtimeWebSocket } from '../services/websocket';
 import { RealtimeTtsManager } from '../services/realtimeTts';
 import { RealtimeDetectionResult, NaviaMode } from '../types/api';
@@ -45,6 +46,9 @@ export function useRealtimeDetection({
   const ttsManagerRef = useRef<RealtimeTtsManager>(new RealtimeTtsManager());
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isCapturing = useRef(false);
+  // Ref para handleDetection: evita que el cambio de ttsEnabled/mode
+  // provoque re-ejecución del efecto principal y abort de fetches activos.
+  const handleDetectionRef = useRef<(data: RealtimeDetectionResult) => void>(() => {});
 
   // --- Estadísticas de sesión ---
   const sessionStartRef = useRef<number>(0);
@@ -59,32 +63,65 @@ export function useRealtimeDetection({
     ttsManagerRef.current.setMode(mode);
   }, [mode]);
 
+  // Al re-activar la voz, limpiar estado acumulado para que hable de nuevo
+  const prevTtsEnabledRef = useRef(ttsEnabled);
+  useEffect(() => {
+    if (ttsEnabled && !prevTtsEnabledRef.current) {
+      ttsManagerRef.current.reset();
+    }
+    prevTtsEnabledRef.current = ttsEnabled;
+  }, [ttsEnabled]);
+
   const handleDetection = useCallback((data: RealtimeDetectionResult) => {
-    setLatestResult(data);
+    handleDetectionRef.current(data);
+  }, []); // sin deps: estable, nunca provoca re-ejecución del efecto
 
-    // Acumular estadísticas
-    framesRef.current += 1;
-    if (data.has_danger) {
-      dangerCountRef.current += 1;
-    }
-    if (data.obstacle_details) {
-      for (const obs of data.obstacle_details) {
-        const name = obs.name;
-        obstacleCountsRef.current[name] = (obstacleCountsRef.current[name] || 0) + 1;
+  // La lógica real va en el ref, que sí puede capturar ttsEnabled/mode frescos
+  useEffect(() => {
+    handleDetectionRef.current = (data: RealtimeDetectionResult) => {
+      setLatestResult(data);
+
+      // Acumular estadísticas
+      framesRef.current += 1;
+      if (data.has_danger) {
+        dangerCountRef.current += 1;
       }
-    }
+      if (data.obstacle_details) {
+        for (const obs of data.obstacle_details) {
+          const name = obs.name;
+          obstacleCountsRef.current[name] = (obstacleCountsRef.current[name] || 0) + 1;
+        }
+      }
 
-    if (ttsEnabled) {
-      ttsManagerRef.current.speakResult(
-        data.summary,
-        data.changes as any,
-        {
-          has_danger: data.has_danger ?? false,
-          priority: data.priority ?? 'none',
-          path_clear: data.path_clear ?? true,
-        },
-      );
-    }
+      if (ttsEnabled) {
+        ttsManagerRef.current.speakResult(
+          data.summary,
+          data.changes as any,
+          {
+            has_danger: data.has_danger ?? false,
+            priority: data.priority ?? 'none',
+            path_clear: data.path_clear ?? true,
+          },
+          data.guidance_key,
+        );
+      }
+
+      // Vibración háptica según nivel de peligro
+      if (data.has_danger) {
+        switch (data.priority) {
+          case 'critical':
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            setTimeout(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error), 300);
+            break;
+          case 'high':
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            break;
+          case 'medium':
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            break;
+        }
+      }
+    };
   }, [ttsEnabled, mode]);
 
   useEffect(() => {
@@ -155,27 +192,39 @@ export function useRealtimeDetection({
       }
 
       // Limpieza
+      const hadWs = wsRef.current !== null;
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
       wsRef.current?.disconnect();
       wsRef.current = null;
-      ttsManagerRef.current.reset();
+      // Solo resetear TTS si hubo una sesión real activa.
+      // Evita abortar la bienvenida o audio de botones cuando el effect
+      // se re-ejecuta por cambio de modo con enabled=false.
+      if (hadWs || frames > 0) {
+        ttsManagerRef.current.reset();
+      }
       setLatestResult(null);
       setWsStatus('disconnected');
     }
 
     return () => {
+      // Solo detener TTS si había una sesión activa (interval corriendo).
+      // Si el effect se re-ejecuta solo por cambio de modo (enabled=false),
+      // NO interrumpir el audio del botón que acaba de disparar ese cambio.
+      const hadActiveSession = intervalRef.current !== null;
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
       wsRef.current?.disconnect();
       wsRef.current = null;
-      ttsManagerRef.current.stop();
+      if (hadActiveSession) {
+        ttsManagerRef.current.stop();
+      }
     };
-  }, [enabled, handleDetection, mode]);
+  }, [enabled, mode]);
 
   return { wsStatus, latestResult };
 }

@@ -66,8 +66,8 @@ export const COLORS = {
 // Configuración de Text-to-Speech
 export const TTS_CONFIG = {
   language: 'es-ES',
-  pitch: 1.0,
-  rate: 0.9,
+  pitch: 1.05,   // ligeramente más agudo (más femenino)
+  rate: 0.75,     // más lento = más natural
 };
 
 // Modos de análisis disponibles
@@ -89,7 +89,7 @@ export const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
 
 // Configuración de detección en tiempo real
 export const REALTIME_CONFIG = {
-  targetFps: 2,           // 2 frames por segundo (mobile)
-  ttsMinInterval: 3000,   // 3 segundos entre frases TTS
+  targetFps: 3,           // 3 frames por segundo (antes 2)
+  ttsMinInterval: 2000,   // 2 segundos entre frases TTS
   imageQuality: 0.3,      // Calidad JPEG baja para velocidad
 };

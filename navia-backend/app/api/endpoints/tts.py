@@ -53,12 +53,17 @@ async def synthesize_speech(request: TtsRequest) -> Response:
         tts_service = get_tts_service()
         audio_data = tts_service.synthesize(request.text)
 
+        # gTTS devuelve MP3; Piper devuelve WAV.
+        backend = getattr(settings, 'TTS_BACKEND', 'gtts')
+        media_type = "audio/mpeg" if backend == "gtts" else "audio/wav"
+
         return Response(
             content=audio_data,
-            media_type="audio/wav",
+            media_type=media_type,
             headers={
                 "Content-Disposition": "inline",
                 "Cache-Control": "no-cache",
+                "X-Audio-Format": "mp3" if backend == "gtts" else "wav",
             },
         )
 

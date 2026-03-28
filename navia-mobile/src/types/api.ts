@@ -222,6 +222,8 @@ export interface RealtimeDetectionResult {
   priority?: string;
   path_clear?: boolean;
   obstacle_details?: ObstacleDetail[];
+  guidance_key?: string;   // "{obstacle_name}:{position}" sin proximidad — para cooldown por obstáculo
+  alert_type?: 'peligro' | 'atencion' | null;  // tipo de alerta visual
 }
 
 // Mensaje de estado WebSocket

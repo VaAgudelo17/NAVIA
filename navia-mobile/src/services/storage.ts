@@ -12,6 +12,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AnalysisMode } from '../constants/config';
 import { ReadingMode } from '../types/api';
+import { ThemeId, FontSizeId } from '../constants/themes';
 
 // ============================================================================
 // CLAVES DE STORAGE
@@ -30,6 +31,8 @@ export interface UserPreferences {
   analysisMode: AnalysisMode;
   readingMode: ReadingMode;
   ttsEnabled: boolean;
+  themeId: ThemeId;
+  fontSizeId: FontSizeId;
 }
 
 export interface HistoryEntry {
@@ -46,6 +49,8 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   analysisMode: 'navegacion',
   readingMode: 'detallado',
   ttsEnabled: true,
+  themeId: 'normal',
+  fontSizeId: 'mediano',
 };
 
 const MAX_HISTORY_ITEMS = 50; // Limite de historial local

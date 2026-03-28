@@ -106,11 +106,11 @@ WORLD_CLASSES_ES = {
     "frog": ("rana", "f"),
 
     # ===================== MUEBLES =====================
-    "chair": ("silla", "f"),
+    "chair with four legs": ("silla", "f"),
     "wooden table": ("mesa", "f"),
     "office desk": ("escritorio", "m"),
-    "sofa": ("sofá", "m"),
-    "armchair": ("sillón", "m"),
+    "sofa couch with cushions": ("sofá", "m"),
+    "upholstered armchair": ("sillón", "m"),
     "bed with mattress": ("cama", "f"),
     "bunk bed": ("litera", "f"),
     "crib": ("cuna", "f"),
@@ -119,13 +119,13 @@ WORLD_CLASSES_ES = {
     "chest of drawers": ("cómoda", "f"),
     "wardrobe closet": ("armario", "m"),
     "nightstand": ("mesa de noche", "f"),
-    "stool": ("taburete", "m"),
-    "park bench": ("banco", "m"),
+    "bar stool with legs": ("taburete", "m"),
+    "park bench outdoor seat": ("banco", "m"),
     "kitchen counter": ("mostrador", "m"),
     "coffee table": ("mesa de centro", "f"),
     "dining table": ("mesa de comedor", "f"),
-    "rocking chair": ("mecedora", "f"),
-    "ottoman": ("puf", "m"),
+    "rocking chair with curved legs": ("mecedora", "f"),
+    "ottoman footrest": ("puf", "m"),
     "tv stand": ("mueble de televisor", "m"),
 
     # ===================== MUROS, PAREDES Y ESTRUCTURAS =====================
@@ -144,15 +144,16 @@ WORLD_CLASSES_ES = {
     "railing": ("barandal", "m"),
 
     # ===================== PUERTAS ESPECÍFICAS =====================
-    "open door": ("puerta abierta", "f"),
-    "closed door": ("puerta cerrada", "f"),
-    "glass door": ("puerta de vidrio", "f"),
+    # Prompts genéricos: mejor recall que prompts hiper-específicos
+    "door open wide": ("puerta abierta", "f"),
+    "door closed shut blocking passage": ("puerta cerrada", "f"),
+    "closed door flat surface": ("puerta cerrada", "f"),
+    "glass door transparent": ("puerta de vidrio", "f"),
     "revolving door": ("puerta giratoria", "f"),
-    "metal gate": ("reja", "f"),
-    "garage door": ("puerta de garaje", "f"),
+    "metal gate fence": ("reja", "f"),
+    "garage door large": ("puerta de garaje", "f"),
     "emergency exit door": ("salida de emergencia", "f"),
-    "doorway": ("marco de puerta", "m"),
-    "door frame": ("marco de puerta", "m"),
+    "doorway opening": ("marco de puerta", "m"),
 
     # ===================== HOGAR / NAVEGACIÓN INTERIOR =====================
     # Prompts específicos para evitar confusiones entre objetos similares
@@ -162,8 +163,8 @@ WORLD_CLASSES_ES = {
     "chandelier": ("candelabro", "m"),
     "wall mirror": ("espejo", "m"),         # "wall mirror" no se confunde con ventana
     "window with glass": ("ventana", "f"),   # "window with glass" no se confunde con espejo
-    "wooden door": ("puerta", "f"),          # "wooden door" más específico
-    "sliding door": ("puerta corrediza", "f"),
+    "door panel": ("puerta", "f"),           # más genérico que "wooden door"
+    "sliding door panel": ("puerta corrediza", "f"),
     "curtain on window": ("cortina", "f"),   # "curtain on window" evita confusión con toalla
     "window blind": ("persiana", "f"),
     "ceiling fan": ("ventilador de techo", "m"),
@@ -203,6 +204,8 @@ WORLD_CLASSES_ES = {
     "ironing board": ("tabla de planchar", "f"),
     "iron appliance": ("plancha", "f"),
     "staircase": ("escaleras", "f"),
+    "single step on floor": ("escalón", "m"),
+    "metal construction scaffolding on building": ("andamio", "m"),
     "stair handrail": ("pasamanos", "m"),
     "elevator door": ("ascensor", "m"),
     "escalator": ("escalera mecánica", "f"),
@@ -282,7 +285,7 @@ WORLD_CLASSES_ES = {
     "metal key": ("llave", "f"),
     "key chain": ("llavero", "m"),
     "handbag": ("bolso", "m"),
-    "backpack": ("mochila", "f"),
+    "backpack bag on floor or back": ("mochila", "f"),
     "purse": ("cartera", "f"),
     "umbrella": ("paraguas", "m"),
     "travel suitcase": ("maleta", "f"),
@@ -394,19 +397,19 @@ WORLD_CLASSES_ES = {
     "cookie": ("galleta", "f"),
 
     # ===================== BAÑO =====================
-    "toilet": ("inodoro", "m"),
-    "bathroom sink": ("lavamanos", "m"),
-    "bathtub": ("bañera", "f"),
-    "shower head": ("ducha", "f"),
+    "bathroom toilet with tank and seat": ("inodoro", "m"),
+    "bathroom sink with faucet": ("lavamanos", "m"),
+    "bathtub in bathroom": ("bañera", "f"),
+    "shower head fixture on wall": ("ducha", "f"),
     "bar of soap": ("jabón", "m"),
     "toothbrush": ("cepillo de dientes", "m"),
     "toothpaste tube": ("pasta dental", "f"),
     "toilet paper roll": ("papel higiénico", "m"),
-    "bath towel on rack": ("toalla de baño", "f"),  # "on rack" evita confusión con cortina
+    "bath towel on rack": ("toalla de baño", "f"),
     "hand towel": ("toalla de mano", "f"),
     "shampoo bottle": ("champú", "m"),
     "hair dryer": ("secador de pelo", "m"),
-    "bathroom scale": ("báscula", "f"),
+    "bathroom weighing scale": ("báscula", "f"),
     "shower curtain": ("cortina de baño", "f"),
     "soap dispenser": ("dispensador de jabón", "m"),
     "bathroom mirror on wall": ("espejo de baño", "m"),
@@ -479,8 +482,111 @@ WORLD_CLASSES_ES = {
     "thermometer": ("termómetro", "m"),
 }
 
-# Lookup rápido de género por nombre en español
+# Lookup rápido de género por nombre en español (se actualiza tras definir NAVIGATION_WORLD_CLASSES_ES)
 GENDER_MAP = {name_es: gender for (name_es, gender) in WORLD_CLASSES_ES.values()}
+
+
+# ============================================================================
+# CLASES COMPACTAS PARA MODO NAVEGACIÓN
+# ============================================================================
+# Solo obstáculos físicos relevantes para movilidad peatonal (~70 clases).
+# Menos clases → menos confusión entre objetos visualmente similares.
+# Con 391 clases YOLO confunde puerta↔espejo, cobija↔cama, etc.
+# Con ~70 clases de obstáculos esas confusiones desaparecen.
+
+NAVIGATION_WORLD_CLASSES_ES: dict = {
+    # Personas
+    "person": ("persona", "f"),
+    "child": ("niño", "m"),
+    "baby": ("bebé", "m"),
+    "wheelchair user": ("persona en silla de ruedas", "f"),
+    # Animales
+    "dog": ("perro", "m"),
+    "puppy": ("cachorro", "m"),
+    "cat": ("gato", "m"),
+    "horse": ("caballo", "m"),
+    "cow": ("vaca", "f"),
+    "pig": ("cerdo", "m"),
+    "sheep": ("oveja", "f"),
+    "donkey": ("burro", "m"),
+    # Vehículos
+    "car": ("carro", "m"),
+    "bus": ("autobús", "m"),
+    "truck": ("camión", "m"),
+    "motorcycle": ("motocicleta", "f"),
+    "bicycle": ("bicicleta", "f"),
+    "electric scooter": ("scooter eléctrico", "m"),
+    "taxi cab": ("taxi", "m"),
+    "ambulance vehicle": ("ambulancia", "f"),
+    "police car": ("patrulla", "f"),
+    # Muebles obstáculo
+    "sitting chair with backrest and four legs": ("silla", "f"),
+    "large wooden dining table": ("mesa", "f"),
+    "flat horizontal desk with keyboard and monitor": ("escritorio", "m"),
+    "upholstered sofa couch furniture": ("sofá", "m"),
+    "bed frame with mattress headboard": ("cama", "f"),
+    "outdoor park bench seat": ("banco", "m"),
+    "kitchen counter top": ("mostrador", "m"),
+    "large dining room table": ("mesa de comedor", "f"),
+    "shopping cart supermarket": ("carrito de compras", "m"),
+    "baby stroller pram": ("cochecito de bebé", "m"),
+    "manual wheelchair": ("silla de ruedas", "f"),
+    # Puertas y accesos
+    "door closed shut blocking passage": ("puerta cerrada", "f"),
+    "closed door flat surface": ("puerta cerrada", "f"),
+    "door open wide": ("puerta abierta", "f"),
+    "glass door transparent": ("puerta de vidrio", "f"),
+    "revolving door": ("puerta giratoria", "f"),
+    "metal gate fence": ("reja", "f"),
+    "door panel": ("puerta", "f"),
+    "sliding door panel": ("puerta corrediza", "f"),
+    "elevator door": ("ascensor", "m"),
+    # Paredes y estructuras
+    "concrete wall": ("pared", "f"),
+    "brick wall": ("pared de ladrillo", "f"),
+    "glass wall": ("pared de vidrio", "f"),
+    "pillar": ("pilar", "m"),
+    "concrete column": ("columna", "f"),
+    # Escaleras y desniveles
+    "staircase": ("escaleras", "f"),
+    "single step on floor": ("escalón", "m"),
+    "escalator": ("escalera mecánica", "f"),
+    "sidewalk curb": ("borde de acera", "m"),
+    "manhole cover": ("tapa de alcantarilla", "f"),
+    "speed bump": ("reductor de velocidad", "m"),
+    # Balcones y caídas
+    "balcony": ("balcón", "m"),
+    "balcony railing": ("barandal de balcón", "m"),
+    "ledge": ("cornisa", "f"),
+    "railing": ("barandal", "m"),
+    # Infraestructura de calle
+    "street pole": ("poste", "m"),
+    "street lamp post": ("farola", "f"),
+    "tree": ("árbol", "m"),
+    "fire hydrant": ("hidrante", "m"),
+    "traffic cone": ("cono de tráfico", "m"),
+    "road barrier": ("barrera vial", "f"),
+    "metal fence": ("cerca", "f"),
+    "entrance gate": ("portón", "m"),
+    "traffic light": ("semáforo", "m"),
+    "garbage dumpster": ("contenedor de basura", "m"),
+    "metal construction scaffolding on building": ("andamio", "m"),
+    # Electrodomésticos peligrosos (solo fuente de calor — los otros causan demasiados falsos positivos)
+    "kitchen stove with burners cooking": ("estufa", "f"),
+    "kitchen oven appliance door": ("horno", "m"),
+    # Objetos portátiles obstáculo
+    "backpack bag on floor or back": ("mochila", "f"),
+    "travel suitcase": ("maleta", "f"),
+    "cardboard box": ("caja de cartón", "f"),
+    "skateboard": ("patineta", "f"),
+    # Señales de peligro
+    "wet floor sign": ("señal de piso mojado", "f"),
+}
+
+# Lookup combinado: cubre tanto WORLD_CLASSES_ES como NAVIGATION_WORLD_CLASSES_ES.
+# Necesario porque los prompts de navegación son distintos a los completos
+# (más específicos para reducir confusión), y el traductor busca por prompt inglés.
+ALL_CLASSES_LOOKUP: dict = {**WORLD_CLASSES_ES, **NAVIGATION_WORLD_CLASSES_ES}
 
 
 class ObjectDetectionService:
@@ -504,7 +610,34 @@ class ObjectDetectionService:
         """
         self.model = None
         self.confidence_threshold = settings.YOLO_CONFIDENCE_THRESHOLD
+        self._current_class_mode: str = "full"
         self._load_model()
+
+    def configure_for_navigation(self) -> None:
+        """Cambia YOLO a clases compactas de navegación (~70 clases).
+
+        Llamar al inicio de una sesión WebSocket de navegación.
+        Menos clases → menos confusión → menos falsos positivos.
+        """
+        if self._current_class_mode == "navigation" or self.model is None:
+            return
+        nav_classes = list(NAVIGATION_WORLD_CLASSES_ES.keys())
+        self.model.set_classes(nav_classes)
+        self._current_class_mode = "navigation"
+        logger.info(f"YOLO configurado para navegación: {len(nav_classes)} clases")
+
+    def configure_for_full(self) -> None:
+        """Restaura YOLO a la lista completa de clases.
+
+        Llamar al finalizar la sesión WebSocket para que
+        exploración/lectura sigan con el vocabulario completo.
+        """
+        if self._current_class_mode == "full" or self.model is None:
+            return
+        full_classes = list(WORLD_CLASSES_ES.keys())
+        self.model.set_classes(full_classes)
+        self._current_class_mode = "full"
+        logger.info(f"YOLO restaurado a clases completas: {len(full_classes)} clases")
 
     def _load_model(self) -> None:
         """
@@ -604,6 +737,7 @@ class ObjectDetectionService:
                 "object_count": len(detected_objects),
                 "summary": summary,
                 "raw_depths": raw_depths,
+                "depth_map": depth_map,  # incluido para análisis de pared en WebSocket
             }
 
         except Exception as e:
@@ -665,7 +799,7 @@ class ObjectDetectionService:
                 )
 
                 # Traducir nombre al español
-                class_info = WORLD_CLASSES_ES.get(class_name)
+                class_info = ALL_CLASSES_LOOKUP.get(class_name)
                 name_es = class_info[0] if class_info else class_name
 
                 # Estimar profundidad → zona

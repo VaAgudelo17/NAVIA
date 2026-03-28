@@ -48,6 +48,7 @@ import {
 import { useRealtimeDetection, RealtimeSessionSummary } from '../hooks/useRealtimeDetection';
 import { usePreferences } from '../context/PreferencesContext';
 import { saveToHistory, getHistory, clearHistory, HistoryEntry } from '../services/storage';
+import { SettingsScreen } from './SettingsScreen';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -66,10 +67,16 @@ export function HomeScreen() {
     analysisMode,
     readingMode,
     ttsEnabled,
+    theme,
+    fontScale,
     setAnalysisMode,
     setReadingMode,
     setTtsEnabled,
   } = usePreferences();
+
+  const [settingsVisible, setSettingsVisible] = useState(false);
+  const C = theme;
+  const fs = (size: number) => Math.round(size * fontScale);
 
   // Estados principales
   const [appState, setAppState] = useState<AppState>('home');
@@ -171,10 +178,12 @@ export function HomeScreen() {
       setAppState('realtime');
       setRealtimeActive(true);
       const modeLabel = MODE_CONFIG[analysisMode].label;
-      ttsManager.speak(`Modo ${modeLabel} activado. Apunta la cámara.`, TtsPriority.HIGH);
+      ttsManager.stop();
+      ttsManager.speak(`Modo ${modeLabel} activado. Apunta la cámara.`, TtsPriority.INTERRUPT);
     } else {
       setAppState('camera');
-      ttsManager.speak('Cámara activada. Toca el botón central para capturar.', TtsPriority.HIGH);
+      ttsManager.stop();
+      ttsManager.speak('Cámara activada. Toca el botón central para capturar.', TtsPriority.INTERRUPT);
     }
   };
 
@@ -226,8 +235,12 @@ export function HomeScreen() {
         case 'navegacion': {
           const result = await analyzeNavigation(imageUri);
           setNavResult(result);
+          if (result.priority && result.priority !== 'none') {
+            triggerNavigationHaptic(result.priority);
+          }
+          // Detener "Procesando..." antes de hablar el resultado
+          ttsManager.stop();
           ttsManager.speakFromBackend(result.instruction, TtsPriority.HIGH);
-          // Guardar en historial local
           saveToHistory({
             mode: 'navegacion',
             resultSummary: result.instruction,
@@ -238,6 +251,7 @@ export function HomeScreen() {
         case 'exploracion': {
           const result = await analyzeExploration(imageUri);
           setExplorationResult(result);
+          ttsManager.stop();
           ttsManager.speakFromBackend(result.description, TtsPriority.HIGH);
           saveToHistory({
             mode: 'exploracion',
@@ -249,11 +263,17 @@ export function HomeScreen() {
         case 'lectura': {
           const result = await analyzeReading(imageUri);
           setSmartResult(result);
-          // Solo hablar feedback de calidad si la imagen NO es aceptable (critical)
+          ttsManager.stop();
+
+          // Feedback de calidad
           if (result.image_quality?.feedback_text && !result.image_quality.is_acceptable) {
             ttsManager.speak(result.image_quality.feedback_text, TtsPriority.INTERRUPT);
           }
-          ttsManager.speakFromBackend(result.narrative, TtsPriority.HIGH);
+
+          // Narrative o mensaje por defecto
+          const message = result.narrative || 'No se detectó texto claro en la imagen.';
+          ttsManager.speak(message, TtsPriority.HIGH);
+          
           saveToHistory({
             mode: 'lectura',
             resultSummary: result.narrative?.substring(0, 200) || '',
@@ -266,6 +286,26 @@ export function HomeScreen() {
       setAppState('results');
     } catch (err: any) {
       handleError(err.message || 'Error procesando la imagen');
+    }
+  };
+
+  // Vibración según nivel de peligro en navegación
+  const triggerNavigationHaptic = (priority: string) => {
+    switch (priority) {
+      case 'critical':
+        // Doble golpe fuerte: peligro inmediato
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        setTimeout(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error), 300);
+        break;
+      case 'high':
+        // Un golpe fuerte: obstáculo importante
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        break;
+      case 'medium':
+        // Golpe suave: obstáculo menor
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        break;
+      // 'none': sin vibración
     }
   };
 
@@ -322,11 +362,24 @@ export function HomeScreen() {
 
   // Pantalla de inicio
   const renderHome = () => (
-    <View style={styles.homeContainer}>
+    <View style={[styles.homeContainer, { backgroundColor: C.background }]}>
+      {/* Botón de ajustes — arriba a la derecha */}
+      <TouchableOpacity
+        style={[styles.settingsBtn, { backgroundColor: C.surface }]}
+        onPress={() => {
+          ttsManager.speak('Abriendo configuración visual.', TtsPriority.HIGH);
+          setSettingsVisible(true);
+        }}
+        accessibilityLabel="Configuración visual: temas y tamaño de letra"
+        accessibilityRole="button"
+      >
+        <Ionicons name="settings-outline" size={22} color={C.primary} />
+      </TouchableOpacity>
+
       <View style={styles.header}>
-        <AnimatedEye size={48} color={COLORS.primary} />
-        <Text style={styles.title}>NAVIA</Text>
-        <Text style={styles.subtitle}>Asistente Visual con IA</Text>
+        <AnimatedEye size={48} color={C.primary} />
+        <Text style={[styles.title, { color: C.text, fontSize: fs(42) }]}>NAVIA</Text>
+        <Text style={[styles.subtitle, { color: C.textSecondary, fontSize: fs(18) }]}>Asistente Visual con IA</Text>
       </View>
 
       {/* Indicador de conexión */}
@@ -342,7 +395,7 @@ export function HomeScreen() {
             },
           ]}
         />
-        <Text style={styles.connectionText}>
+        <Text style={[styles.connectionText, { color: C.textSecondary, fontSize: fs(14) }]}>
           {isBackendConnected === null ? 'Conectando...'
             : isBackendConnected ? 'Servidor conectado'
             : 'Sin conexión al servidor'}
@@ -351,34 +404,39 @@ export function HomeScreen() {
 
       {/* Selector de modo - grid 2x2 */}
       <View style={styles.modeSelector}>
-        <Text style={styles.modeLabel}>Modo de análisis:</Text>
+        <Text style={[styles.modeLabel, { color: C.textSecondary, fontSize: fs(14) }]}>Modo de análisis:</Text>
         <View style={styles.modeButtons}>
           {Object.entries(ANALYSIS_MODES).map(([key, value]) => {
             const config = MODE_CONFIG[value];
+            const isActive = analysisMode === value;
             return (
               <TouchableOpacity
                 key={key}
                 style={[
                   styles.modeButton,
-                  analysisMode === value && styles.modeButtonActive,
+                  {
+                    borderColor: C.primary,
+                    backgroundColor: isActive ? C.primary : 'transparent',
+                  },
                 ]}
                 onPress={() => {
                   setAnalysisMode(value);
-                  ttsManager.speak(`Modo ${config.label}. ${config.description}.`, TtsPriority.HIGH);
+                  ttsManager.stop();
+                  ttsManager.speak(`Modo ${config.label}. ${config.description}.`, TtsPriority.INTERRUPT);
                 }}
                 accessibilityRole="radio"
-                accessibilityState={{ selected: analysisMode === value }}
+                accessibilityState={{ selected: isActive }}
                 accessibilityLabel={`Modo ${config.label}. ${config.description}`}
               >
                 <Ionicons
                   name={config.icon as any}
                   size={20}
-                  color={analysisMode === value ? COLORS.background : COLORS.primary}
+                  color={isActive ? C.background : C.primary}
                 />
                 <Text
                   style={[
                     styles.modeButtonText,
-                    analysisMode === value && styles.modeButtonTextActive,
+                    { color: isActive ? C.background : C.primary, fontSize: fs(14) },
                   ]}
                 >
                   {config.label}
@@ -420,14 +478,15 @@ export function HomeScreen() {
           const newValue = !ttsEnabled;
           setTtsEnabled(newValue);
           // Siempre habilitar temporalmente para que se escuche la confirmación
-          ttsManager.setEnabled(true);
-          if (!newValue) {
-            ttsManager.speak('Voz desactivada.', TtsPriority.INTERRUPT);
-            // Desactivar después de que termine de hablar
-            setTimeout(() => ttsManager.setEnabled(false), 3000);
-          } else {
-            ttsManager.speak('Voz activada.', TtsPriority.INTERRUPT);
-          }
+    ttsManager.setEnabled(true);
+    if (!ttsEnabled) {
+      ttsManager.stop();
+      ttsManager.speak('Voz desactivada.', TtsPriority.INTERRUPT);
+      setTimeout(() => ttsManager.setEnabled(false), 3000);
+    } else {
+      ttsManager.stop();
+      ttsManager.speak('Voz activada.', TtsPriority.INTERRUPT);
+    }
         }}
         accessibilityLabel={ttsEnabled ? 'Desactivar voz' : 'Activar voz'}
         accessibilityRole="switch"
@@ -436,9 +495,9 @@ export function HomeScreen() {
         <Ionicons
           name={ttsEnabled ? 'volume-high' : 'volume-mute'}
           size={24}
-          color={ttsEnabled ? COLORS.primary : COLORS.textSecondary}
+          color={ttsEnabled ? C.primary : C.textSecondary}
         />
-        <Text style={styles.ttsToggleText}>
+        <Text style={[styles.ttsToggleText, { color: ttsEnabled ? C.primary : C.textSecondary, fontSize: fs(14) }]}>
           {ttsEnabled ? 'Voz activada' : 'Voz desactivada'}
         </Text>
       </TouchableOpacity>
@@ -450,8 +509,8 @@ export function HomeScreen() {
         accessibilityLabel="Ver historial de análisis"
         accessibilityRole="button"
       >
-        <Ionicons name="time" size={20} color={COLORS.primary} />
-        <Text style={styles.historyButtonText}>Ver Historial</Text>
+        <Ionicons name="time" size={20} color={C.primary} />
+        <Text style={[styles.historyButtonText, { color: C.primary, fontSize: fs(14) }]}>Ver Historial</Text>
       </TouchableOpacity>
     </View>
   );
@@ -604,24 +663,36 @@ export function HomeScreen() {
               )}
             </View>
 
-            {/* Indicador de peligro (navegación con riesgo integrado) */}
-            {latestResult?.has_danger && (
+            {/* Indicador de estado:
+                - PELIGRO (rojo)    = objeto intrínsecamente peligroso (vehículo, escalera, balcón...)
+                - ATENCIÓN (naranja) = obstáculo cercano o acercándose que puede impedir el paso
+                - CAMINO LIBRE (verde) = sin obstáculos relevantes al frente */}
+            {latestResult && (
               <View style={styles.riskIndicatorContainer}>
                 <View
                   style={[
                     styles.riskIndicator,
                     {
-                      backgroundColor: latestResult.priority === 'critical' ? '#EF4444' : '#F59E0B',
+                      backgroundColor:
+                        latestResult.alert_type === 'peligro' ? '#EF4444' :
+                        latestResult.alert_type === 'atencion' ? '#F97316' :
+                        '#22C55E',
                     },
                   ]}
                 >
                   <Ionicons
-                    name="warning"
+                    name={
+                      latestResult.alert_type === 'peligro' ? 'warning' :
+                      latestResult.alert_type === 'atencion' ? 'alert-circle' :
+                      'checkmark-circle'
+                    }
                     size={48}
                     color="white"
                   />
                   <Text style={styles.riskIndicatorText}>
-                    {latestResult.priority === 'critical' ? 'PELIGRO' : 'PRECAUCIÓN'}
+                    {latestResult.alert_type === 'peligro' ? '¡PELIGRO!' :
+                     latestResult.alert_type === 'atencion' ? 'ATENCIÓN' :
+                     'CAMINO LIBRE'}
                   </Text>
                 </View>
               </View>
@@ -981,9 +1052,13 @@ export function HomeScreen() {
   );
 
   return (
-    <View style={styles.container}>
-      <StatusBar style="light" />
+    <View style={[styles.container, { backgroundColor: C.background }]}>
+      <StatusBar style={C.background === '#ffffff' ? 'dark' : 'light'} />
       {renderContent()}
+      <SettingsScreen
+        visible={settingsVisible}
+        onClose={() => setSettingsVisible(false)}
+      />
     </View>
   );
 }
@@ -994,6 +1069,17 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
   },
   // Home
+  settingsBtn: {
+    position: 'absolute',
+    top: 52,
+    right: 20,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
   homeContainer: {
     flex: 1,
     padding: 24,
