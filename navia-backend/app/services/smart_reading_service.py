@@ -302,6 +302,9 @@ class DocumentClassifier:
             "correo": "Correo electrónico",
             "presentacion": "Presentación",
             "configuracion": "Pantalla de configuración",
+            "hoja_de_vida": "Hoja de vida",
+            "app_banking": "Aplicación bancaria",
+            "tarjeta_felicitacion": "Tarjeta de felicitación",
         }
         return labels.get(doc_type, "Documento")
 
@@ -536,7 +539,15 @@ class OCRTextReconstructor:
         text = self._split_glued_words(text)
 
         # 4. Limpiar tokens individuales (la limpieza más agresiva)
+        # Nota: _clean_tokens usa text.split() y pierde newlines, por eso
+        # _insert_section_breaks se llama DESPUÉS (paso 4.5).
         text = self._clean_tokens(text)
+
+        # 4.5. Restaurar saltos de línea en encabezados de sección ALL-CAPS
+        # Cuando el OCR colapsa varias líneas en una, los encabezados (HABILIDADES,
+        # EDUCACIÓN…) quedan pegados al contenido anterior. Esta etapa los restaura
+        # para que _rebuild_lines pueda procesarlos correctamente.
+        text = self._insert_section_breaks(text)
 
         # 5. Reconstruir líneas coherentes
         text = self._rebuild_lines(text)
@@ -683,6 +694,31 @@ class OCRTextReconstructor:
         return " ".join(clean)
 
     @staticmethod
+    def _insert_section_breaks(text: str) -> str:
+        """
+        Restaura saltos de línea antes de encabezados ALL-CAPS de sección.
+
+        Problema: el OCR a veces colapsa varias líneas en una, dejando el
+        encabezado de sección pegado al contenido anterior:
+          "Gastronomía HABILIDADES Atención cliente trabajo en equipo"
+        Esta función inserta un newline antes de la palabra ALL-CAPS:
+          "Gastronomía\nHABILIDADES\nAtención cliente trabajo en equipo"
+
+        Solo actúa cuando una palabra ALL-CAPS >= 4 letras aparece precedida
+        por texto en minúsculas (signo claro de collapse de líneas).
+        """
+        # Detecta: texto_minúsc + espacio + PALABRA_MAYÚSC (>= 4 letras)
+        # Inserta \n antes de la palabra mayúscula
+        text = re.sub(
+            r'(?<=[a-záéíóúñ.,;])[ \t]+([A-ZÁÉÍÓÚÑ]{4,}(?:[ \t]+[A-ZÁÉÍÓÚÑ]{3,})*)\b',
+            r'\n\1\n',
+            text
+        )
+        # Colapsar múltiples newlines consecutivos
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        return text
+
+    @staticmethod
     def _rebuild_lines(text: str) -> str:
         """
         Reconstruye líneas coherentes agrupando tokens.
@@ -741,6 +777,48 @@ def _cf(fragment: str) -> str:
     return get_text_reconstructor().clean_fragment(fragment)
 
 
+# Encabezados de sección típicos en documentos estructurados (CV, contratos, formularios).
+# Se usan para detectar el inicio de una nueva sección y cortar capturas de regex.
+_SECTION_HEADERS_RE = re.compile(
+    r'\b(?:aptitudes?|habilidades?|competencias?|destrezas?|'
+    r'idiomas?|languages?|'
+    r'educaci[oó]n|formaci[oó]n\s+acad[eé]mica?|estudios|'
+    r'experiencia(?:\s+(?:laboral|profesional))?|'
+    r'objetivo\s+(?:profesional|laboral)|perfil\s+profesional|resumen\s+profesional|'
+    r'informaci[oó]n\s+(?:personal|de\s+contacto)|datos?\s+(?:personales?)?|'
+    r'contacto|referencias?\s+(?:personales?|laborales?)?|'
+    r'logros?|certificaciones?|cursos?|capacitaciones?|publicaciones?|'
+    r'cl[aá]usulas?|objeto\s+del\s+contrato|condiciones?\s+generales?|'
+    r'descripci[oó]n\s+del\s+servicio|vigencia|partes?\s+del\s+contrato)\b',
+    re.IGNORECASE
+)
+
+
+def _stop_at_section(fragment: str, max_words: int = 20) -> str:
+    """
+    Trunca un fragmento capturado por regex al encontrar el inicio de otra sección.
+
+    Previene el 'section bleeding': cuando el OCR colapsa varias líneas en una,
+    un regex [^\n]{N} puede capturar más allá de la sección objetivo.
+
+    Ejemplo (antes):
+      edu_match captura → "Preparatoria técnica Gastronomía HABILIDADES Atención cliente trabajo equipo"
+    Ejemplo (después de _stop_at_section):
+      → "Preparatoria técnica Gastronomía"
+
+    Args:
+        fragment: texto ya limpiado con _cf() o equivalente
+        max_words: límite adicional de palabras (fallback si no hay encabezado)
+    """
+    m = _SECTION_HEADERS_RE.search(fragment)
+    if m and m.start() > 0:
+        fragment = fragment[:m.start()].rstrip(' ,;:-')
+    words = fragment.split()
+    if len(words) > max_words:
+        fragment = " ".join(words[:max_words]) + "..."
+    return fragment.strip()
+
+
 # ============================================================================
 # NARRATIVE GENERATOR
 # ============================================================================
@@ -765,9 +843,10 @@ class NarrativeGenerator:
             "documento_informativo": self._gen_documento_info,
             "etiqueta": self._gen_etiqueta,
             "tarjeta": self._gen_tarjeta,
-            "contrato": self._gen_documento_info,
-            "hoja_de_vida": self._gen_documento_info,
+            "contrato": self._gen_contrato,
+            "hoja_de_vida": self._gen_hoja_de_vida,
             "informe": self._gen_documento_info,
+            "tarjeta_felicitacion": self._gen_tarjeta_felicitacion,
             "noticia": self._gen_noticia,
             "correo": self._gen_correo,
             "presentacion": self._gen_presentacion,
@@ -791,7 +870,8 @@ class NarrativeGenerator:
             "app_login": self._gen_login,
             "app_form": self._gen_formulario,
             "app_social": self._gen_red_social,
-            "app_service": self._make_app_gen("un servicio o compra"),
+            "app_service": self._gen_app_service,
+            "app_banking": self._gen_app_banking,
             "notificacion": self._gen_notificacion,
             "mapa": self._gen_mapa,
 
@@ -1045,8 +1125,23 @@ class NarrativeGenerator:
             m = re.search(r'\b(nequi|daviplata|pse|paypal)\b', text, re.IGNORECASE)
             metodo = m.group(1) if m else None
 
+        # Detectar empresa/comercio emisor
+        empresa = None
+        if ex.headers:
+            empresa = ex.headers[0]
+        else:
+            first_line = text.strip().split('\n')[0].strip() if text.strip() else ""
+            if first_line and 2 < len(first_line.split()) <= 6:
+                empresa = first_line
+
         if ex.amounts:
-            intro = f"Tienes un recibo de pago por {ex.amounts[0]}."
+            monto_str = ex.amounts[0]
+            if empresa:
+                intro = f"Tienes un recibo de pago de {empresa} por {monto_str}."
+            else:
+                intro = f"Tienes un recibo de pago por {monto_str}."
+        elif empresa:
+            intro = f"Tienes un recibo de pago de {empresa}."
         else:
             intro = "Tienes un recibo de pago."
 
@@ -1080,7 +1175,6 @@ class NarrativeGenerator:
             parts.append(f"Correo de contacto: {ex.emails[0]}.")
         if ex.phones:
             parts.append(f"Teléfono: {ex.phones[0]}.")
-        parts.append("Guarda este recibo como comprobante.")
         return " ".join(parts)
 
     # --- CARTA ---
@@ -1950,6 +2044,372 @@ class NarrativeGenerator:
 
         return " ".join(parts)
 
+    # --- CONTRATO ---
+
+    def _gen_contrato(self, mode: str, text: str, ex: ExtractedData,
+                      caption: Optional[str]) -> str:
+        """Narrativa natural para contratos de servicios, trabajo, arrendamiento, etc."""
+        if not text or not text.strip():
+            return "Es un contrato, pero no pude leer el contenido."
+
+        # Tipo de contrato (limitar a primera línea/título)
+        tipo_match = re.search(
+            r'\bcontrato\s+de\s+([^\n\r,;]{3,40}?)(?:\s*\n|\s{2,}|$)',
+            text, re.IGNORECASE
+        )
+        if tipo_match:
+            tipo = _cf(tipo_match.group(1)).rstrip('.,;').strip()
+            # Convertir a título si está en mayúsculas
+            if tipo.isupper():
+                tipo = tipo.title()
+            if tipo and len(tipo.split()) <= 6:
+                parts = [f"Es un contrato de {tipo}."]
+            else:
+                parts = ["Es un contrato de servicios."]
+        elif re.search(r'\bcontrato\b', text, re.I):
+            parts = ["Es un contrato."]
+        elif ex.headers:
+            parts = [f"Es un contrato: {ex.headers[0]}."]
+        else:
+            parts = ["Es un contrato."]
+
+        if mode == "resumen":
+            # Partes del contrato — buscar nombres Title Case
+            partes_r = []
+            for line in text.split('\n'):
+                line = line.strip()
+                words = line.split()
+                _NON_NAME = {'datos', 'empresa', 'calle', 'lugar', 'descripción', 'descripcion', 'servicio', 'contrato', 'asistente', 'virtual'}
+                if 2 <= len(words) <= 4 and all(w[0].isupper() for w in words if w) and not line.isupper():
+                    if words[0].lower() not in _NON_NAME:
+                        partes_r.append(line)
+                        if len(partes_r) >= 2:
+                            break
+            if partes_r:
+                parts.append(f"Partes: {' y '.join(partes_r)}.")
+            elif ex.emails:
+                parts.append(f"Contacto: {ex.emails[0]}.")
+            if ex.dates:
+                parts.append(f"Fecha: {ex.dates[0]}.")
+            return " ".join(parts)
+
+        # Detallado: extraer partes y datos clave
+        # Nombres de los firmantes (buscar en headers o primeras líneas)
+        partes = []
+        nombre_patterns = [
+            re.compile(r'\b(?:arrendador|arrendatario|empleador|empleado|contratante|contratista|proveedor|cliente)\s*:?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)+)', re.I),
+            re.compile(r'\b(?:entre)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)+)\s+(?:y|con)\b', re.I),
+        ]
+        for pat in nombre_patterns:
+            for m in pat.finditer(text):
+                nombre = m.group(1).strip()
+                if nombre not in partes and len(nombre.split()) >= 2:
+                    partes.append(nombre)
+                if len(partes) >= 2:
+                    break
+
+        # Also try to find names: lines with 2-3 capitalized words (Title Case), not all-caps
+        if not partes:
+            for line in text.split('\n'):
+                line = line.strip()
+                words = line.split()
+                if 2 <= len(words) <= 4 and all(w[0].isupper() for w in words if w) and not line.isupper():
+                    # Exclude common section titles and non-name words
+                    _NON_NAME_WORDS = {'datos', 'empresa', 'calle', 'lugar', 'descripción', 'descripcion', 'servicio', 'contrato'}
+                    if words[0].lower() not in _NON_NAME_WORDS:
+                        partes.append(line)
+                        if len(partes) >= 2:
+                            break
+
+        if partes:
+            parts.append(f"Partes involucradas: {' y '.join(partes[:2])}.")
+
+        # Vigencia / duración
+        vig_match = re.search(
+            r'\b(?:vigencia|vigente|duración|plazo|término)\s*:?\s*([^\n]{4,50})',
+            text, re.IGNORECASE
+        )
+        if vig_match:
+            parts.append(f"Vigencia: {_cf(vig_match.group(1))}.")
+        elif ex.dates:
+            parts.append(f"Fecha: {ex.dates[0]}.")
+
+        # Descripción del servicio
+        desc_match = re.search(
+            r'\b(?:descripci[oó]n\s+del\s+servicio|objeto\s+del\s+contrato|servicios?\s+a\s+prestar)\s*:?\s*([^\n]{10,120})',
+            text, re.IGNORECASE
+        )
+        if desc_match:
+            desc = _cf(desc_match.group(1))
+            words = desc.split()
+            if len(words) > 25:
+                desc = " ".join(words[:25]) + "..."
+            parts.append(f"Servicio: {desc}.")
+
+        # Contacto
+        if ex.emails:
+            parts.append(f"Correo de contacto: {ex.emails[0]}.")
+        if ex.phones:
+            parts.append(f"Teléfono: {ex.phones[0]}.")
+
+        return " ".join(parts)
+
+    # --- HOJA DE VIDA / CURRICULUM ---
+
+    def _gen_hoja_de_vida(self, mode: str, text: str, ex: ExtractedData,
+                          caption: Optional[str]) -> str:
+        """Narrativa natural para currículum vitae / hoja de vida."""
+        if not text or not text.strip():
+            return "Es una hoja de vida, pero no pude leer el contenido."
+
+        parts = []
+
+        # Nombre: buscar en líneas Title Case cortas al inicio
+        candidate_name = None
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        _CV_SECTIONS = {'contacto', 'idiomas', 'aptitudes', 'habilidades', 'educación',
+                        'educacion', 'experiencia', 'datos', 'perfil', 'objetivo', 'referencias'}
+        for line in lines[:6]:  # Buscar solo en las primeras líneas
+            words = line.split()
+            if 2 <= len(words) <= 4 and not line.isupper():
+                if all(c.isalpha() or c in ' áéíóúüñÁÉÍÓÚÜÑ' for c in line):
+                    if words[0].lower() not in _CV_SECTIONS:
+                        candidate_name = line
+                        break
+
+        if candidate_name:
+            parts.append(f"Es la hoja de vida de {candidate_name}.")
+        else:
+            parts.append("Es una hoja de vida.")
+
+        # Extraer aptitudes/área profesional (útil cuando no hay objetivo explícito)
+        aptitudes_match = re.search(
+            r'(?:aptitudes?|habilidades?|competencias?)\s*:?\s*([^\n]{5,200})',
+            text, re.IGNORECASE
+        )
+        hab_text_raw = _stop_at_section(_cf(aptitudes_match.group(1)), 15) if aptitudes_match else None
+
+        # Perfil profesional
+        perfil_match = re.search(
+            r'(?:objetivo\s+(?:profesional|laboral)|perfil\s+profesional|resumen\s+profesional)\s*:?\s*([^\n]{10,200})',
+            text, re.IGNORECASE
+        )
+
+        if mode == "resumen":
+            if perfil_match:
+                perfil = _stop_at_section(_cf(perfil_match.group(1)), 20)
+                parts.append(f"Perfil: {perfil}.")
+            elif hab_text_raw:
+                parts.append(f"Aptitudes: {hab_text_raw}.")
+            elif ex.emails:
+                parts.append(f"Correo: {ex.emails[0]}.")
+            return " ".join(parts)
+
+        # Detallado y financiero: extraer secciones clave
+        # Profesión / cargo objetivo
+        cargo_match = re.search(
+            r'(?:cargo\s+(?:aspirado?|objetivo|deseado?)|puesto\s+(?:aspirado?|objetivo)|posici[oó]n\s+objetivo)\s*:?\s*([^\n]{3,100})',
+            text, re.IGNORECASE
+        )
+        if cargo_match:
+            parts.append(f"Aspira al cargo de {_stop_at_section(_cf(cargo_match.group(1)), 10)}.")
+        elif perfil_match:
+            perfil = _stop_at_section(_cf(perfil_match.group(1)), 20)
+            parts.append(f"Perfil: {perfil}.")
+
+        # Experiencia laboral
+        exp_match = re.search(
+            r'(?:experiencia\s+(?:laboral|profesional)|experiencia)\s*:?\s*([^\n]{5,200})',
+            text, re.IGNORECASE
+        )
+        if exp_match:
+            exp_text = _stop_at_section(_cf(exp_match.group(1)), 20)
+            parts.append(f"Experiencia: {exp_text}.")
+        else:
+            empresa_match = re.search(
+                r'(?:empresa|compa[ñn][ií]a|organizaci[oó]n)\s*:?\s*([^\n]{3,100})',
+                text, re.IGNORECASE
+            )
+            if empresa_match:
+                parts.append(f"Trabajó en {_stop_at_section(_cf(empresa_match.group(1)), 8)}.")
+
+        # Educación
+        edu_match = re.search(
+            r'(?:educaci[oó]n|formaci[oó]n\s+acad[eé]mica|estudios)\s*:?\s*([^\n]{5,200})',
+            text, re.IGNORECASE
+        )
+        if edu_match:
+            edu_text = _stop_at_section(_cf(edu_match.group(1)), 15)
+            parts.append(f"Estudios: {edu_text}.")
+
+        # Aptitudes / habilidades (usar el match ya calculado)
+        if hab_text_raw:
+            parts.append(f"Aptitudes: {hab_text_raw}.")
+        else:
+            hab_match = re.search(
+                r'(?:habilidades|skills)\s*:?\s*([^\n]{5,200})',
+                text, re.IGNORECASE
+            )
+            if hab_match:
+                hab_text = _stop_at_section(_cf(hab_match.group(1)), 15)
+                parts.append(f"Habilidades: {hab_text}.")
+
+        # Idiomas
+        idioma_match = re.search(
+            r'(?:idiomas?|languages?)\s*:?\s*([^\n]{5,150})',
+            text, re.IGNORECASE
+        )
+        if idioma_match:
+            parts.append(f"Idiomas: {_stop_at_section(_cf(idioma_match.group(1)), 10)}.")
+
+        # Contacto
+        if ex.emails:
+            parts.append(f"Correo: {ex.emails[0]}.")
+        if ex.phones:
+            parts.append(f"Teléfono: {ex.phones[0]}.")
+
+        return " ".join(parts)
+
+    # --- APP BANCARIA ---
+
+    def _gen_app_banking(self, mode: str, text: str, ex: ExtractedData,
+                         caption: Optional[str]) -> str:
+        """Narrativa natural para capturas de apps bancarias."""
+        if not text or not text.strip():
+            return "Es una pantalla de tu banco, pero no pude leer los datos."
+
+        parts = ["Es una pantalla de tu aplicación bancaria."]
+
+        # Cupo disponible
+        cupo_match = re.search(
+            r'(?:cupo\s+(?:disponible|total|utilizado|de\s+cr[eé]dito))\s*:?\s*([\$]?\s*[\d,.]+(?:\s*(?:COP|USD|pesos))?)',
+            text, re.IGNORECASE
+        )
+        if cupo_match:
+            parts.append(f"Cupo disponible: {cupo_match.group(1).strip()}.")
+
+        # Saldo
+        saldo_match = re.search(
+            r'(?:saldo\s+(?:disponible|actual|a\s+favor|en\s+cuenta))\s*:?\s*([\$]?\s*[\d,.]+(?:\s*(?:COP|USD|pesos))?)',
+            text, re.IGNORECASE
+        )
+        if saldo_match:
+            parts.append(f"Saldo: {saldo_match.group(1).strip()}.")
+
+        # Pago mínimo
+        pago_min_match = re.search(
+            r'(?:pago\s+m[ií]nimo)\s*:?\s*([\$]?\s*[\d,.]+(?:\s*(?:COP|USD|pesos))?)',
+            text, re.IGNORECASE
+        )
+        if pago_min_match:
+            parts.append(f"Pago mínimo: {pago_min_match.group(1).strip()}.")
+
+        # Pago total / pago oportuno
+        pago_total_match = re.search(
+            r'(?:pago\s+(?:total|oportuno))\s*:?\s*([\$]?\s*[\d,.]+(?:\s*(?:COP|USD|pesos))?)',
+            text, re.IGNORECASE
+        )
+        if pago_total_match:
+            parts.append(f"Pago total: {pago_total_match.group(1).strip()}.")
+
+        # Fecha de corte / fecha de pago
+        corte_match = re.search(
+            r'(?:fecha\s+de\s+(?:corte|pago)|pr[oó]ximo\s+pago|vence?\s+el)\s*:?\s*([^\n]{3,25})',
+            text, re.IGNORECASE
+        )
+        if corte_match:
+            parts.append(f"Fecha de pago: {_cf(corte_match.group(1))}.")
+        elif ex.dates:
+            parts.append(f"Fecha: {ex.dates[0]}.")
+
+        if mode == "resumen":
+            return " ".join(parts)
+
+        # Detallado: montos adicionales y últimos movimientos (solo si no ya mencionados)
+        mentioned_amounts = {cupo_match.group(1).strip() if cupo_match else "",
+                             saldo_match.group(1).strip() if saldo_match else "",
+                             pago_min_match.group(1).strip() if pago_min_match else "",
+                             pago_total_match.group(1).strip() if pago_total_match else ""}
+        if ex.totals:
+            for t in ex.totals[:2]:
+                label_amount = t.strip()
+                amount_val = label_amount.split(":")[-1].strip() if ":" in label_amount else label_amount
+                if amount_val not in mentioned_amounts and label_amount not in " ".join(parts):
+                    parts.append(f"{label_amount}.")
+        elif ex.amounts and not cupo_match and not saldo_match:
+            parts.append("Montos detectados: " + ", ".join(ex.amounts[:4]) + ".")
+
+        # Últimos movimientos
+        mov_match = re.search(
+            r'(?:[uú]ltim[oa]s?\s+(?:movimientos?|transacciones?|compras?))\s*:?\s*([^\n]{5,100})',
+            text, re.IGNORECASE
+        )
+        if mov_match:
+            mov_text = _cf(mov_match.group(1))
+            parts.append(f"Movimientos recientes: {mov_text}.")
+
+        return " ".join(parts)
+
+    # --- TARJETA DE FELICITACIÓN ---
+
+    def _gen_tarjeta_felicitacion(self, mode: str, text: str, ex: ExtractedData,
+                                   caption: Optional[str]) -> str:
+        """Narrativa natural para tarjetas de felicitación y graduación."""
+        if not text or not text.strip():
+            return "Es una tarjeta de felicitación, pero no pude leer el mensaje."
+
+        parts = []
+
+        # Detectar tipo de celebración
+        if re.search(r'\b(?:graduaci[oó]n|te\s+grad[uú][aá](?:ste|s)?|gradu[oó]|egresad[oa]|licenciad[oa]|titulaci[oó]n)\b', text, re.I):
+            parts.append("Es una tarjeta de graduación.")
+        elif re.search(r'\b(?:cumplea[ñn]os?|birthday)\b', text, re.I):
+            parts.append("Es una tarjeta de cumpleaños.")
+        elif re.search(r'\b(?:navidad|a[ñn]o\s+nuevo)\b', text, re.I):
+            parts.append("Es una tarjeta navideña.")
+        else:
+            parts.append("Es una tarjeta de felicitación.")
+
+        # Para quién va dirigida (solo si la siguiente palabra es un nombre propio, no una palabra común)
+        _COMMON_WORDS = frozenset({'todo', 'todos', 'todas', 'quien', 'quién', 'el', 'la', 'los', 'las', 'este', 'esta'})
+        para_match = re.search(
+            r'(?:^|\n)\s*Para\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})(?:\s*\n|$)',
+            text, re.IGNORECASE | re.MULTILINE
+        )
+        if para_match:
+            name_candidate = para_match.group(1).strip()
+            first_word = name_candidate.split()[0].lower()
+            if first_word not in _COMMON_WORDS:
+                parts.append(f"Va dirigida a {name_candidate}.")
+
+        if mode == "resumen":
+            # Extraer el mensaje principal
+            body = self._extract_body_preview(text, max_words=30)
+            if body:
+                parts.append(f"El mensaje dice: {body}.")
+            return " ".join(parts)
+
+        # Detallado: leer mensaje completo
+        body = self._extract_body_preview(text, max_words=80)
+        if body:
+            parts.append(f"El mensaje dice: {body}.")
+
+        # Firmado por (requiere nombre propio — no palabras comunes como "tu familia")
+        _FIRMA_STOPWORDS = frozenset({'tu', 'tus', 'su', 'sus', 'mi', 'mis', 'nuestro', 'nuestra', 'toda', 'todo', 'los', 'las', 'con', 'de'})
+        firma_match = re.search(
+            r'(?:firmado?\s+por|de\s+parte\s+de),?\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)+)',
+            text
+        )
+        if firma_match:
+            firma_val = firma_match.group(1).strip()
+            first_word = firma_val.split()[0].lower()
+            if first_word not in _FIRMA_STOPWORDS:
+                parts.append(f"Firmado por {firma_val}.")
+        elif ex.headers and len(ex.headers) > 1:
+            parts.append(f"De parte de {ex.headers[-1]}.")
+
+        return " ".join(parts)
+
     # --- RECETA MÉDICA ---
 
     def _gen_receta_medica(self, mode: str, text: str, ex: ExtractedData,
@@ -2027,8 +2487,7 @@ class NarrativeGenerator:
         elif re.search(r'\b(?:despu[eé]s\s+de\s+(?:comer|las\s+comidas)|con\s+(?:las\s+)?comidas?)\b', text, re.I):
             parts.append("Tómalo después de comer para evitar malestar estomacal.")
 
-        if mode != "resumen":
-            parts.append("Recuerda completar todo el tratamiento aunque te sientas mejor.")
+        # (Sin mensaje adicional — el usuario quiere el contenido, no consejos)
 
         return " ".join(parts)
 
@@ -2114,8 +2573,6 @@ class NarrativeGenerator:
             if sec_match:
                 parts.append(f"Sección {sec_match.group(1)}.")
 
-        if mode != "resumen" and is_flight:
-            parts.append("Recuerda llegar al aeropuerto con anticipación y tener tu documento de identidad a la mano.")
 
         return " ".join(parts)
 
@@ -2191,8 +2648,6 @@ class NarrativeGenerator:
             if vig_match:
                 parts.append(f"Válida hasta: {_cf(vig_match.group(1).strip())}.")
 
-            if mode != "resumen":
-                parts.append("No olvides portar siempre tu credencial dentro de las instalaciones.")
 
             return " ".join(parts)
 
@@ -2260,9 +2715,6 @@ class NarrativeGenerator:
         vig_match = re.search(r'\b(?:v[aá]lido\s+hasta|vigencia|vencimiento|expira)\s*:?\s*([^\n]{4,15})', text, re.I)
         if vig_match:
             parts.append(f"Vigente hasta: {_cf(vig_match.group(1))}.")
-
-        if mode != "resumen":
-            parts.append("Protege siempre tu información personal. No compartas fotos de tu documento con desconocidos.")
 
         return " ".join(parts)
 
@@ -2789,6 +3241,62 @@ class NarrativeGenerator:
         return " ".join(parts)
 
     # --- GENÉRICO INTERFAZ DE APP (para subtipos nuevos sin generador propio) ---
+
+    def _gen_app_service(self, mode: str, text: str, ex: ExtractedData,
+                         caption: Optional[str]) -> str:
+        """Narrativa natural para apps de transporte y delivery (Uber, Rappi, etc.)."""
+        if not text or not text.strip():
+            return "Es una pantalla de servicio o compra, pero no pude leer el contenido."
+
+        # Detectar tipo de app
+        app_name = None
+        for app in ["Uber", "Rappi", "Cabify", "DiDi", "InDriver", "Lyft", "Bolt",
+                    "PedidosYa", "iFood", "DoorDash", "Glovo"]:
+            if re.search(r'\b' + app + r'\b', text, re.IGNORECASE):
+                app_name = app
+                break
+
+        # Detectar tipo de servicio (Economy, UberX, etc.)
+        servicio_match = re.search(
+            r'\b(Economy|Comfort|Premium|UberX|UberXL|Black|Pool|Share|Express)\b',
+            text, re.IGNORECASE
+        )
+
+        # Detectar precio estimado
+        precio_match = re.search(
+            r'((?:COP|USD|MXN|EUR|BRL|Bs\.?)\s*[\d,.]+|[\d,.]+\s*(?:COP|USD|MXN|pesos|bolivianos))',
+            text, re.IGNORECASE
+        )
+
+        # Detectar tiempo estimado
+        tiempo_match = re.search(r'(\d+)\s*min(?:utos?)?', text, re.IGNORECASE)
+
+        # Construir intro
+        if app_name and servicio_match:
+            parts = [f"Es la app de {app_name}, opción {servicio_match.group(1)}."]
+        elif app_name:
+            parts = [f"Es la app de {app_name}."]
+        else:
+            parts = ["Es una pantalla de servicio."]
+
+        if precio_match:
+            parts.append(f"Precio estimado: {precio_match.group(1).strip()}.")
+
+        if tiempo_match:
+            parts.append(f"Tiempo de llegada: {tiempo_match.group(1)} minutos.")
+
+        if mode in ("resumen", "financiero"):
+            return " ".join(parts)
+
+        # Detallado: información adicional
+        if ex.amounts and not precio_match:
+            parts.append(f"Monto: {ex.amounts[0]}.")
+        if ex.dates:
+            parts.append(f"Fecha: {ex.dates[0]}.")
+        body = self._extract_body_preview(text, max_words=30)
+        if body and len(body.split()) > 4:
+            parts.append(f"Dice: {body}.")
+        return " ".join(parts)
 
     def _gen_interfaz_app(self, mode: str, text: str, ex: ExtractedData,
                           caption: Optional[str],
@@ -3556,10 +4064,10 @@ class SmartReadingService:
                 return mapped
 
         # --- Fallback: lógica legacy por doc_type ---
-        if doc_type in ("factura", "recibo", "app_service"):
+        if doc_type in ("factura", "recibo", "app_service", "app_banking"):
             return "financiero"
         if doc_type in ("carta", "formulario", "documento_informativo", "correo",
-                        "contrato", "hoja_de_vida", "informe"):
+                        "contrato", "hoja_de_vida", "informe", "tarjeta_felicitacion"):
             return "detallado"
         if doc_type in ("etiqueta", "menu", "tarjeta", "chat", "notificacion",
                         "login", "red_social", "configuracion", "presentacion",

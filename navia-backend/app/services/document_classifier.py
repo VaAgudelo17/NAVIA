@@ -144,10 +144,11 @@ _MACRO_TO_SUBTYPES: Dict[str, List[str]] = {
         "receta_medica", "boleto", "identificacion", "horario",
         "instrucciones", "resultado_lab", "tabla_nutricional",
         "calendario", "factura_servicio", "ticket_transporte", "credencial",
+        "tarjeta_felicitacion",
     ],
     "INTERFAZ_DIGITAL": [
         "app_menu", "app_settings", "app_login", "app_form",
-        "app_social", "app_service", "notificacion", "mapa",
+        "app_social", "app_service", "app_banking", "notificacion", "mapa",
     ],
     "TEXTO_CONVERSACIONAL": [
         "chat", "comentario",
@@ -164,7 +165,7 @@ _SUBTYPE_TO_READING_MODE: Dict[str, str] = {
     "recibo": "structured_fields",
     "formulario": "structured_fields",
     "contrato": "structured_fields",
-    "hoja_de_vida": "structured_fields",
+    "hoja_de_vida": "paragraph_text",
     "carta": "paragraph_text",
     "informe": "paragraph_text",
     "noticia": "paragraph_text",
@@ -192,6 +193,8 @@ _SUBTYPE_TO_READING_MODE: Dict[str, str] = {
     "app_form": "structured_fields",
     "app_social": "dialogue",
     "app_service": "structured_fields",
+    "app_banking": "structured_fields",
+    "tarjeta_felicitacion": "paragraph_text",
     "notificacion": "list_items",
     "mapa": "visual_description",
 
@@ -1611,6 +1614,48 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:visita|visitante|contratista|proveedor)\b', re.I), 10),
         # Seguridad / recepción
         (re.compile(r'\b(?:vigilante|seguridad|recepci[oó]n|porter[ií]a)\b', re.I), 6),
+        # Keywords negativos: términos de CV/hoja de vida que no aparecen en credenciales
+        (re.compile(r'\b(?:experiencia\s+(?:laboral|profesional)|hoja\s+de\s+vida|curr[ií]cul[ou]m)\b', re.I), -15),
+        (re.compile(r'\b(?:aptitudes?|habilidades?|competencias?)\b', re.I), -8),
+        (re.compile(r'\b(?:educaci[oó]n|formaci[oó]n\s+acad[eé]mica|estudios)\b', re.I), -8),
+        (re.compile(r'\b(?:idiomas?|lenguas?)\b', re.I), -8),
+        (re.compile(r'\b(?:objetivo\s+(?:profesional|laboral)|perfil\s+profesional)\b', re.I), -12),
+    ],
+    "app_banking": [
+        # Palabras clave directas de banca
+        (re.compile(r'\b(?:banco|bancolombia|nequi|daviplata|davivienda|bbva|scotiabank|itaú|itau|popular|occidente|bogot[aá]|ban[ck]\w*)\b', re.I), 10),
+        (re.compile(r'\b(?:cupo\s+(?:disponible|total|usado|de\s+cr[eé]dito)|cupo\s*[\$:]\s*[\d,.]+)\b', re.I), 14),
+        (re.compile(r'\b(?:pago\s+m[ií]nimo|pago\s+total|pago\s+oportuno|fecha\s+de\s+corte|fecha\s+de\s+pago)\b', re.I), 12),
+        (re.compile(r'\b(?:saldo\s+(?:disponible|actual|total|a\s+favor|en\s+cuenta|de\s+ahorros|corriente))\b', re.I), 12),
+        (re.compile(r'\b(?:transferencia|consignaci[oó]n|retiro|dep[oó]sito|tr[aá]nsacci[oó]n|movimiento)\b', re.I), 8),
+        (re.compile(r'\b(?:tarjeta\s+de\s+cr[eé]dito|tarjeta\s+d[eé]bito|cuenta\s+de\s+(?:ahorros|corriente))\b', re.I), 10),
+        (re.compile(r'\b(?:extracto|estado\s+de\s+cuenta|resumen\s+de\s+cuenta)\b', re.I), 12),
+        (re.compile(r'\b(?:intereses?|tasa\s+de\s+inter[eé]s|mora)\b', re.I), 7),
+        (re.compile(r'\b(?:cuota|abono|cr[eé]dito\s+(?:aprobado|disponible|utilizado|total))\b', re.I), 7),
+        (re.compile(r'\b(?:n[úu]mero\s+de\s+cuenta|n[úu]mero\s+de\s+tarjeta|\*{3,}\d{4})\b', re.I), 8),
+        (re.compile(r'\b(?:COP|USD)\s*[\d,.]+|\d[\d,.]*\s*(?:COP|USD)\b', re.I), 5),
+        (re.compile(r'\b(?:próximo\s+pago|vence?\s+el|fecha\s+l[ií]mite)\b', re.I), 8),
+        # Apps específicas de banca digital
+        (re.compile(r'\b(?:mi\s+banco|home\s+banking|banca\s+m[oó]vil|banca\s+digital|billetera\s+(?:digital|virtual))\b', re.I), 10),
+    ],
+    "tarjeta_felicitacion": [
+        # Frases características de tarjetas de felicitación
+        (re.compile(r'\b(?:felicitaciones?|congratulations?|enhorabuena)\b', re.I), 14),
+        (re.compile(r'\b(?:feliz\s+(?:cumplea[ñn]os?|navidad|a[ñn]o\s+nuevo|d[ií]a\s+de|graduaci[oó]n))\b', re.I), 12),
+        (re.compile(r'\b(?:cumplea[ñn]os?|birthday)\b', re.I), 8),
+        (re.compile(r'\b(?:graduaci[oó]n|te\s+graduaste|se\s+gradu[oó]|eres\s+graduad[oa]|egresad[oa])\b', re.I), 10),
+        (re.compile(r'\b(?:te\s+quer(?:emos|emos)|con\s+(?:todo\s+nuestro|mucho)\s+(?:amor|cari[ñn]o)|con\s+afecto)\b', re.I), 9),
+        (re.compile(r'\b(?:qu(?:e\s+)?(?:dios\s+te|siempre)\s+(?:bendiga|acompa[ñn]e)|bendiciones)\b', re.I), 8),
+        (re.compile(r'\b(?:tu\s+[eé]xito|mucho\s+[eé]xito|[eé]xitos|que\s+lo\s+(?:disfrutes?|celebres?|pases?\s+bien))\b', re.I), 9),
+        (re.compile(r'\b(?:este\s+(?:nuevo\s+)?(?:logro|paso|etapa|cap[ií]tulo)|nuevo\s+inicio|nuevo\s+camino)\b', re.I), 8),
+        (re.compile(r'\b(?:con\s+cari[ñn]o|con\s+amor|con\s+todo\s+mi\s+(?:amor|cari[ñn]o|coraz[oó]n))\b', re.I), 8),
+        (re.compile(r'\b(?:para\s+(?:ti|vos|usted)|te\s+deseo|les?\s+desea(?:mos?)?)\b', re.I), 5),
+        (re.compile(r'\b(?:eres\s+(?:increíble|espectacular|maravillos[oa]|lo\s+mejor)|tan\s+orgullos[oa])\b', re.I), 9),
+        # Frases de graduación específicas
+        (re.compile(r'\b(?:doctor(?:a)?|licenciad[oa]|ingenier[oa]|abogad[oa]|médic[oa])\b.*\b(?:graduaci[oó]n|titulaci[oó]n)\b', re.I | re.S), 12),
+        (re.compile(r'\b(?:universidad|facultad|carrera|promoci[oó]n)\b.*\b(?:graduaci[oó]n|grado|t[ií]tulo)\b', re.I | re.S), 10),
+        # Keywords negativos (distinguir de carta formal)
+        (re.compile(r'\b(?:atentamente|cordialmente|a\s+quien\s+corresponda|me\s+dirijo)\b', re.I), -8),
     ],
 }
 
@@ -1891,6 +1936,8 @@ _LABELS: Dict[str, str] = {
     "app_form": "Formulario digital",
     "app_social": "Red social",
     "app_service": "Servicio o compra",
+    "app_banking": "Aplicación bancaria",
+    "tarjeta_felicitacion": "Tarjeta de felicitación",
     "notificacion": "Notificación",
     "mapa": "Mapa",
 
