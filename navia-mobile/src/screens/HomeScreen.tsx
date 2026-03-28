@@ -782,18 +782,19 @@ export function HomeScreen() {
   // Toca cualquier parte de la cámara para capturar — más accesible para personas ciegas
   const renderCamera = () => (
     <View style={styles.cameraContainer}>
-      <CameraView ref={cameraRef} style={styles.camera} facing="back">
-        <TouchableOpacity
-          style={styles.cameraOverlay}
-          onPress={handleCapture}
-          activeOpacity={0.9}
-          accessibilityLabel="Toca la pantalla para capturar foto"
-          accessibilityRole="button"
-        >
-          <View style={styles.cameraFrame} />
-          <Text style={styles.cameraTapHint}>Toca para capturar</Text>
-        </TouchableOpacity>
-      </CameraView>
+      <CameraView ref={cameraRef} style={styles.camera} facing="back" />
+
+      {/* Capa táctil sobre la cámara (posición absoluta, sin ser hijo de CameraView) */}
+      <TouchableOpacity
+        style={styles.cameraOverlay}
+        onPress={handleCapture}
+        activeOpacity={0.9}
+        accessibilityLabel="Toca la pantalla para capturar foto"
+        accessibilityRole="button"
+      >
+        <View style={styles.cameraFrame} />
+        <Text style={styles.cameraTapHint}>Toca para capturar</Text>
+      </TouchableOpacity>
 
       <View style={styles.cameraControls}>
         <TouchableOpacity
@@ -1229,7 +1230,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   cameraOverlay: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
     gap: 20,

@@ -68,6 +68,27 @@ MEDIUM_PRIORITY_CLASSES = {
     "semáforo", "señal de pare", "poste", "hidrante",
 }
 
+# Sinónimos: etiquetas distintas de YOLO que representan el mismo objeto
+# Se normalizan a la etiqueta canónica antes de deduplicar
+SYNONYM_MAP: dict[str, str] = {
+    'gatito': 'gato',
+    'perrito': 'perro',
+    'cachorro': 'perro',
+    'niña': 'niño',
+    'mujer': 'persona',
+    'hombre': 'persona',
+    'adulto': 'persona',
+    'chico': 'niño',
+    'chica': 'niño',
+    'bebé': 'bebé',
+    'infante': 'bebé',
+    'camiseta': 'camisa',
+    'peluche': 'oso de peluche',
+    'mochila': 'bolso',
+    'cartera': 'bolso',
+    'computadora portátil': 'computadora portátil',  # evita duplicados por variantes
+}
+
 # Accesorios que pertenecen a una persona
 # Si hay una persona + estos objetos en posición similar, no narrarlos por separado
 PERSON_ACCESSORIES = {
@@ -92,7 +113,7 @@ class ExplorationService:
         self._initialized = False
         
         # Configuración
-        self.max_objects = 3  # Máximo objetos a narrar
+        self.max_objects = 6  # Más objetos para no cortar personas en escenas grupales
         self.min_ocr_area_ratio = 0.02  # 2% del área de imagen
         self.min_ocr_confidence = 60  # Confianza mínima OCR (subido de 40 a 60)
         self.min_ocr_chars = 6  # Mínimo caracteres válidos (subido de 4 a 6)
@@ -210,33 +231,87 @@ class ExplorationService:
     # =========================================================================
     def _filter_semantic(self, objects: List[DetectedObject]) -> List[DetectedObject]:
         """
-        Filtra objetos irrelevantes y elimina duplicados.
-        
-        - Elimina: grass, sky, floor, wall, background, texturas, etc.
-        - Deduplica: si hay 2 "ventilador", solo queda el de mayor confianza
+        Filtra objetos irrelevantes y normaliza nombres.
+
+        - Elimina clases irrelevantes (fondo, texturas, etc.)
+        - Normaliza sinónimos en el nombre mostrado (gatito → gato)
+        - NO deduplica por nombre: si hay 3 personas en posiciones distintas,
+          las 3 deben pasar. La deduplicación real la hace _deduplicate_by_overlap
+          usando IoU: solo elimina detecciones del mismo objeto físico.
         """
-        filtered = []
-        seen_names = {}  # {name_es: mejor_objeto}
-        
+        result: List[DetectedObject] = []
+
         for obj in objects:
-            # Verificar tanto el nombre en inglés como español
             name_en = obj.name.lower() if obj.name else ""
             name_es = obj.name_es.lower() if obj.name_es else ""
-            
+
             # Ignorar clases irrelevantes
             if name_en in IGNORED_CLASSES or name_es in IGNORED_CLASSES:
                 continue
-            
-            # Deduplicar: quedarse solo con el de mayor confianza
-            if name_es in seen_names:
-                # Ya existe, comparar confianza
-                if obj.confidence > seen_names[name_es].confidence:
-                    seen_names[name_es] = obj
-            else:
-                seen_names[name_es] = obj
-        
-        # Retornar solo los mejores de cada tipo
-        return list(seen_names.values())
+
+            # Normalizar nombre para mostrar (no afecta deduplicación)
+            canonical = SYNONYM_MAP.get(name_es, name_es)
+            if canonical != name_es:
+                obj.name_es = canonical
+
+            result.append(obj)
+
+        # Deduplicar solo por solapamiento físico (IoU)
+        return self._deduplicate_by_overlap(result)
+
+    def _iou(self, b1, b2) -> float:
+        """Calcula Intersection over Union entre dos bounding boxes."""
+        if not b1 or not b2:
+            return 0.0
+        ix1 = max(b1.x_min, b2.x_min)
+        iy1 = max(b1.y_min, b2.y_min)
+        ix2 = min(b1.x_max, b2.x_max)
+        iy2 = min(b1.y_max, b2.y_max)
+        if ix2 <= ix1 or iy2 <= iy1:
+            return 0.0
+        intersection = (ix2 - ix1) * (iy2 - iy1)
+        area1 = (b1.x_max - b1.x_min) * (b1.y_max - b1.y_min)
+        area2 = (b2.x_max - b2.x_min) * (b2.y_max - b2.y_min)
+        union = area1 + area2 - intersection
+        return intersection / union if union > 0 else 0.0
+
+    def _deduplicate_by_overlap(
+        self,
+        objects: List[DetectedObject],
+        iou_threshold: float = 0.45,
+    ) -> List[DetectedObject]:
+        """
+        Elimina detecciones distintas que cubren el mismo objeto físico.
+
+        Personas usan umbral más alto (0.75): en fotos grupales o selfies
+        dos personas pueden tener sus bboxes solapados hasta un 50-60%,
+        pero siguen siendo individuos distintos. Solo se elimina si el
+        solapamiento es casi total (>75%), lo que indica misma detección.
+
+        Objetos inanimados usan el umbral estándar (0.45).
+        """
+        PERSON_NAMES = {"persona", "niño", "bebé", "persona en silla de ruedas"}
+        candidates = sorted(objects, key=lambda o: o.confidence, reverse=True)
+        kept: List[DetectedObject] = []
+
+        for obj in candidates:
+            duplicate = False
+            # Umbral adaptativo según si es persona o no
+            is_person = obj.name_es in PERSON_NAMES
+            threshold = 0.75 if is_person else iou_threshold
+
+            for accepted in kept:
+                if self._iou(obj.bounding_box, accepted.bounding_box) > threshold:
+                    logger.debug(
+                        f"[Exploración] Descartado '{obj.name_es}' ({obj.confidence:.0%}) "
+                        f"por solapamiento con '{accepted.name_es}' ({accepted.confidence:.0%})"
+                    )
+                    duplicate = True
+                    break
+            if not duplicate:
+                kept.append(obj)
+
+        return kept
 
     # =========================================================================
     # 1.5. COMBINAR PERSONA CON ACCESORIOS
@@ -316,15 +391,14 @@ class ExplorationService:
                 # Está fuera, narrarlo por separado
                 other_objects.append(obj)
         
-        # Retornar: objetos (sin accesorios duplicados) + diccionario de accesorios por nombre de persona
+        # Retornar: TODAS las personas + objetos no-accesorios
         if accessories_found and person:
-            # Agregar la persona con sus accesorios
             person_name = person.name_es
             return {
-                "objects": [person] + other_objects,
+                "objects": persons + other_objects,  # todas las personas, no solo la primera
                 "person_accessories": {person_name: accessories_found}
             }
-        
+
         return {
             "objects": objects,
             "person_accessories": {}
@@ -781,31 +855,53 @@ class ExplorationService:
             return "No se detectan objetos relevantes en el entorno."
         
         parts = []
-        
-        # Objeto principal (el más importante)
-        main_obj = enriched_objects[0]
-        main_phrase = self._describe_object(main_obj, is_main=True)
-        parts.append(main_phrase)
-        
-        # Objetos secundarios (si hay)
-        if len(enriched_objects) > 1:
-            secondary_objects = enriched_objects[1:3]  # Máximo 2 más
-            secondary_phrase = self._describe_secondary_objects(secondary_objects)
-            if secondary_phrase:
-                parts.append(secondary_phrase)
-        
-        # Agregar texto detectado (si hay)
+
+        person_names = {"persona", "niño", "bebé", "persona en silla de ruedas"}
+        persons = [o for o in enriched_objects if o["name_es"] in person_names]
+        has_persons = len(persons) > 0
+
+        # Si hay personas, suprimir accesorios para no generar ruido
+        # ("lentes a tu derecha lejos" junto a "una persona frente a ti" no tiene sentido)
+        if has_persons:
+            non_persons = [
+                o for o in enriched_objects
+                if o["name_es"] not in person_names
+                and o["name_es"] not in PERSON_ACCESSORIES
+            ]
+        else:
+            non_persons = [o for o in enriched_objects if o["name_es"] not in person_names]
+
+        # Narrar personas
+        if len(persons) > 1:
+            positions = [o["position"]["horizontal"] for o in persons]
+            unique_positions = list(dict.fromkeys(positions))
+            if len(unique_positions) == 1:
+                parts.append(f"Hay {len(persons)} personas {unique_positions[0]}.")
+            else:
+                pos_str = " y ".join(unique_positions)
+                parts.append(f"Hay {len(persons)} personas: {pos_str}.")
+        elif len(persons) == 1:
+            parts.append(self._describe_object(persons[0], is_main=(not non_persons)))
+
+        # Narrar objetos no-persona (máx 2 para no sobrecargar)
+        if non_persons:
+            parts.append(self._describe_object(non_persons[0], is_main=(not has_persons)))
+            if len(non_persons) > 1:
+                secondary_phrase = self._describe_secondary_objects(non_persons[1:3])
+                if secondary_phrase:
+                    parts.append(secondary_phrase)
+
+        # Texto detectado
         if ocr_result and ocr_result.get("has_text"):
             text = ocr_result["text"]
             word_count = ocr_result.get("word_count", 0)
-            
             if word_count <= 10:
                 parts.append(f"Se lee: {text}")
             else:
                 preview = ' '.join(text.split()[:10])
                 parts.append(f"Hay un texto que dice: {preview}...")
-        
-        return " ".join(parts)
+
+        return " ".join(parts) if parts else "No se detectan objetos relevantes en el entorno."
 
     def _describe_object(self, obj_data: Dict, is_main: bool = False) -> str:
         """

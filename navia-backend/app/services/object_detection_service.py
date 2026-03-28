@@ -43,8 +43,17 @@ logger = logging.getLogger(__name__)
 WORLD_CLASSES_ES = {
     # ===================== PERSONAS =====================
     "person": ("persona", "f"),
+    "human": ("persona", "f"),
+    "man": ("persona", "f"),
+    "woman": ("persona", "f"),
+    "adult": ("persona", "f"),
+    "standing person": ("persona", "f"),
+    "sitting person": ("persona", "f"),
+    "walking person": ("persona", "f"),
     "child": ("niño", "m"),
+    "kid": ("niño", "m"),
     "baby": ("bebé", "m"),
+    "infant": ("bebé", "m"),
     "wheelchair user": ("persona en silla de ruedas", "f"),
 
     # ===================== ANIMALES =====================
@@ -183,13 +192,15 @@ WORLD_CLASSES_ES = {
     "wicker basket": ("cesta", "f"),
     "cardboard box": ("caja de cartón", "f"),
     "storage container": ("contenedor", "m"),
-    "bed pillow": ("almohada", "f"),         # "bed pillow" no se confunde con cojín
-    "sofa cushion": ("cojín", "m"),          # "sofa cushion" específico
+    "bed pillow": ("almohada", "f"),
+    "pillow": ("almohada", "f"),
+    "sleeping pillow": ("almohada", "f"),
+    "decorative pillow": ("almohada", "f"),
+    "sofa cushion": ("cojín", "m"),
     "blanket on bed": ("cobija", "f"),       # "on bed" evita confusión con toalla
     "bedsheet": ("sábana", "f"),
     "candle": ("vela", "f"),
-    "framed picture on wall": ("cuadro", "m"),   # MUY específico para evitar confusión
-    "wall poster": ("póster", "m"),               # separado de cuadro
+    "framed picture on wall": ("cuadro", "m"),
     "painting on wall": ("pintura", "f"),
     "wall clock": ("reloj de pared", "m"),
     "alarm clock on table": ("despertador", "m"),
@@ -251,6 +262,9 @@ WORLD_CLASSES_ES = {
     "remote control": ("control remoto", "m"),
     "cell phone": ("teléfono celular", "m"),
     "laptop computer": ("computadora portátil", "f"),
+    "laptop back": ("computadora portátil", "f"),
+    "closed laptop": ("computadora portátil", "f"),
+    "notebook computer": ("computadora portátil", "f"),
     "desktop computer monitor": ("monitor de computadora", "m"),
     "computer tower": ("torre de computadora", "f"),
     "tablet device": ("tableta", "f"),
@@ -285,7 +299,10 @@ WORLD_CLASSES_ES = {
     "metal key": ("llave", "f"),
     "key chain": ("llavero", "m"),
     "handbag": ("bolso", "m"),
+    "shoulder bag": ("bolso", "m"),
+    "tote bag": ("bolso", "m"),
     "backpack bag on floor or back": ("mochila", "f"),
+    "backpack": ("mochila", "f"),
     "purse": ("cartera", "f"),
     "umbrella": ("paraguas", "m"),
     "travel suitcase": ("maleta", "f"),
@@ -297,6 +314,9 @@ WORLD_CLASSES_ES = {
     "necktie": ("corbata", "f"),
     "dress": ("vestido", "m"),
     "shirt on hanger": ("camisa", "f"),
+    "shirt": ("camisa", "f"),
+    "t-shirt": ("camiseta", "f"),
+    "folded shirt": ("camisa", "f"),
     "pair of pants": ("pantalón", "m"),
     "skirt": ("falda", "f"),
     "hair brush": ("cepillo de pelo", "m"),
@@ -305,7 +325,7 @@ WORLD_CLASSES_ES = {
     # ===================== MAQUILLAJE Y BELLEZA =====================
     "makeup bag": ("estuche de maquillaje", "m"),
     "perfume bottle": ("perfume", "m"),
-    "lipstick": ("labial", "m"),
+    # "lipstick" eliminado: confunde los labios de cualquier persona con un labial
     "mascara tube": ("rímel", "m"),
     "eyeliner pencil": ("delineador", "m"),
     "eyeshadow palette": ("paleta de sombras", "f"),
@@ -431,6 +451,8 @@ WORLD_CLASSES_ES = {
     "baby doll": ("muñeca", "f"),
     "teddy bear": ("oso de peluche", "m"),
     "stuffed animal toy": ("peluche", "m"),
+    "stuffed animal": ("peluche", "m"),
+    "plush toy": ("peluche", "m"),
     "rubber ball": ("pelota", "f"),
     "jigsaw puzzle": ("rompecabezas", "m"),
     "board game box": ("juego de mesa", "m"),
