@@ -306,19 +306,9 @@ WORLD_CLASSES_ES = {
     "purse": ("cartera", "f"),
     "umbrella": ("paraguas", "m"),
     "travel suitcase": ("maleta", "f"),
-    "jacket": ("chaqueta", "f"),
-    "winter coat": ("abrigo", "m"),
-    "scarf": ("bufanda", "f"),
-    "gloves": ("guantes", "m"),
-    "belt": ("cinturón", "m"),
-    "necktie": ("corbata", "f"),
-    "dress": ("vestido", "m"),
-    "shirt on hanger": ("camisa", "f"),
-    "shirt": ("camisa", "f"),
-    "t-shirt": ("camiseta", "f"),
-    "folded shirt": ("camisa", "f"),
-    "pair of pants": ("pantalón", "m"),
-    "skirt": ("falda", "f"),
+    # Ropa puesta en personas eliminada: dress, shirt, t-shirt, pants, skirt, jacket, coat, etc.
+    # YOLO-World las detecta como objetos independientes aunque estén puestas → falsos positivos.
+    # Solo se mantienen accesorios que pueden existir como objetos standalone.
     "hair brush": ("cepillo de pelo", "m"),
     "comb": ("peine", "m"),
     
