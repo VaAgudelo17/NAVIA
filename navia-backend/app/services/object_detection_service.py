@@ -504,6 +504,102 @@ WORLD_CLASSES_ES = {
     "thermometer": ("termómetro", "m"),
 }
 
+# Mapeo de los 80 nombres COCO estándar (YOLOv8n) que no están cubiertos
+# por WORLD_CLASSES_ES (el cual usa frases descriptivas para YOLO-World)
+COCO_CLASSES_ES: dict = {
+    # Personas y animales (algunos ya en WORLD_CLASSES_ES, se repiten por seguridad)
+    "person": ("persona", "f"),
+    "bird": ("pájaro", "m"),
+    "cat": ("gato", "m"),
+    "dog": ("perro", "m"),
+    "horse": ("caballo", "m"),
+    "sheep": ("oveja", "f"),
+    "cow": ("vaca", "f"),
+    "elephant": ("elefante", "m"),
+    "bear": ("oso", "m"),
+    "zebra": ("cebra", "f"),
+    "giraffe": ("jirafa", "f"),
+    # Vehículos
+    "bicycle": ("bicicleta", "f"),
+    "car": ("carro", "m"),
+    "motorcycle": ("motocicleta", "f"),
+    "airplane": ("avión", "m"),
+    "bus": ("autobús", "m"),
+    "train": ("tren", "m"),
+    "truck": ("camión", "m"),
+    "boat": ("bote", "m"),
+    # Infraestructura
+    "traffic light": ("semáforo", "m"),
+    "fire hydrant": ("hidrante", "m"),
+    "stop sign": ("señal de pare", "f"),
+    "parking meter": ("parquímetro", "m"),
+    "bench": ("banco", "m"),
+    # Muebles
+    "chair": ("silla", "f"),
+    "couch": ("sofá", "m"),
+    "potted plant": ("planta en maceta", "f"),
+    "bed": ("cama", "f"),
+    "dining table": ("mesa", "f"),
+    "toilet": ("inodoro", "m"),
+    # Electrónicos
+    "tv": ("televisor", "m"),
+    "laptop": ("computador portátil", "m"),
+    "mouse": ("ratón de computador", "m"),
+    "remote": ("control remoto", "m"),
+    "keyboard": ("teclado", "m"),
+    "cell phone": ("celular", "m"),
+    # Electrodomésticos
+    "microwave": ("microondas", "m"),
+    "oven": ("horno", "m"),
+    "toaster": ("tostadora", "f"),
+    "sink": ("lavaplatos", "m"),
+    "refrigerator": ("refrigerador", "m"),
+    # Utensilios
+    "bottle": ("botella", "f"),
+    "wine glass": ("copa de vino", "f"),
+    "cup": ("taza", "f"),
+    "fork": ("tenedor", "m"),
+    "knife": ("cuchillo", "m"),
+    "spoon": ("cuchara", "f"),
+    "bowl": ("tazón", "m"),
+    # Comida
+    "banana": ("banano", "m"),
+    "apple": ("manzana", "f"),
+    "sandwich": ("sándwich", "m"),
+    "orange": ("naranja", "f"),
+    "broccoli": ("brócoli", "m"),
+    "carrot": ("zanahoria", "f"),
+    "hot dog": ("perro caliente", "m"),
+    "pizza": ("pizza", "f"),
+    "donut": ("dona", "f"),
+    "cake": ("pastel", "m"),
+    # Accesorios
+    "backpack": ("morral", "m"),
+    "umbrella": ("paraguas", "m"),
+    "handbag": ("bolso", "m"),
+    "tie": ("corbata", "f"),
+    "suitcase": ("maleta", "f"),
+    # Deportes/recreación
+    "frisbee": ("frisbee", "m"),
+    "skis": ("esquís", "m"),
+    "snowboard": ("snowboard", "m"),
+    "sports ball": ("pelota", "f"),
+    "kite": ("cometa", "f"),
+    "baseball bat": ("bate de béisbol", "m"),
+    "baseball glove": ("guante de béisbol", "m"),
+    "skateboard": ("patineta", "f"),
+    "surfboard": ("tabla de surf", "f"),
+    "tennis racket": ("raqueta de tenis", "f"),
+    # Hogar
+    "book": ("libro", "m"),
+    "clock": ("reloj", "m"),
+    "vase": ("jarrón", "m"),
+    "scissors": ("tijeras", "f"),
+    "teddy bear": ("oso de peluche", "m"),
+    "hair drier": ("secador de pelo", "m"),
+    "toothbrush": ("cepillo de dientes", "m"),
+}
+
 # Lookup rápido de género por nombre en español (se actualiza tras definir NAVIGATION_WORLD_CLASSES_ES)
 GENDER_MAP = {name_es: gender for (name_es, gender) in WORLD_CLASSES_ES.values()}
 
@@ -608,7 +704,7 @@ NAVIGATION_WORLD_CLASSES_ES: dict = {
 # Lookup combinado: cubre tanto WORLD_CLASSES_ES como NAVIGATION_WORLD_CLASSES_ES.
 # Necesario porque los prompts de navegación son distintos a los completos
 # (más específicos para reducir confusión), y el traductor busca por prompt inglés.
-ALL_CLASSES_LOOKUP: dict = {**WORLD_CLASSES_ES, **NAVIGATION_WORLD_CLASSES_ES}
+ALL_CLASSES_LOOKUP: dict = {**WORLD_CLASSES_ES, **NAVIGATION_WORLD_CLASSES_ES, **COCO_CLASSES_ES}
 
 
 class ObjectDetectionService:
