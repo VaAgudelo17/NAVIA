@@ -19,7 +19,7 @@ open-vocabulary que puede identificar cualquier objeto especificado por texto.
 ============================================================================
 """
 
-from ultralytics import YOLOWorld, YOLO
+from ultralytics import YOLO
 import numpy as np
 from typing import List, Dict, Optional
 import logging
@@ -504,11 +504,28 @@ WORLD_CLASSES_ES = {
     "thermometer": ("termómetro", "m"),
 }
 
-# Mapeo de los 80 nombres COCO estándar (YOLOv8n) que no están cubiertos
-# por WORLD_CLASSES_ES (el cual usa frases descriptivas para YOLO-World)
+# Mapeo completo de las 80 clases COCO estándar que YOLOv8n detecta.
+# Estas son las únicas clases que YOLOv8n puede reconocer.
+# Umbral de confianza alto (0.50+) para evitar falsos positivos.
 COCO_CLASSES_ES: dict = {
-    # Personas y animales (algunos ya en WORLD_CLASSES_ES, se repiten por seguridad)
+    # Personas
     "person": ("persona", "f"),
+    # Vehículos (útiles para navegación)
+    "bicycle": ("bicicleta", "f"),
+    "car": ("carro", "m"),
+    "motorcycle": ("motocicleta", "f"),
+    "airplane": ("avión", "m"),
+    "bus": ("autobús", "m"),
+    "train": ("tren", "m"),
+    "truck": ("camión", "m"),
+    "boat": ("bote", "m"),
+    # Infraestructura vial
+    "traffic light": ("semáforo", "m"),
+    "fire hydrant": ("hidrante", "m"),
+    "stop sign": ("señal de pare", "f"),
+    "parking meter": ("parquímetro", "m"),
+    "bench": ("banco", "m"),
+    # Animales
     "bird": ("pájaro", "m"),
     "cat": ("gato", "m"),
     "dog": ("perro", "m"),
@@ -519,44 +536,26 @@ COCO_CLASSES_ES: dict = {
     "bear": ("oso", "m"),
     "zebra": ("cebra", "f"),
     "giraffe": ("jirafa", "f"),
-    # Vehículos
-    "bicycle": ("bicicleta", "f"),
-    "car": ("carro", "m"),
-    "motorcycle": ("motocicleta", "f"),
-    "airplane": ("avión", "m"),
-    "bus": ("autobús", "m"),
-    "train": ("tren", "m"),
-    "truck": ("camión", "m"),
-    "boat": ("bote", "m"),
-    # Infraestructura
-    "traffic light": ("semáforo", "m"),
-    "fire hydrant": ("hidrante", "m"),
-    "stop sign": ("señal de pare", "f"),
-    "parking meter": ("parquímetro", "m"),
-    "bench": ("banco", "m"),
-    # Muebles
-    "chair": ("silla", "f"),
-    "couch": ("sofá", "m"),
-    "potted plant": ("planta en maceta", "f"),
-    "bed": ("cama", "f"),
-    "dining table": ("mesa", "f"),
-    "toilet": ("inodoro", "m"),
-    # Electrónicos
-    "tv": ("televisor", "m"),
-    "laptop": ("computador portátil", "m"),
-    "mouse": ("ratón de computador", "m"),
-    "remote": ("control remoto", "m"),
-    "keyboard": ("teclado", "m"),
-    "cell phone": ("celular", "m"),
-    # Electrodomésticos
-    "microwave": ("microondas", "m"),
-    "oven": ("horno", "m"),
-    "toaster": ("tostadora", "f"),
-    "sink": ("lavaplatos", "m"),
-    "refrigerator": ("refrigerador", "m"),
-    # Utensilios
+    # Accesorios
+    "backpack": ("morral", "m"),
+    "umbrella": ("paraguas", "m"),
+    "handbag": ("bolso", "m"),
+    "tie": ("corbata", "f"),
+    "suitcase": ("maleta", "f"),
+    # Deportes
+    "frisbee": ("frisbee", "m"),
+    "skis": ("esquís", "m"),
+    "snowboard": ("snowboard", "m"),
+    "sports ball": ("pelota", "f"),
+    "kite": ("cometa", "f"),
+    "baseball bat": ("bate", "m"),
+    "baseball glove": ("guante", "m"),
+    "skateboard": ("patineta", "f"),
+    "surfboard": ("tabla de surf", "f"),
+    "tennis racket": ("raqueta", "f"),
+    # Utensilios de cocina
     "bottle": ("botella", "f"),
-    "wine glass": ("copa de vino", "f"),
+    "wine glass": ("copa", "f"),
     "cup": ("taza", "f"),
     "fork": ("tenedor", "m"),
     "knife": ("cuchillo", "m"),
@@ -569,34 +568,37 @@ COCO_CLASSES_ES: dict = {
     "orange": ("naranja", "f"),
     "broccoli": ("brócoli", "m"),
     "carrot": ("zanahoria", "f"),
-    "hot dog": ("perro caliente", "m"),
+    "hot dog": ("salchicha", "f"),
     "pizza": ("pizza", "f"),
     "donut": ("dona", "f"),
     "cake": ("pastel", "m"),
-    # Accesorios
-    "backpack": ("morral", "m"),
-    "umbrella": ("paraguas", "m"),
-    "handbag": ("bolso", "m"),
-    "tie": ("corbata", "f"),
-    "suitcase": ("maleta", "f"),
-    # Deportes/recreación
-    "frisbee": ("frisbee", "m"),
-    "skis": ("esquís", "m"),
-    "snowboard": ("snowboard", "m"),
-    "sports ball": ("pelota", "f"),
-    "kite": ("cometa", "f"),
-    "baseball bat": ("bate de béisbol", "m"),
-    "baseball glove": ("guante de béisbol", "m"),
-    "skateboard": ("patineta", "f"),
-    "surfboard": ("tabla de surf", "f"),
-    "tennis racket": ("raqueta de tenis", "f"),
+    # Muebles
+    "chair": ("silla", "f"),
+    "couch": ("sofá", "m"),
+    "potted plant": ("planta", "f"),
+    "bed": ("cama", "f"),
+    "dining table": ("mesa", "f"),
+    "toilet": ("inodoro", "m"),
+    # Electrónicos
+    "tv": ("televisor", "m"),
+    "laptop": ("computador", "m"),
+    "mouse": ("ratón", "m"),
+    "remote": ("control remoto", "m"),
+    "keyboard": ("teclado", "m"),
+    "cell phone": ("celular", "m"),
+    # Electrodomésticos
+    "microwave": ("microondas", "m"),
+    "oven": ("horno", "m"),
+    "toaster": ("tostadora", "f"),
+    "sink": ("lavaplatos", "m"),
+    "refrigerator": ("refrigerador", "m"),
     # Hogar
     "book": ("libro", "m"),
     "clock": ("reloj", "m"),
     "vase": ("jarrón", "m"),
     "scissors": ("tijeras", "f"),
-    "teddy bear": ("oso de peluche", "m"),
-    "hair drier": ("secador de pelo", "m"),
+    "teddy bear": ("peluche", "m"),
+    "hair drier": ("secador", "m"),
     "toothbrush": ("cepillo de dientes", "m"),
 }
 
@@ -732,42 +734,20 @@ class ObjectDetectionService:
         self._load_model()
 
     def configure_for_navigation(self) -> None:
-        """El modelo unificado cubre todas las clases; el filtrado ocurre en la capa de guía."""
         self._current_class_mode = "navigation"
 
     def configure_for_full(self) -> None:
-        """El modelo unificado cubre todas las clases."""
         self._current_class_mode = "full"
 
     def _load_model(self) -> None:
-        """
-        Carga YOLO-World preconfigurado (sin CLIP en runtime).
-
-        En producción (Railway): carga yolov8s-worldv2-custom.pt generado
-        durante el build del Docker con set_classes() ya aplicado.
-        En desarrollo local: llama a set_classes() normalmente (requiere CLIP).
-        """
         try:
             import ssl
             ssl._create_default_https_context = ssl._create_unverified_context
-
-            custom_path = Path("/app/yolov8s-worldv2-custom.pt")
-
-            if custom_path.exists():
-                # Producción: modelo completo preconfigurado (CLIP no requerido)
-                self.model = YOLOWorld(str(custom_path))
-                logger.info(f"YOLO-World cargado desde modelo preconfigurado ({len(self.model.names)} clases, sin CLIP)")
-            else:
-                # Desarrollo local: requiere CLIP instalado
-                model_name = settings.YOLO_MODEL
-                self.model = YOLOWorld(model_name)
-                class_list = list({**WORLD_CLASSES_ES, **NAVIGATION_WORLD_CLASSES_ES}.keys())
-                self.model.set_classes(class_list)
-                logger.info(f"YOLO-World cargado con set_classes() ({len(class_list)} clases)")
-
+            self.model = YOLO(settings.YOLO_MODEL)
+            logger.info(f"YOLOv8n cargado ({len(self.model.names)} clases COCO)")
         except Exception as e:
-            logger.error(f"Error cargando modelo YOLO-World: {e}")
-            raise RuntimeError(f"No se pudo cargar el modelo YOLO-World: {e}")
+            logger.error(f"Error cargando modelo YOLO: {e}")
+            raise RuntimeError(f"No se pudo cargar el modelo YOLO: {e}")
 
     def detect_objects(
         self,
