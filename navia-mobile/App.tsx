@@ -9,11 +9,17 @@ import React, { useEffect } from 'react';
 import { SafeAreaView, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Audio } from 'expo-av';
+import { useFonts } from 'expo-font';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { PreferencesProvider } from './src/context/PreferencesContext';
 import { COLORS } from './src/constants/config';
 
 export default function App() {
+  // Cargar fuentes de íconos explícitamente para que funcionen en web
+  const [fontsLoaded] = useFonts({
+    Ionicons: require('@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf'),
+  });
+
   useEffect(() => {
     // Configurar audio session para que TTS funcione con el switch de silencio en iOS
     // y baje el volumen de otras apps en Android
