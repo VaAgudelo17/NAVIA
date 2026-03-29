@@ -38,6 +38,9 @@ pymupdf>=1.23.0
 # --- DETECCIÓN DE OBJETOS Y TRACKING ---
 # Ultralytics: YOLO-World (detección) + ByteTrack (tracking).
 ultralytics>=8.3.0
+# lap: requerido por ByteTrack (tracking). Sin esto ultralytics lo instala
+# en runtime causando un spike de memoria justo al cargar el modelo.
+lap>=0.5.12
 
 # --- WEBSOCKET ---
 # websockets: Soporte WebSocket para detección en tiempo real.
