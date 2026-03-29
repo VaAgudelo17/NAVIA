@@ -26,8 +26,16 @@ RUN pip install --no-cache-dir \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Instalar CLIP (solo para el build — precomputa embeddings, no se usa en runtime)
+RUN pip install --no-cache-dir "git+https://github.com/ultralytics/CLIP.git"
+
 # Copiar código (excluye lo que está en .dockerignore)
 COPY . .
+
+# Precomputar embeddings de YOLO-World durante el build.
+# Guarda embeddings_full.pt y embeddings_nav.pt en /app.
+# En runtime, el servicio los carga directamente sin necesitar CLIP.
+RUN python precompute_embeddings.py
 
 ENV TESSERACT_CMD=/usr/bin/tesseract
 ENV TTS_BACKEND=gtts

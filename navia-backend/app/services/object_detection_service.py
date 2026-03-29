@@ -19,7 +19,7 @@ open-vocabulary que puede identificar cualquier objeto especificado por texto.
 ============================================================================
 """
 
-from ultralytics import YOLO
+from ultralytics import YOLOWorld, YOLO
 import numpy as np
 from typing import List, Dict, Optional
 import logging
@@ -732,32 +732,65 @@ class ObjectDetectionService:
         self._load_model()
 
     def configure_for_navigation(self) -> None:
-        """No-op: YOLOv8 estándar usa clases COCO fijas, no requiere set_classes."""
+        """Cambia a embeddings compactos de navegación (sin CLIP en runtime)."""
+        if self._current_class_mode == "navigation" or self.model is None:
+            return
+        if self._nav_embeddings:
+            self._apply_embeddings(self._nav_embeddings)
         self._current_class_mode = "navigation"
+        logger.info("YOLO configurado para navegación")
 
     def configure_for_full(self) -> None:
-        """No-op: YOLOv8 estándar usa clases COCO fijas, no requiere set_classes."""
+        """Restaura embeddings completos (sin CLIP en runtime)."""
+        if self._current_class_mode == "full" or self.model is None:
+            return
+        if self._full_embeddings:
+            self._apply_embeddings(self._full_embeddings)
         self._current_class_mode = "full"
+        logger.info("YOLO restaurado a clases completas")
+
+    def _apply_embeddings(self, data: dict) -> None:
+        """Inyecta embeddings precomputados en el modelo sin usar CLIP."""
+        import torch
+        self.model.model.txt_feats = data['txt_feats']
+        classes = data['classes']
+        self.model.model.names = {i: c for i, c in enumerate(classes)}
 
     def _load_model(self) -> None:
         """
-        Carga el modelo YOLO-World y configura las clases a detectar.
+        Carga YOLO-World usando embeddings precomputados (sin CLIP en runtime).
 
-        YOLO-World requiere set_classes() para definir qué objetos buscar.
-        Los nombres en inglés se usan como prompts de texto para el modelo.
+        En producción (Railway): carga embeddings_full.pt / embeddings_nav.pt
+        generados durante el build del Docker.
+        En desarrollo local: llama a set_classes() normalmente (requiere CLIP).
         """
         try:
             import ssl
-            # Evitar error SSL en macOS al descargar componentes del modelo
+            import torch
             ssl._create_default_https_context = ssl._create_unverified_context
 
             model_name = settings.YOLO_MODEL
             logger.info(f"Cargando modelo YOLO-World: {model_name}")
 
-            # Cargar modelo YOLOv8 estándar (80 clases COCO, sin CLIP)
-            self.model = YOLO(model_name)
+            self._full_embeddings = None
+            self._nav_embeddings = None
 
-            logger.info(f"Modelo YOLO cargado: {model_name}")
+            full_path = Path("/app/embeddings_full.pt")
+            nav_path = Path("/app/embeddings_nav.pt")
+
+            if full_path.exists():
+                # Producción: cargar embeddings precomputados (CLIP no requerido)
+                self.model = YOLOWorld(model_name)
+                self._full_embeddings = torch.load(full_path, map_location='cpu')
+                self._nav_embeddings = torch.load(nav_path, map_location='cpu') if nav_path.exists() else self._full_embeddings
+                self._apply_embeddings(self._full_embeddings)
+                logger.info(f"YOLO-World cargado con embeddings precomputados ({len(self._full_embeddings['classes'])} clases, sin CLIP)")
+            else:
+                # Desarrollo local: requiere CLIP instalado
+                self.model = YOLOWorld(model_name)
+                class_list = list({**WORLD_CLASSES_ES, **NAVIGATION_WORLD_CLASSES_ES}.keys())
+                self.model.set_classes(class_list)
+                logger.info(f"YOLO-World cargado con set_classes() ({len(class_list)} clases)")
 
         except Exception as e:
             logger.error(f"Error cargando modelo YOLO-World: {e}")
