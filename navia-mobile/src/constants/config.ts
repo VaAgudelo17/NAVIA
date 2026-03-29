@@ -15,14 +15,19 @@ function getApiBaseUrl(): string {
   const envUrl = process.env.EXPO_PUBLIC_API_URL;
   if (envUrl) return envUrl;
 
-  // 2. Auto-detectar IP del dev server de Expo
+  // 2. Auto-detectar IP del dev server de Expo (solo en nativo)
   const hostUri = Constants.expoConfig?.hostUri; // "192.168.1.16:8081"
   if (hostUri) {
     const host = hostUri.split(':')[0];
     return `http://${host}:${BACKEND_PORT}`;
   }
 
-  // 3. Fallback
+  // 3. En web (navegador) usar el backend de producción en Railway
+  if (typeof document !== 'undefined') {
+    return 'https://patient-charisma-production.up.railway.app';
+  }
+
+  // 4. Fallback local
   return `http://localhost:${BACKEND_PORT}`;
 }
 
