@@ -732,61 +732,34 @@ class ObjectDetectionService:
         self._load_model()
 
     def configure_for_navigation(self) -> None:
-        """Cambia a embeddings compactos de navegación (sin CLIP en runtime)."""
-        if self._current_class_mode == "navigation" or self.model is None:
-            return
-        if self._nav_embeddings:
-            self._apply_embeddings(self._nav_embeddings)
+        """El modelo unificado cubre todas las clases; el filtrado ocurre en la capa de guía."""
         self._current_class_mode = "navigation"
-        logger.info("YOLO configurado para navegación")
 
     def configure_for_full(self) -> None:
-        """Restaura embeddings completos (sin CLIP en runtime)."""
-        if self._current_class_mode == "full" or self.model is None:
-            return
-        if self._full_embeddings:
-            self._apply_embeddings(self._full_embeddings)
+        """El modelo unificado cubre todas las clases."""
         self._current_class_mode = "full"
-        logger.info("YOLO restaurado a clases completas")
-
-    def _apply_embeddings(self, data: dict) -> None:
-        """Inyecta embeddings precomputados en el modelo sin usar CLIP."""
-        import torch
-        self.model.model.txt_feats = data['txt_feats']
-        classes = data['classes']
-        self.model.model.names = {i: c for i, c in enumerate(classes)}
 
     def _load_model(self) -> None:
         """
-        Carga YOLO-World usando embeddings precomputados (sin CLIP en runtime).
+        Carga YOLO-World preconfigurado (sin CLIP en runtime).
 
-        En producción (Railway): carga embeddings_full.pt / embeddings_nav.pt
-        generados durante el build del Docker.
+        En producción (Railway): carga yolov8s-worldv2-custom.pt generado
+        durante el build del Docker con set_classes() ya aplicado.
         En desarrollo local: llama a set_classes() normalmente (requiere CLIP).
         """
         try:
             import ssl
-            import torch
             ssl._create_default_https_context = ssl._create_unverified_context
 
-            model_name = settings.YOLO_MODEL
-            logger.info(f"Cargando modelo YOLO-World: {model_name}")
+            custom_path = Path("/app/yolov8s-worldv2-custom.pt")
 
-            self._full_embeddings = None
-            self._nav_embeddings = None
-
-            full_path = Path("/app/embeddings_full.pt")
-            nav_path = Path("/app/embeddings_nav.pt")
-
-            if full_path.exists():
-                # Producción: cargar embeddings precomputados (CLIP no requerido)
-                self.model = YOLOWorld(model_name)
-                self._full_embeddings = torch.load(full_path, map_location='cpu')
-                self._nav_embeddings = torch.load(nav_path, map_location='cpu') if nav_path.exists() else self._full_embeddings
-                self._apply_embeddings(self._full_embeddings)
-                logger.info(f"YOLO-World cargado con embeddings precomputados ({len(self._full_embeddings['classes'])} clases, sin CLIP)")
+            if custom_path.exists():
+                # Producción: modelo completo preconfigurado (CLIP no requerido)
+                self.model = YOLOWorld(str(custom_path))
+                logger.info(f"YOLO-World cargado desde modelo preconfigurado ({len(self.model.names)} clases, sin CLIP)")
             else:
                 # Desarrollo local: requiere CLIP instalado
+                model_name = settings.YOLO_MODEL
                 self.model = YOLOWorld(model_name)
                 class_list = list({**WORLD_CLASSES_ES, **NAVIGATION_WORLD_CLASSES_ES}.keys())
                 self.model.set_classes(class_list)
