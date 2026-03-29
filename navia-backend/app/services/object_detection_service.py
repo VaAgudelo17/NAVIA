@@ -19,7 +19,7 @@ open-vocabulary que puede identificar cualquier objeto especificado por texto.
 ============================================================================
 """
 
-from ultralytics import YOLO
+from ultralytics import YOLOWorld
 import numpy as np
 from typing import List, Dict, Optional
 import logging
@@ -504,104 +504,6 @@ WORLD_CLASSES_ES = {
     "thermometer": ("termómetro", "m"),
 }
 
-# Mapeo completo de las 80 clases COCO estándar que YOLOv8n detecta.
-# Estas son las únicas clases que YOLOv8n puede reconocer.
-# Umbral de confianza alto (0.50+) para evitar falsos positivos.
-COCO_CLASSES_ES: dict = {
-    # Personas
-    "person": ("persona", "f"),
-    # Vehículos (útiles para navegación)
-    "bicycle": ("bicicleta", "f"),
-    "car": ("carro", "m"),
-    "motorcycle": ("motocicleta", "f"),
-    "airplane": ("avión", "m"),
-    "bus": ("autobús", "m"),
-    "train": ("tren", "m"),
-    "truck": ("camión", "m"),
-    "boat": ("bote", "m"),
-    # Infraestructura vial
-    "traffic light": ("semáforo", "m"),
-    "fire hydrant": ("hidrante", "m"),
-    "stop sign": ("señal de pare", "f"),
-    "parking meter": ("parquímetro", "m"),
-    "bench": ("banco", "m"),
-    # Animales
-    "bird": ("pájaro", "m"),
-    "cat": ("gato", "m"),
-    "dog": ("perro", "m"),
-    "horse": ("caballo", "m"),
-    "sheep": ("oveja", "f"),
-    "cow": ("vaca", "f"),
-    "elephant": ("elefante", "m"),
-    "bear": ("oso", "m"),
-    "zebra": ("cebra", "f"),
-    "giraffe": ("jirafa", "f"),
-    # Accesorios
-    "backpack": ("morral", "m"),
-    "umbrella": ("paraguas", "m"),
-    "handbag": ("bolso", "m"),
-    "tie": ("corbata", "f"),
-    "suitcase": ("maleta", "f"),
-    # Deportes
-    "frisbee": ("frisbee", "m"),
-    "skis": ("esquís", "m"),
-    "snowboard": ("snowboard", "m"),
-    "sports ball": ("pelota", "f"),
-    "kite": ("cometa", "f"),
-    "baseball bat": ("bate", "m"),
-    "baseball glove": ("guante", "m"),
-    "skateboard": ("patineta", "f"),
-    "surfboard": ("tabla de surf", "f"),
-    "tennis racket": ("raqueta", "f"),
-    # Utensilios de cocina
-    "bottle": ("botella", "f"),
-    "wine glass": ("copa", "f"),
-    "cup": ("taza", "f"),
-    "fork": ("tenedor", "m"),
-    "knife": ("cuchillo", "m"),
-    "spoon": ("cuchara", "f"),
-    "bowl": ("tazón", "m"),
-    # Comida
-    "banana": ("banano", "m"),
-    "apple": ("manzana", "f"),
-    "sandwich": ("sándwich", "m"),
-    "orange": ("naranja", "f"),
-    "broccoli": ("brócoli", "m"),
-    "carrot": ("zanahoria", "f"),
-    "hot dog": ("salchicha", "f"),
-    "pizza": ("pizza", "f"),
-    "donut": ("dona", "f"),
-    "cake": ("pastel", "m"),
-    # Muebles
-    "chair": ("silla", "f"),
-    "couch": ("sofá", "m"),
-    "potted plant": ("planta", "f"),
-    "bed": ("cama", "f"),
-    "dining table": ("mesa", "f"),
-    "toilet": ("inodoro", "m"),
-    # Electrónicos
-    "tv": ("televisor", "m"),
-    "laptop": ("computador", "m"),
-    "mouse": ("ratón", "m"),
-    "remote": ("control remoto", "m"),
-    "keyboard": ("teclado", "m"),
-    "cell phone": ("celular", "m"),
-    # Electrodomésticos
-    "microwave": ("microondas", "m"),
-    "oven": ("horno", "m"),
-    "toaster": ("tostadora", "f"),
-    "sink": ("lavaplatos", "m"),
-    "refrigerator": ("refrigerador", "m"),
-    # Hogar
-    "book": ("libro", "m"),
-    "clock": ("reloj", "m"),
-    "vase": ("jarrón", "m"),
-    "scissors": ("tijeras", "f"),
-    "teddy bear": ("peluche", "m"),
-    "hair drier": ("secador", "m"),
-    "toothbrush": ("cepillo de dientes", "m"),
-}
-
 # Lookup rápido de género por nombre en español (se actualiza tras definir NAVIGATION_WORLD_CLASSES_ES)
 GENDER_MAP = {name_es: gender for (name_es, gender) in WORLD_CLASSES_ES.values()}
 
@@ -706,7 +608,7 @@ NAVIGATION_WORLD_CLASSES_ES: dict = {
 # Lookup combinado: cubre tanto WORLD_CLASSES_ES como NAVIGATION_WORLD_CLASSES_ES.
 # Necesario porque los prompts de navegación son distintos a los completos
 # (más específicos para reducir confusión), y el traductor busca por prompt inglés.
-ALL_CLASSES_LOOKUP: dict = {**WORLD_CLASSES_ES, **NAVIGATION_WORLD_CLASSES_ES, **COCO_CLASSES_ES}
+ALL_CLASSES_LOOKUP: dict = {**WORLD_CLASSES_ES, **NAVIGATION_WORLD_CLASSES_ES}
 
 
 class ObjectDetectionService:
@@ -734,20 +636,60 @@ class ObjectDetectionService:
         self._load_model()
 
     def configure_for_navigation(self) -> None:
+        """Cambia YOLO a clases compactas de navegación (~70 clases).
+
+        Llamar al inicio de una sesión WebSocket de navegación.
+        Menos clases → menos confusión → menos falsos positivos.
+        """
+        if self._current_class_mode == "navigation" or self.model is None:
+            return
+        nav_classes = list(NAVIGATION_WORLD_CLASSES_ES.keys())
+        self.model.set_classes(nav_classes)
         self._current_class_mode = "navigation"
+        logger.info(f"YOLO configurado para navegación: {len(nav_classes)} clases")
 
     def configure_for_full(self) -> None:
+        """Restaura YOLO a la lista completa de clases.
+
+        Llamar al finalizar la sesión WebSocket para que
+        exploración/lectura sigan con el vocabulario completo.
+        """
+        if self._current_class_mode == "full" or self.model is None:
+            return
+        full_classes = list(WORLD_CLASSES_ES.keys())
+        self.model.set_classes(full_classes)
         self._current_class_mode = "full"
+        logger.info(f"YOLO restaurado a clases completas: {len(full_classes)} clases")
 
     def _load_model(self) -> None:
+        """
+        Carga el modelo YOLO-World y configura las clases a detectar.
+
+        YOLO-World requiere set_classes() para definir qué objetos buscar.
+        Los nombres en inglés se usan como prompts de texto para el modelo.
+        """
         try:
             import ssl
+            # Evitar error SSL en macOS al descargar componentes del modelo
             ssl._create_default_https_context = ssl._create_unverified_context
-            self.model = YOLO(settings.YOLO_MODEL)
-            logger.info(f"YOLOv8n cargado ({len(self.model.names)} clases COCO)")
+
+            model_name = settings.YOLO_MODEL
+            logger.info(f"Cargando modelo YOLO-World: {model_name}")
+
+            # Cargar modelo YOLO-World
+            self.model = YOLOWorld(model_name)
+
+            # Configurar las clases que el modelo debe detectar
+            class_list = list(WORLD_CLASSES_ES.keys())
+            self.model.set_classes(class_list)
+
+            logger.info(
+                f"Modelo YOLO-World cargado con {len(class_list)} clases"
+            )
+
         except Exception as e:
-            logger.error(f"Error cargando modelo YOLO: {e}")
-            raise RuntimeError(f"No se pudo cargar el modelo YOLO: {e}")
+            logger.error(f"Error cargando modelo YOLO-World: {e}")
+            raise RuntimeError(f"No se pudo cargar el modelo YOLO-World: {e}")
 
     def detect_objects(
         self,

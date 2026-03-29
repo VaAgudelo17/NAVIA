@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     libxrender-dev \
     libgomp1 \
     libgl1 \
+    git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -20,6 +21,9 @@ RUN pip install --no-cache-dir \
     torch==2.5.1 \
     torchvision==0.20.1 \
     --index-url https://download.pytorch.org/whl/cpu
+
+# Instalar CLIP de ultralytics antes que ultralytics (dependencia implícita de YOLO-World)
+RUN pip install --no-cache-dir "git+https://github.com/ultralytics/CLIP.git"
 
 # Instalar el resto de dependencias
 COPY requirements.txt .
