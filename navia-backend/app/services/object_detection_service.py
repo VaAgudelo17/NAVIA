@@ -19,7 +19,7 @@ open-vocabulary que puede identificar cualquier objeto especificado por texto.
 ============================================================================
 """
 
-from ultralytics import YOLOWorld
+from ultralytics import YOLO
 import numpy as np
 from typing import List, Dict, Optional
 import logging
@@ -636,30 +636,12 @@ class ObjectDetectionService:
         self._load_model()
 
     def configure_for_navigation(self) -> None:
-        """Cambia YOLO a clases compactas de navegación (~70 clases).
-
-        Llamar al inicio de una sesión WebSocket de navegación.
-        Menos clases → menos confusión → menos falsos positivos.
-        """
-        if self._current_class_mode == "navigation" or self.model is None:
-            return
-        nav_classes = list(NAVIGATION_WORLD_CLASSES_ES.keys())
-        self.model.set_classes(nav_classes)
+        """No-op: YOLOv8 estándar usa clases COCO fijas, no requiere set_classes."""
         self._current_class_mode = "navigation"
-        logger.info(f"YOLO configurado para navegación: {len(nav_classes)} clases")
 
     def configure_for_full(self) -> None:
-        """Restaura YOLO a la lista completa de clases.
-
-        Llamar al finalizar la sesión WebSocket para que
-        exploración/lectura sigan con el vocabulario completo.
-        """
-        if self._current_class_mode == "full" or self.model is None:
-            return
-        full_classes = list(WORLD_CLASSES_ES.keys())
-        self.model.set_classes(full_classes)
+        """No-op: YOLOv8 estándar usa clases COCO fijas, no requiere set_classes."""
         self._current_class_mode = "full"
-        logger.info(f"YOLO restaurado a clases completas: {len(full_classes)} clases")
 
     def _load_model(self) -> None:
         """
@@ -676,16 +658,10 @@ class ObjectDetectionService:
             model_name = settings.YOLO_MODEL
             logger.info(f"Cargando modelo YOLO-World: {model_name}")
 
-            # Cargar modelo YOLO-World
-            self.model = YOLOWorld(model_name)
+            # Cargar modelo YOLOv8 estándar (80 clases COCO, sin CLIP)
+            self.model = YOLO(model_name)
 
-            # Configurar las clases que el modelo debe detectar
-            class_list = list(WORLD_CLASSES_ES.keys())
-            self.model.set_classes(class_list)
-
-            logger.info(
-                f"Modelo YOLO-World cargado con {len(class_list)} clases"
-            )
+            logger.info(f"Modelo YOLO cargado: {model_name}")
 
         except Exception as e:
             logger.error(f"Error cargando modelo YOLO-World: {e}")
