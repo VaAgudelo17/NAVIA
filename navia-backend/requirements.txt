@@ -39,9 +39,6 @@ pymupdf>=1.23.0
 # Ultralytics: YOLO-World (detección) + ByteTrack (tracking).
 ultralytics>=8.3.0
 
-# OpenAI CLIP: requerido por YOLO-World internamente para el encoder de texto.
-git+https://github.com/openai/CLIP.git
-
 # --- WEBSOCKET ---
 # websockets: Soporte WebSocket para detección en tiempo real.
 websockets>=12.0
