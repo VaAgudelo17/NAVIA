@@ -924,6 +924,20 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:uso\s+(?:oficial|interno)|no\s+escribir?\s+aqu[ií])\b', re.I), 8),
         (re.compile(r'\b(?:llenar|completar|diligenciar)\b', re.I), 6),
         (re.compile(r'\b(?:en\s+letra\s+(?:clara|imprenta|legible))\b', re.I), 7),
+        # Campos de formularios digitales/empresariales (alta especificidad)
+        (re.compile(r'\b(?:enviar|submit)\b', re.I), 8),
+        (re.compile(r'\bnombre\s+de\s+la\s+compa[ñn][ií]a\b', re.I), 10),
+        (re.compile(r'\bpersona\s+de\s+contacto\b', re.I), 9),
+        (re.compile(r'\bc[oó]digo\s+postal\b', re.I), 8),
+        (re.compile(r'\bestado\s*/\s*provincia\b|\bprovincia\b', re.I), 6),
+        # Pares típicos de formulario (nombre + apellido como etiquetas separadas)
+        (re.compile(r'\bnombre\b.*\bapellido\b', re.I | re.S), 7),
+        # Placeholders de ejemplo → formulario digital vacío
+        (re.compile(r'ejemplo@\w+\.\w+|example@', re.I), 7),
+        (re.compile(r'\(000\)\s*000[-\s]?0000|\(0+\)', re.I), 5),
+        # Instrucción explícita de validación de campo
+        (re.compile(r'\bintroducid?\s+un\s+n[uú]mero\s+v[aá]lido\b', re.I), 8),
+        (re.compile(r'\bpor\s+favor\s+(?:complete|llene|ingrese|introduzca)\b', re.I), 7),
     ],
     "contrato": [
         (re.compile(r'\bcontrato\b', re.I), 10),
@@ -945,8 +959,11 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
     "hoja_de_vida": [
         (re.compile(r'\b(?:curr[ií]cul[ou]m?\s*(?:vitae)?|hoja\s+de\s+vida|resume|CV)\b', re.I), 10),
         (re.compile(r'\bexperiencia\s+(?:laboral|profesional)\b', re.I), 10),
+        (re.compile(r'\bhist(?:orial)?\s+(?:laboral|profesional)\b', re.I), 14),  # "HISTORIAL LABORAL"
+        (re.compile(r'\bresumen\s+profesional\b', re.I), 14),                      # "RESUMEN PROFESIONAL"
         (re.compile(r'\beducaci[oó]n\b|\bformaci[oó]n\s+acad[eé]mica\b', re.I), 7),
         (re.compile(r'\bhabilidades\b|\bcompetencias\b', re.I), 6),
+        (re.compile(r'\baptitudes?\b', re.I), 7),
         (re.compile(r'\breferencias\b', re.I), 5),
         # Secciones típicas de CV
         (re.compile(r'\b(?:datos?\s+personales?|informaci[oó]n\s+personal)\b', re.I), 7),
@@ -955,10 +972,14 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:logros?\s+(?:profesionales?|acad[eé]micos?))\b', re.I), 8),
         (re.compile(r'\b(?:certificaciones?|cursos?\s+(?:adicionales?|complementarios?))\b', re.I), 6),
         (re.compile(r'\b(?:disponibilidad|pretensiones?\s+salariales?|pretensi[oó]n)\b', re.I), 7),
-        # Patrones de experiencia
+        (re.compile(r'\binformaci[oó]n\s+adicional\b', re.I), 8),
+        # Patrones de experiencia con fechas (empresa 2020-2025)
         (re.compile(r'\b(?:cargo|puesto|posici[oó]n)\s*:', re.I), 6),
         (re.compile(r'\b(?:empresa|compa[ñn][ií]a|organizaci[oó]n)\s*:', re.I), 5),
         (re.compile(r'\b\d{4}\s*[-–]\s*(?:\d{4}|actual|presente)\b', re.I), 6),
+        # Combinación de 2+ secciones típicas de CV en el mismo texto = muy probable CV
+        (re.compile(r'(?=.*\b(?:aptitudes?|habilidades?)\b)(?=.*\b(?:historial|experiencia)\b)', re.I | re.S), 12),
+        (re.compile(r'(?=.*\b(?:resumen\s+profesional|perfil\s+profesional)\b)(?=.*\b(?:contacto|tel[eé]fono)\b)', re.I | re.S), 10),
     ],
     "informe": [
         (re.compile(r'\binforme\b', re.I), 10),
@@ -1057,6 +1078,12 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:www\.|http|\.com|\.org|\.net)\b', re.I), 5),
         (re.compile(r'\b(?:tarjeta\s+de\s+presentaci[oó]n|business\s+card)\b', re.I), 10),
         (re.compile(r'\b(?:asesor|consultor|representante|vendedor|ejecutivo|analista)\b', re.I), 6),
+        # Penalizaciones: secciones de CV que NO aparecen en tarjetas de presentación
+        (re.compile(r'\b(?:resumen\s+profesional|historial\s+laboral|experiencia\s+(?:laboral|profesional))\b', re.I), -18),
+        (re.compile(r'\b(?:aptitudes?|habilidades?|competencias?)\b', re.I), -10),
+        (re.compile(r'\binformaci[oó]n\s+adicional\b', re.I), -8),
+        (re.compile(r'\bformaci[oó]n\b|\beducaci[oó]n\b', re.I), -8),
+        (re.compile(r'\b\d{4}\s*[-–]\s*(?:\d{4}|actual|presente)\b', re.I), -8),  # fechas de empleo
     ],
     "receta_medica": [
         # Palabra clave directa
@@ -1441,10 +1468,20 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:punto\s+de\s+(?:recogida|encuentro)|pickup\s+point)\b', re.I), 7),
         # Apps de delivery
         (re.compile(r'\b(?:Rappi|PedidosYa|iFood|Uber\s*Eats|Domicilios|DoorDash|Glovo|Didi\s*Food)\b', re.I), 10),
-        (re.compile(r'\b(?:delivery|domicilio|entrega|envío)\b', re.I), 6),
+        (re.compile(r'\b(?:delivery|domicilio|entrega|env[ií]o)\b', re.I), 6),
         (re.compile(r'\b(?:a[ñn]adir\s+al\s+carrito|add\s+to\s+cart|agregar)\b', re.I), 7),
         (re.compile(r'\b(?:pedido|order|tu\s+pedido|your\s+order)\b', re.I), 6),
         (re.compile(r'\b(?:tiempo\s+(?:estimado|de\s+entrega)|ETA|estimated\s+(?:time|delivery))\b', re.I), 7),
+        # Tiendas online / e-commerce
+        (re.compile(r'\b(?:SHEIN|AliExpress|Amazon|Mercado\s*Libre|Falabella|Ripley|Linio|Temu|Wish|eBay|Zara|H&M)\b', re.I), 12),
+        (re.compile(r'\b(?:venta\s+flash|flash\s+sale|oferta\s+del\s+d[ií]a|liquidaci[oó]n)\b', re.I), 9),
+        (re.compile(r'\b(?:env[ií]o\s+gratuito|env[ií]o\s+gratis|free\s+shipping)\b', re.I), 9),
+        (re.compile(r'\b(?:productos?\s+(?:m[aá]s\s+vendidos?|destacados?|nuevos?)|best\s+sellers?)\b', re.I), 8),
+        (re.compile(r'\b(?:carrito\s+de\s+compras?|bolsa\s+de\s+compras?|shopping\s+(?:cart|bag))\b', re.I), 8),
+        (re.compile(r'\b(?:comprar\s+ahora|buy\s+now|a[ñn]adir\s+al\s+carrito|agregar\s+al\s+carrito)\b', re.I), 9),
+        (re.compile(r'\b(?:descuento|descuentos?|ahorra|off|sale|promo(?:ci[oó]n)?)\b', re.I), 5),
+        (re.compile(r'\b(?:talla|tallas?|sizes?|colores?|variantes?)\b', re.I), 6),
+        (re.compile(r'\b(?:por\s+tiempo\s+limitado|tiempo\s+limitado|limited\s+time)\b', re.I), 7),
         # Servicios
         (re.compile(r'\b(?:tarifa|fare)\b', re.I), 6),
         (re.compile(r'\b(?:suscripci[oó]n|subscription|plan\s+(?:mensual|anual|premium))\b', re.I), 6),
@@ -1550,12 +1587,17 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:hace\s+\d+\s+(?:min(?:utos?)?|horas?|d[ií]as?|mes(?:es)?|a[ñn]os?|semanas?))', re.I), 7),
         (re.compile(r'\b(?:me\s+gusta|like|likes|dislike)\b', re.I), 5),
         (re.compile(r'@\w{2,}', re.I), 5),
-        # Más patrones de comentarios
-        (re.compile(r'\b(?:\d+\s+(?:comentarios?|comments?|respuestas?|replies))\b', re.I), 8),
+        # Señal muy fuerte: contador de comentarios visible
+        (re.compile(r'\b\d+\s+comentarios?\b', re.I), 14),
+        (re.compile(r'\b\d+\s+(?:comments?|respuestas?|replies)\b', re.I), 12),
         (re.compile(r'\b(?:ver\s+(?:m[aá]s\s+)?(?:comentarios?|respuestas?)|show\s+(?:more\s+)?(?:comments?|replies))\b', re.I), 8),
         (re.compile(r'\b(?:mejor\s+comentario|top\s+comment|m[aá]s\s+(?:reciente|antiguo)|newest|oldest)\b', re.I), 7),
         (re.compile(r'\b(?:reportar|denunciar|report|flag)\b', re.I), 4),
         (re.compile(r'\b(?:editar|edit|borrar|delete|eliminar)\b', re.I), 4),
+        # Patrón típico de hilo: "Usuario Hace X tiempo texto Responder"
+        (re.compile(r'\bResponder\b', re.I), 8),
+        # Penalización: señales de correo real que NO aparecen en secciones de comentarios
+        (re.compile(r'\b(?:asunto|subject|de:|from:|para:|to:|cc:|bcc:)\b', re.I), -10),
     ],
 
     # ===== IMAGEN_VISUAL =====
@@ -1620,6 +1662,14 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:educaci[oó]n|formaci[oó]n\s+acad[eé]mica|estudios)\b', re.I), -8),
         (re.compile(r'\b(?:idiomas?|lenguas?)\b', re.I), -8),
         (re.compile(r'\b(?:objetivo\s+(?:profesional|laboral)|perfil\s+profesional)\b', re.I), -12),
+        # Keywords negativos: términos de formulario que NUNCA aparecen en credenciales
+        (re.compile(r'\bformulario\b', re.I), -20),
+        (re.compile(r'\b(?:enviar|submit)\b', re.I), -12),
+        (re.compile(r'\bc[oó]digo\s+postal\b', re.I), -12),
+        (re.compile(r'\bpersona\s+de\s+contacto\b', re.I), -10),
+        (re.compile(r'ejemplo@\w+\.\w+|\(000\)\s*000', re.I), -10),
+        (re.compile(r'\bintroducid?\s+un\s+n[uú]mero\s+v[aá]lido\b', re.I), -10),
+        (re.compile(r'\bnombre\s+de\s+la\s+compa[ñn][ií]a\b', re.I), -8),
     ],
     "app_banking": [
         # Palabras clave directas de banca
@@ -1654,6 +1704,25 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         # Frases de graduación específicas
         (re.compile(r'\b(?:doctor(?:a)?|licenciad[oa]|ingenier[oa]|abogad[oa]|médic[oa])\b.*\b(?:graduaci[oó]n|titulaci[oó]n)\b', re.I | re.S), 12),
         (re.compile(r'\b(?:universidad|facultad|carrera|promoci[oó]n)\b.*\b(?:graduaci[oó]n|grado|t[ií]tulo)\b', re.I | re.S), 10),
+        # Frases del cuerpo del mensaje (cuando el título decorativo no fue leído por OCR)
+        (re.compile(r'\bnuevo\s+a[ñn]o\s+de\s+vida\b', re.I), 12),
+        (re.compile(r'\ba[ñn]o\s+(?:de\s+)?vida\b', re.I), 9),
+        (re.compile(r'\blleno\s+(?:de\s+)?alegr[ií]a\b', re.I), 9),
+        (re.compile(r'\bsorpresas?\s+agradables?\b', re.I), 9),
+        (re.compile(r'\bluz\s+y\s+alegr[ií]a\b|\balegr[ií]a\s+y\s+amor\b|\bamor\s+y\s+(?:alegr[ií]a|paz)\b', re.I), 8),
+        (re.compile(r'\b(?:que\s+(?:todos?\s+tus|este)\s+(?:sue[ñn]os?|deseos?|metas?)\s+(?:se\s+)?cumplan?)\b', re.I), 10),
+        (re.compile(r'\b(?:pases?\s+(?:un\s+)?(?:lindo|hermoso|bonito|genial|especial)\s+d[ií]a)\b', re.I), 9),
+        # Señales de tarjeta de graduación detectables desde el cuerpo del texto
+        # (cuando el título "Felicitaciones por tu grado" está en cursiva y no lo lee el OCR)
+        (re.compile(r'\b(?:viaje\s+lleno\s+de\s+esfuerzo|lleno\s+de\s+esfuerzo)\b', re.I), 12),
+        (re.compile(r'\b(?:esfuerzo\W{0,5}trabajo\W{0,5}perseverancia|trabajo\W{0,5}perseverancia)\b', re.I), 12),
+        (re.compile(r'\bperseverancia\b', re.I), 7),
+        (re.compile(r'\b(?:dado\s+alas?|te\s+ha\s+dado\s+alas?|dar(?:te)?\s+alas?)\b', re.I), 11),
+        (re.compile(r'\bhacer\s+grandes\s+cosas\b', re.I), 10),
+        (re.compile(r'\b(?:lo\s+lograste|lo\s+conseguiste|lograste\s+tu\s+(?:meta|sue[ñn]o|objetivo))\b', re.I), 11),
+        (re.compile(r'\b(?:lograrlo|haberlo\s+logrado)\b', re.I), 8),
+        (re.compile(r'\b(?:saber\s+que\s+puedes|puedes\s+hacer\s+grandes)\b', re.I), 9),
+        (re.compile(r'\b(?:felicitaciones?|felicidades)\b', re.I), 10),
         # Keywords negativos (distinguir de carta formal)
         (re.compile(r'\b(?:atentamente|cordialmente|a\s+quien\s+corresponda|me\s+dirijo)\b', re.I), -8),
     ],

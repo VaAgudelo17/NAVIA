@@ -249,18 +249,25 @@ class OCRService:
             conf = int(data['conf'][i])
 
             # Filtrar basura de Tesseract:
-            # - confianza mínima 30% (< 30% es casi siempre basura de iconos/UI)
-            # - ignorar "palabras" de 1 caracter suelto (excepto números y letras comunes)
+            # - confianza mínima 55% — por debajo de este valor Tesseract suele
+            #   estar leyendo fondos decorativos, imágenes o ruido gráfico
+            # - ignorar tokens muy cortos (1-2 chars) que casi siempre son artefactos
             # - ignorar secuencias de solo símbolos/puntuación
-            if conf < 30 or not text:
+            if conf < 55 or not text:
                 continue
 
-            # Permitir palabras de 1 char solo si son significativas
-            if len(text) == 1 and text not in 'aAeEiIoOuUyY0123456789':
+            # Ignorar tokens de 1 o 2 caracteres: son casi siempre ruido visual
+            # (fragmentos de ilustraciones, adornos, bordes decorativos)
+            if len(text) <= 2:
                 continue
 
             # Ignorar texto que es solo puntuación/símbolos
             if re.match(r'^[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑüÜ]+$', text):
+                continue
+
+            # Ignorar secuencias de dígitos sin contexto (ej. "0010", "00010")
+            # que provienen de tramas o códigos de imagen decorativos
+            if re.match(r'^0+\d*$', text):
                 continue
 
             words.append(text)

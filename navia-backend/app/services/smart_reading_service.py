@@ -819,6 +819,44 @@ def _stop_at_section(fragment: str, max_words: int = 20) -> str:
     return fragment.strip()
 
 
+# Etiquetas de campo de formulario que señalan el fin del título.
+# Distintas de _SECTION_HEADERS_RE (que son secciones de documentos estructurados).
+# NOTA: sin \b final para no fallar con palabras que terminan en vocales acentuadas (ñ, í, etc.)
+_FORM_FIELD_LABELS_STOP = re.compile(
+    r'\b(?:nombre\s+(?:de\s+la\s+compa\w*|completo|apellido)|apellido|'
+    r'persona\s+de\s+contacto|email|correo\s+electr[oó]nico|'
+    r'n[uú]mero\s+de\s+tel[eé]fono|tel[eé]fono|celular|'
+    r'direcci[oó]n\s+de\s+la|ciudad|estado\s*/|c[oó]digo\s+postal|'
+    r'enviar|submit|firma\s+del|fecha\s+de\s+nac|adjunte)',
+    re.IGNORECASE
+)
+
+
+def _extract_form_title(text: str) -> Optional[str]:
+    """
+    Extrae el título de un formulario del texto OCR limpio.
+
+    Problema: el reconstructor colapsa todo en una línea, por lo que
+    el regex [^\n\r]{N} captura campos más allá del título real.
+    Esta función corta en la primera etiqueta de campo de formulario.
+    """
+    m = re.search(r'\bformulario\s+(?:de\s+)?([\w\s,áéíóúüñÁÉÍÓÚÜÑ]{3,80})', text, re.IGNORECASE)
+    if not m:
+        return None
+    raw = m.group(1)
+    # Cortar en la primera etiqueta de campo de formulario.
+    # No usar _SECTION_HEADERS_RE aquí: tiene "cursos", "datos", etc.
+    # que son palabras válidas en títulos de formularios.
+    stop = _FORM_FIELD_LABELS_STOP.search(raw)
+    if stop and stop.start() > 3:
+        raw = raw[:stop.start()]
+    title = _cf(raw).rstrip('.,;:').strip()
+    # Descartar si quedó vacío o demasiado largo
+    if not title or len(title.split()) > 8:
+        return None
+    return title
+
+
 # ============================================================================
 # NARRATIVE GENERATOR
 # ============================================================================
@@ -1108,73 +1146,137 @@ class NarrativeGenerator:
 
     def _gen_recibo(self, mode: str, text: str, ex: ExtractedData,
                     caption: Optional[str]) -> str:
-        """Narrativa natural para recibos de pago."""
-        # Detectar método de pago (heurística por keywords)
-        metodo = None
-        if re.search(r'\btarjeta\s+(?:de\s+)?cr[eé]dito\b', text, re.IGNORECASE):
-            metodo = "tarjeta de crédito"
-        elif re.search(r'\btarjeta\s+(?:de\s+)?d[eé]bito\b', text, re.IGNORECASE):
-            metodo = "tarjeta débito"
-        elif re.search(r'\btarjeta\b', text, re.IGNORECASE):
-            metodo = "tarjeta"
-        elif re.search(r'\befectivo\b', text, re.IGNORECASE):
-            metodo = "efectivo"
-        elif re.search(r'\btransferencia\b', text, re.IGNORECASE):
-            metodo = "transferencia"
-        elif re.search(r'\b(?:nequi|daviplata|pse|paypal)\b', text, re.IGNORECASE):
-            m = re.search(r'\b(nequi|daviplata|pse|paypal)\b', text, re.IGNORECASE)
-            metodo = m.group(1) if m else None
+        """Narrativa natural para recibos de pago, incluyendo recibos digitales (Nequi, Bancolombia, etc.)."""
+        if not text or not text.strip():
+            return "Tienes un recibo de pago, pero no pude leer el contenido."
 
-        # Detectar empresa/comercio emisor
+        # Detectar plataforma/app de pago digital
+        _DIGITAL_WALLETS = {
+            'nequi': 'Nequi', 'daviplata': 'Daviplata', 'pse': 'PSE',
+            'paypal': 'PayPal', 'bancolombia': 'Bancolombia', 'bold': 'Bold',
+            'wompi': 'Wompi', r'mercado\s*pago': 'Mercado Pago',
+            'bbva': 'BBVA', 'davivienda': 'Davivienda', 'itaú': 'Itaú',
+        }
+        plataforma = None
+        for key, label in _DIGITAL_WALLETS.items():
+            if re.search(r'\b' + key + r'\b', text, re.IGNORECASE):
+                plataforma = label
+                break
+
+        # Detectar tipo de transacción
+        tipo_tx = None
+        if re.search(r'\b(?:env[ií]o|enviaste|te\s+enviaron|transferencia\s+enviada)\b', text, re.I):
+            tipo_tx = "envío"
+        elif re.search(r'\b(?:recibiste|recibo|depósito|dinero\s+recibido|te\s+transfiri)\b', text, re.I):
+            tipo_tx = "dinero recibido"
+        elif re.search(r'\b(?:pago\s+(?:exitoso|realizado|aprobado)|pagaste|compra\s+aprobada)\b', text, re.I):
+            tipo_tx = "pago"
+        elif re.search(r'\b(?:recarga|recargaste)\b', text, re.I):
+            tipo_tx = "recarga"
+        elif re.search(r'\b(?:retiro|retiraste)\b', text, re.I):
+            tipo_tx = "retiro"
+        elif re.search(r'\btransferencia\b', text, re.I):
+            tipo_tx = "transferencia"
+
+        # Detectar método de pago (para recibos físicos/comercio)
+        metodo = plataforma
+        if not metodo:
+            if re.search(r'\btarjeta\s+(?:de\s+)?cr[eé]dito\b', text, re.I):
+                metodo = "tarjeta de crédito"
+            elif re.search(r'\btarjeta\s+(?:de\s+)?d[eé]bito\b', text, re.I):
+                metodo = "tarjeta débito"
+            elif re.search(r'\btarjeta\b', text, re.I):
+                metodo = "tarjeta"
+            elif re.search(r'\befectivo\b', text, re.I):
+                metodo = "efectivo"
+            elif re.search(r'\btransferencia\b', text, re.I):
+                metodo = "transferencia"
+
+        # Detectar destinatario/origen de transferencia
+        # Requiere al menos 2 palabras capitalizadas (nombre propio)
+        destinatario = None
+        # Solo buscar destinatario después de preposición explícita (no dentro del nombre de la app)
+        dest_match = re.search(
+            r'\b(?:enviaste|enviado|transferencia\s+(?:enviada|a)|env[ií]o\s+a)\s+[^\n]*?\s+a\s+'
+            r'([A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}){1,2})',
+            text, re.I
+        )
+        if not dest_match:
+            # Fallback: "a NombreApellido" precedido de monto
+            dest_match = re.search(
+                r'[\$\d.,]+\s+a\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,})?)',
+                text, re.I
+            )
+        if dest_match:
+            d = dest_match.group(1).strip()
+            _TX_KEYWORDS = {'pago', 'comprobante', 'exitoso', 'aprobado', 'fecha',
+                            'recibo', 'numero', 'referencia', 'monto', 'valor', 'transferencia'}
+            words = [w for w in d.split() if w.lower() not in _TX_KEYWORDS]
+            if len(words) >= 2:
+                destinatario = " ".join(words[:3])
+
+        # Empresa/comercio emisor (para recibos de tienda)
         empresa = None
         if ex.headers:
             empresa = ex.headers[0]
-        else:
+        elif not plataforma:
             first_line = text.strip().split('\n')[0].strip() if text.strip() else ""
-            if first_line and 2 < len(first_line.split()) <= 6:
+            if first_line and 1 < len(first_line.split()) <= 5:
                 empresa = first_line
 
-        if ex.amounts:
-            monto_str = ex.amounts[0]
-            if empresa:
-                intro = f"Tienes un recibo de pago de {empresa} por {monto_str}."
+        # Construir intro
+        monto_str = ex.amounts[0] if ex.amounts else None
+
+        if plataforma and tipo_tx and monto_str:
+            if tipo_tx == "envío" and destinatario:
+                intro = f"Comprobante de {plataforma}. Enviaste {monto_str} a {destinatario}."
+            elif tipo_tx == "envío":
+                intro = f"Comprobante de {plataforma}. Enviaste {monto_str}."
+            elif tipo_tx == "dinero recibido":
+                intro = f"Comprobante de {plataforma}. Recibiste {monto_str}."
+            elif tipo_tx == "pago":
+                intro = f"Comprobante de {plataforma}. Pago de {monto_str} aprobado."
+            elif tipo_tx == "recarga":
+                intro = f"Comprobante de {plataforma}. Recarga de {monto_str}."
             else:
-                intro = f"Tienes un recibo de pago por {monto_str}."
+                intro = f"Comprobante de {plataforma} por {monto_str}."
+        elif plataforma and monto_str:
+            intro = f"Comprobante de {plataforma} por {monto_str}."
+        elif plataforma:
+            intro = f"Comprobante de {plataforma}."
+        elif monto_str and empresa:
+            intro = f"Recibo de {empresa} por {monto_str}."
+        elif monto_str:
+            intro = f"Recibo de pago por {monto_str}."
         elif empresa:
-            intro = f"Tienes un recibo de pago de {empresa}."
+            intro = f"Recibo de pago de {empresa}."
         else:
-            intro = "Tienes un recibo de pago."
+            intro = "Recibo de pago."
+
+        parts = [intro]
 
         if mode == "resumen":
-            parts = [intro]
-            if metodo:
+            if metodo and not plataforma:
                 parts.append(f"Pagado con {metodo}.")
             if ex.dates:
                 parts.append(f"Fecha: {ex.dates[0]}.")
             return " ".join(parts)
 
-        if mode == "financiero":
-            parts = [intro]
-            if ex.totals:
-                parts.extend([f"{self._clean_total(t)}." for t in ex.totals])
-            if metodo:
-                parts.append(f"Método de pago: {metodo}.")
-            if ex.dates:
-                parts.append(f"Fecha: {ex.dates[0]}.")
-            return " ".join(parts)
-
-        # detallado
-        parts = [intro]
-        if metodo:
-            parts.append(f"Pagado con {metodo}.")
+        # Detallado y financiero
         if ex.dates:
             parts.append(f"Fecha: {ex.dates[0]}.")
+        if metodo and not plataforma:
+            parts.append(f"Método de pago: {metodo}.")
+        if ex.totals:
+            for t in ex.totals[:2]:
+                parts.append(f"{self._clean_total(t)}.")
         if ex.ids:
-            parts.append(f"Comprobante número {ex.ids[0]}.")
+            parts.append(f"Número de comprobante: {ex.ids[0]}.")
         if ex.emails:
-            parts.append(f"Correo de contacto: {ex.emails[0]}.")
+            parts.append(f"Correo: {ex.emails[0]}.")
         if ex.phones:
             parts.append(f"Teléfono: {ex.phones[0]}.")
+
         return " ".join(parts)
 
     # --- CARTA ---
@@ -1233,48 +1335,127 @@ class NarrativeGenerator:
 
     def _gen_formulario(self, mode: str, text: str, ex: ExtractedData,
                         caption: Optional[str]) -> str:
-        """Narrativa natural para formularios."""
-        if ex.headers:
-            intro = f"Tienes un formulario de {ex.headers[0]}."
-        else:
-            intro = "Tienes un formulario para llenar."
+        """Narrativa natural para formularios.
 
-        # Detectar campos comunes
-        campos = []
-        campo_patterns = [
-            (r'\bnombre\s+completo\b', 'nombre completo'),
-            (r'\bcorreo|e-?mail\b', 'correo electrónico'),
-            (r'\btel[eé]fono|celular\b', 'teléfono'),
-            (r'\bdirecci[oó]n\b', 'dirección'),
-            (r'\bc[eé]dula|documento\b', 'documento de identidad'),
-            (r'\bfirma\b', 'firma'),
-            (r'\bfecha\s+de\s+nacimiento\b', 'fecha de nacimiento'),
+        Los formularios suelen estar vacíos (sin datos), por lo que la narrativa
+        describe QUÉ campos pide el formulario, no datos que no existen.
+        """
+        # Extraer título del formulario (usa helper que para en la primera etiqueta de campo)
+        form_title = _extract_form_title(text)
+        if not form_title and ex.headers:
+            # Fallback: usar el primer header que no sea solo "FORMULARIO"
+            for h in ex.headers:
+                if not re.match(r'^formulario$', h.strip(), re.IGNORECASE):
+                    form_title = h.strip().title()
+                    break
+
+        if form_title:
+            intro = f"Tienes frente a ti un formulario de {form_title}."
+        else:
+            intro = "Tienes frente a ti un formulario para completar."
+
+        # Detectar campos con etiquetas más completas
+        # (patrón, label, categoría)
+        _CAMPO_PATTERNS = [
+            (r'\bnombre\s+de\s+la\s+compa[ñn][ií]a\b|\bnombre\s+(?:del?\s+)?(?:empresa|negocio|proveedor|organizaci[oó]n)\b', 'el nombre de la empresa', 'empresa'),
+            (r'\bnit\b|\br\.?\s*i\.?\s*f\b', 'el número de identificación tributaria', 'empresa'),
+            (r'\bsitio\s+web\b|\bweb\b|\burl\b', 'el sitio web', 'empresa'),
+            (r'\bcargo\b|\bpuesto\b|\bposici[oó]n\b', 'el cargo', 'empresa'),
+            (r'\bnombre\s+completo\b', 'tu nombre completo', 'persona'),
+            (r'\bnombre\b(?!\s+de\s+la\s+compa)', 'tu nombre', 'persona'),
+            (r'\bapellido\b', 'tu apellido', 'persona'),
+            (r'\bpersona\s+de\s+contacto\b', 'la persona de contacto', 'persona'),
+            (r'\bfecha\s+de\s+nacimiento\b', 'tu fecha de nacimiento', 'persona'),
+            (r'\bc[eé]dula|documento\s+de\s+identidad\b', 'tu documento de identidad', 'persona'),
+            (r'\bcorreo|e-?mail\b', 'tu correo electrónico', 'contacto'),
+            (r'\btel[eé]fono|celular|n[uú]mero\s+de\s+tel[eé]fono\b', 'tu número de teléfono', 'contacto'),
+            (r'\bdirecci[oó]n\s+de\s+la\s+calle\b|\bdirecci[oó]n\b', 'la dirección', 'ubicacion'),
+            (r'\bciudad\b', 'la ciudad', 'ubicacion'),
+            (r'\bestado\s*/?\s*provincia\b|\bprovincia\b|\bestado\b', 'el estado o provincia', 'ubicacion'),
+            (r'\bc[oó]digo\s+postal\b', 'el código postal', 'ubicacion'),
+            (r'\bp[aá]is\b', 'el país', 'ubicacion'),
+            (r'\bfirma\b', 'tu firma', 'otros'),
+            (r'\bobservaciones?\b|\bcomentarios?\b|\bnotas?\b', 'observaciones', 'otros'),
         ]
-        for pat, label in campo_patterns:
-            if re.search(pat, text, re.IGNORECASE):
-                campos.append(label)
+
+        campos_por_categoria: dict = {'empresa': [], 'persona': [], 'contacto': [], 'ubicacion': [], 'otros': []}
+        seen = set()
+        for pat, label, cat in _CAMPO_PATTERNS:
+            if re.search(pat, text, re.IGNORECASE) and label not in seen:
+                campos_por_categoria[cat].append(label)
+                seen.add(label)
+
+        # Detectar si el formulario tiene botón de envío (indica formulario digital)
+        tiene_enviar = bool(re.search(r'\b(?:enviar|submit|guardar|aceptar|continuar)\b', text, re.IGNORECASE))
 
         if mode == "resumen":
-            parts = [intro]
-            if campos:
-                parts.append(f"Te pide: {', '.join(campos[:3])}.")
-            else:
-                parts.append("Tiene varios campos para completar.")
-            return " ".join(parts)
+            # Resumen empático: 1–2 frases
+            grupos = []
+            if campos_por_categoria['empresa']:
+                grupos.append("datos de la empresa")
+            if campos_por_categoria['persona']:
+                grupos.append("datos personales")
+            if campos_por_categoria['contacto']:
+                grupos.append("información de contacto")
+            if campos_por_categoria['ubicacion']:
+                grupos.append("dirección")
+            if campos_por_categoria['otros']:
+                grupos.append("otros datos")
 
-        # detallado
+            if grupos:
+                if len(grupos) == 1:
+                    necesitas = grupos[0]
+                elif len(grupos) == 2:
+                    necesitas = f"{grupos[0]} y {grupos[1]}"
+                else:
+                    necesitas = ", ".join(grupos[:-1]) + f" y {grupos[-1]}"
+                return f"{intro} Para completarlo necesitarás {necesitas}."
+            else:
+                return f"{intro} Tiene campos para completar."
+
+        # Modo detallado: describir los campos de forma natural y empática
         parts = [intro]
-        field_count = text.count(':')
-        if campos:
-            parts.append(f"Te pide datos como {', '.join(campos[:5])}.")
-        elif field_count > 2:
-            parts.append(f"Tiene alrededor de {field_count} campos para llenar.")
-        if ex.ids:
-            parts.append(f"Pide tu identificación: {ex.ids[0]}.")
-        if ex.dates:
-            parts.append(f"Fecha incluida: {ex.dates[0]}.")
-        if ex.phones:
-            parts.append(f"Teléfono de contacto: {ex.phones[0]}.")
+
+        # Construir frases por categoría de forma natural
+        if campos_por_categoria['empresa']:
+            campos = campos_por_categoria['empresa']
+            if len(campos) == 1:
+                parts.append(f"Sobre la empresa te pedirá {campos[0]}.")
+            else:
+                ultimos = f"{', '.join(campos[:-1])} y {campos[-1]}"
+                parts.append(f"Sobre la empresa te pedirá {ultimos}.")
+
+        if campos_por_categoria['persona']:
+            campos = campos_por_categoria['persona']
+            if len(campos) == 1:
+                parts.append(f"De la persona, solicitará {campos[0]}.")
+            else:
+                ultimos = f"{', '.join(campos[:-1])} y {campos[-1]}"
+                parts.append(f"De la persona, solicitará {ultimos}.")
+
+        if campos_por_categoria['contacto']:
+            campos = campos_por_categoria['contacto']
+            partes_contacto = " y ".join(campos) if len(campos) <= 2 else ", ".join(campos[:-1]) + f" y {campos[-1]}"
+            parts.append(f"Para el contacto pedirá {partes_contacto}.")
+
+        if campos_por_categoria['ubicacion']:
+            campos = campos_por_categoria['ubicacion']
+            if len(campos) == 1:
+                parts.append(f"También pedirá {campos[0]}.")
+            else:
+                ultimos = f"{', '.join(campos[:-1])} y {campos[-1]}"
+                parts.append(f"También pedirá la dirección completa: {ultimos}.")
+
+        if campos_por_categoria['otros']:
+            otros = ", ".join(campos_por_categoria['otros'])
+            parts.append(f"Además incluye: {otros}.")
+
+        if not any(campos_por_categoria.values()):
+            parts.append("Tiene varios campos para completar con tu información.")
+
+        if tiene_enviar:
+            parts.append("Al final hay un botón para enviar el formulario.")
+
         return " ".join(parts)
 
     # --- DOCUMENTO INFORMATIVO ---
@@ -1708,7 +1889,7 @@ class NarrativeGenerator:
         ))
 
         # 3. Extraer nombre de usuario/persona
-        # Filtrar palabras de UI que no son nombres
+        # Filtrar palabras de UI, categorías de producto y navegación que no son nombres
         _UI_WORDS = {
             'Overview', 'Repositories', 'Repository', 'Projects', 'Packages',
             'Popular', 'Pinned', 'Contribution', 'Contributions', 'Following',
@@ -1716,18 +1897,24 @@ class NarrativeGenerator:
             'Timeline', 'Stories', 'Reels', 'Home', 'Search', 'Explore',
             'Activity', 'Notifications', 'Messages', 'Share', 'Comment',
             'Servicios', 'Java', 'Python',
+            # Categorías de producto / navegación de tienda
+            'Mujer', 'Hombre', 'Niña', 'Niño', 'Bebé', 'Tops', 'Bolsas',
+            'Zapatos', 'Ropa', 'Todo', 'Nuevo', 'Nueva', 'Flash', 'Venta',
+            'Oferta', 'Compra', 'Más', 'Menos', 'Ver', 'Sale', 'New',
         }
-        # Buscar patrones de nombre (2+ palabras capitalizadas consecutivas, no UI)
+        # Buscar username (@usuario) primero — más confiable
+        username_match = re.search(r'@(\w{2,30})', text)
+        # Buscar nombre real solo en las primeras 3 líneas (no categorías del cuerpo)
         name_match = None
+        first_lines = '\n'.join(text.split('\n')[:3])
         for m in re.finditer(
             r'([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3})',
-            text
+            first_lines
         ):
             words_in_name = m.group(1).split()
             if not any(w in _UI_WORDS for w in words_in_name):
                 name_match = m
                 break
-        username_match = re.search(r'@(\w{2,30})', text)
 
         # 4. Extraer métricas numéricas
         metrics = {}
@@ -1786,11 +1973,14 @@ class NarrativeGenerator:
                 metric_parts = [f"{v} {k}" for k, v in list(metrics.items())[:3]]
                 parts.append(", ".join(metric_parts) + ".")
 
-            # Contenido del post (solo frases significativas)
-            phrases = self._extract_meaningful_phrases(text, max_phrases=3, min_words=3)
-            if phrases:
-                best = phrases[0]
-                parts.append(f"Dice: {best}.")
+            # Contenido del post — solo la primera frase significativa, sin volcar todo
+            if mode != "resumen" or not metrics:
+                phrases = self._extract_meaningful_phrases(text, max_phrases=1, min_words=4)
+                if phrases:
+                    best = phrases[0]
+                    # Evitar frases que son solo categorías/navegación (todo mayúsculas cortas)
+                    if not re.match(r'^[A-ZÁÉÍÓÚÑ\s]{4,}$', best):
+                        parts.append(f"Dice: {best}.")
 
         return " ".join(parts) if parts else "Red social sin contenido legible."
 
@@ -1854,17 +2044,30 @@ class NarrativeGenerator:
         if not text or not text.strip():
             return "Tienes un correo, pero no pude leer el contenido."
 
-        # Extraer remitente
+        # Extraer remitente (línea "De:" o "From:")
         remitente = None
-        from_match = re.search(r'(?:de|from)\s*:?\s*([^\n]{3,40})', text, re.IGNORECASE)
+        from_match = re.search(r'(?:^|\n)\s*(?:de|from)\s*:?\s*([^\n]{3,60})', text, re.IGNORECASE | re.MULTILINE)
         if from_match:
-            remitente = _cf(from_match.group(1))
+            r_raw = _cf(from_match.group(1)).strip()
+            # No usar si parece una oración completa (más de 5 palabras)
+            if r_raw and len(r_raw.split()) <= 5:
+                remitente = r_raw
+
+        # Extraer destinatario
+        para = None
+        to_match = re.search(r'(?:^|\n)\s*(?:para|to)\s*:?\s*([^\n]{3,60})', text, re.IGNORECASE | re.MULTILINE)
+        if to_match:
+            p_raw = _cf(to_match.group(1)).strip()
+            if p_raw and len(p_raw.split()) <= 5:
+                para = p_raw
 
         # Extraer asunto
         subject_text = None
-        subject_match = re.search(r'(?:asunto|subject)\s*:?\s*([^\n]{3,60})', text, re.IGNORECASE)
+        subject_match = re.search(r'(?:^|\n)\s*(?:asunto|subject)\s*:?\s*([^\n]{3,80})', text, re.IGNORECASE | re.MULTILINE)
         if subject_match:
-            subject_text = _cf(subject_match.group(1))
+            s_raw = _cf(subject_match.group(1)).strip()
+            if s_raw and len(s_raw.split()) <= 15:
+                subject_text = s_raw
 
         # Intro contextual
         if remitente and subject_text:
@@ -1872,20 +2075,29 @@ class NarrativeGenerator:
         elif remitente:
             parts = [f"Tienes un correo de {remitente}."]
         elif subject_text:
-            parts = [f"Tienes un correo con asunto: {subject_text}."]
+            parts = [f"Tienes un correo. Asunto: {subject_text}."]
         else:
             parts = ["Tienes un correo electrónico."]
 
+        if para and not remitente:
+            parts.append(f"Para: {para}.")
         if ex.dates:
             parts.append(f"Fecha: {ex.dates[0]}.")
 
-        if mode == "detallado":
-            body_text = text
-            body_text = re.sub(r'(?:de|from)\s*:?\s*[^\n]{3,40}', '', body_text, count=1, flags=re.IGNORECASE)
-            body_text = re.sub(r'(?:asunto|subject)\s*:?\s*[^\n]{3,60}', '', body_text, count=1, flags=re.IGNORECASE)
-            body = self._extract_body_preview(body_text, max_words=50)
-            if body and (not subject_text or subject_text.lower() not in body.lower()):
+        if mode == "resumen":
+            return " ".join(parts)
+
+        # Detallado: leer el cuerpo limpiando encabezados ya procesados
+        body_text = text
+        body_text = re.sub(r'(?:^|\n)\s*(?:de|from|para|to|asunto|subject|cc|bcc)\s*:?\s*[^\n]{0,80}', '', body_text, flags=re.IGNORECASE | re.MULTILINE)
+        # Extraer solo frases con sentido (mínimo 5 palabras)
+        phrases = self._extract_meaningful_phrases(body_text, max_phrases=2, min_words=5)
+        if phrases:
+            body = ". ".join(phrases)
+            if not subject_text or subject_text.lower() not in body.lower():
                 parts.append(f"El mensaje dice: {body}.")
+        elif ex.emails:
+            parts.append(f"Correo de contacto: {ex.emails[0]}.")
 
         return " ".join(parts)
 
@@ -2158,114 +2370,173 @@ class NarrativeGenerator:
 
     def _gen_hoja_de_vida(self, mode: str, text: str, ex: ExtractedData,
                           caption: Optional[str]) -> str:
-        """Narrativa natural para currículum vitae / hoja de vida."""
+        """Narrativa concisa para currículum vitae / hoja de vida.
+
+        No vuelca todo el texto — extrae solo lo más relevante:
+        nombre, profesión/área, empresa más reciente, habilidades clave y contacto.
+        """
         if not text or not text.strip():
             return "Es una hoja de vida, pero no pude leer el contenido."
 
         parts = []
+        _CV_SECTION_WORDS = {'contacto', 'idiomas', 'aptitudes', 'habilidades', 'educación',
+                             'educacion', 'experiencia', 'datos', 'perfil', 'objetivo',
+                             'referencias', 'formación', 'formacion', 'historial', 'información',
+                             'informacion', 'adicional', 'logros', 'certificaciones'}
 
-        # Nombre: buscar en líneas Title Case cortas al inicio
+        # 1. NOMBRE — líneas Title Case cortas al inicio, permite nombre en 2 líneas
         candidate_name = None
         lines = [l.strip() for l in text.split('\n') if l.strip()]
-        _CV_SECTIONS = {'contacto', 'idiomas', 'aptitudes', 'habilidades', 'educación',
-                        'educacion', 'experiencia', 'datos', 'perfil', 'objetivo', 'referencias'}
-        for line in lines[:6]:  # Buscar solo en las primeras líneas
+
+        def _is_name_line(line: str) -> bool:
             words = line.split()
-            if 2 <= len(words) <= 4 and not line.isupper():
-                if all(c.isalpha() or c in ' áéíóúüñÁÉÍÓÚÜÑ' for c in line):
-                    if words[0].lower() not in _CV_SECTIONS:
-                        candidate_name = line
-                        break
+            if not (1 <= len(words) <= 4):
+                return False
+            if line.isupper():
+                return False
+            if not all(c.isalpha() or c in ' áéíóúüñÁÉÍÓÚÜÑ' for c in line):
+                return False
+            return words[0][0].isupper() and words[0].lower() not in _CV_SECTION_WORDS
+
+        for i, line in enumerate(lines[:8]):
+            if _is_name_line(line):
+                # Intentar fusionar con la línea siguiente si también es nombre
+                if i + 1 < len(lines) and _is_name_line(lines[i + 1]):
+                    candidate_name = line + " " + lines[i + 1]
+                else:
+                    candidate_name = line
+                break
 
         if candidate_name:
             parts.append(f"Es la hoja de vida de {candidate_name}.")
         else:
             parts.append("Es una hoja de vida.")
 
-        # Extraer aptitudes/área profesional (útil cuando no hay objetivo explícito)
-        aptitudes_match = re.search(
-            r'(?:aptitudes?|habilidades?|competencias?)\s*:?\s*([^\n]{5,200})',
-            text, re.IGNORECASE
-        )
-        hab_text_raw = _stop_at_section(_cf(aptitudes_match.group(1)), 15) if aptitudes_match else None
+        # 2. PROFESIÓN / ÁREA — primera línea del perfil o cargo detectado
+        #    Buscar frases cortas antes de secciones formales que describan el rol
+        profession = None
+        # Patrón: "[Profesión corta] con N años de experiencia"
+        # Buscar por línea para evitar capturar el nombre que está antes
+        for line in lines:
+            prof_match = re.search(
+                r'^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})\s+con\s+(\d+)\s+a[ñn]os?\s+de\s+experiencia\b',
+                line.strip(), re.IGNORECASE
+            )
+            if prof_match:
+                rol = _cf(prof_match.group(1)).strip()
+                años = prof_match.group(2)
+                if len(rol.split()) <= 3 and rol.lower() not in _CV_SECTION_WORDS:
+                    profession = f"Se desempeña como {rol} con {años} años de experiencia."
+                    break
+        if not profession:
+            # Buscar perfil/objetivo profesional
+            perfil_match = re.search(
+                r'(?:objetivo\s+(?:profesional|laboral)|perfil\s+profesional|resumen)\s*:?\s*([^\n]{10,150})',
+                text, re.IGNORECASE
+            )
+            if perfil_match:
+                perfil = _stop_at_section(_cf(perfil_match.group(1)), 15)
+                if perfil:
+                    profession = f"Perfil: {perfil}."
 
-        # Perfil profesional
-        perfil_match = re.search(
-            r'(?:objetivo\s+(?:profesional|laboral)|perfil\s+profesional|resumen\s+profesional)\s*:?\s*([^\n]{10,200})',
-            text, re.IGNORECASE
-        )
+        if profession:
+            parts.append(profession)
 
         if mode == "resumen":
-            if perfil_match:
-                perfil = _stop_at_section(_cf(perfil_match.group(1)), 20)
-                parts.append(f"Perfil: {perfil}.")
-            elif hab_text_raw:
-                parts.append(f"Aptitudes: {hab_text_raw}.")
-            elif ex.emails:
+            # Solo nombre + profesión + contacto rápido
+            if ex.emails:
                 parts.append(f"Correo: {ex.emails[0]}.")
+            elif ex.phones:
+                parts.append(f"Teléfono: {ex.phones[0]}.")
             return " ".join(parts)
 
-        # Detallado y financiero: extraer secciones clave
-        # Profesión / cargo objetivo
-        cargo_match = re.search(
-            r'(?:cargo\s+(?:aspirado?|objetivo|deseado?)|puesto\s+(?:aspirado?|objetivo)|posici[oó]n\s+objetivo)\s*:?\s*([^\n]{3,100})',
-            text, re.IGNORECASE
-        )
-        if cargo_match:
-            parts.append(f"Aspira al cargo de {_stop_at_section(_cf(cargo_match.group(1)), 10)}.")
-        elif perfil_match:
-            perfil = _stop_at_section(_cf(perfil_match.group(1)), 20)
-            parts.append(f"Perfil: {perfil}.")
-
-        # Experiencia laboral
-        exp_match = re.search(
-            r'(?:experiencia\s+(?:laboral|profesional)|experiencia)\s*:?\s*([^\n]{5,200})',
-            text, re.IGNORECASE
-        )
-        if exp_match:
-            exp_text = _stop_at_section(_cf(exp_match.group(1)), 20)
-            parts.append(f"Experiencia: {exp_text}.")
-        else:
-            empresa_match = re.search(
-                r'(?:empresa|compa[ñn][ií]a|organizaci[oó]n)\s*:?\s*([^\n]{3,100})',
-                text, re.IGNORECASE
+        # 3. EMPRESA MÁS RECIENTE — buscar nombre de empresa en sección de experiencia
+        #    Patrón: nombre de empresa seguido de cargo o fechas
+        empresa_reciente = None
+        cargo_reciente = None
+        # Buscar patrones "Empresa - Cargo" o "Empresa | Cargo"
+        # Buscar "Empresa - Cargo" línea a línea para evitar capturar ciudades/fechas
+        _PLACE_WORDS = {'guadalajara', 'ciudad', 'bogotá', 'bogota', 'medellín', 'medellin',
+                        'mexico', 'méxico', 'lima', 'bogota', 'cali', 'barranquilla', 'monterrey'}
+        for line in lines:
+            emp_cargo_match = re.match(
+                r'^([A-ZÁÉÍÓÚÑ][^\|–\-\n]{3,50})\s*[-–|]\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[a-záéíóúñA-ZÁÉÍÓÚÑ]+){0,3})\s*$',
+                line.strip()
             )
-            if empresa_match:
-                parts.append(f"Trabajó en {_stop_at_section(_cf(empresa_match.group(1)), 8)}.")
+            if emp_cargo_match:
+                emp_raw = _cf(emp_cargo_match.group(1)).strip()
+                cargo_raw = _cf(emp_cargo_match.group(2)).strip()
+                if (len(emp_raw.split()) <= 6 and
+                        emp_raw.lower() not in _CV_SECTION_WORDS and
+                        cargo_raw.split()[0].lower() not in _PLACE_WORDS and
+                        len(cargo_raw.split()) <= 4):
+                    empresa_reciente = emp_raw
+                    cargo_reciente = cargo_raw
+                    break
 
-        # Educación
-        edu_match = re.search(
-            r'(?:educaci[oó]n|formaci[oó]n\s+acad[eé]mica|estudios)\s*:?\s*([^\n]{5,200})',
-            text, re.IGNORECASE
-        )
-        if edu_match:
-            edu_text = _stop_at_section(_cf(edu_match.group(1)), 15)
-            parts.append(f"Estudios: {edu_text}.")
+        if empresa_reciente and cargo_reciente:
+            parts.append(f"Su trabajo más reciente fue en {empresa_reciente} como {cargo_reciente}.")
+        elif empresa_reciente:
+            parts.append(f"Su trabajo más reciente fue en {empresa_reciente}.")
 
-        # Aptitudes / habilidades (usar el match ya calculado)
-        if hab_text_raw:
-            parts.append(f"Aptitudes: {hab_text_raw}.")
-        else:
-            hab_match = re.search(
-                r'(?:habilidades|skills)\s*:?\s*([^\n]{5,200})',
-                text, re.IGNORECASE
-            )
-            if hab_match:
-                hab_text = _stop_at_section(_cf(hab_match.group(1)), 15)
-                parts.append(f"Habilidades: {hab_text}.")
+        # 4. HABILIDADES / APTITUDES — máximo 3–4, no listar todas
+        hab_lines = []
+        in_hab_section = False
+        for line in lines:
+            if re.match(r'^(?:aptitudes?|habilidades?|competencias?|skills)\s*$', line, re.I):
+                in_hab_section = True
+                continue
+            if in_hab_section:
+                if line.isupper() or re.match(r'^(?:idiomas?|contacto|educaci)', line, re.I):
+                    break  # Fin de la sección
+                clean = re.sub(r'^[\•\-\*\·]\s*', '', line).strip()
+                if clean and len(clean.split()) <= 6:
+                    hab_lines.append(clean)  # no _cf: preservar "y", "de", etc.
+                if len(hab_lines) >= 4:
+                    break
 
-        # Idiomas
-        idioma_match = re.search(
-            r'(?:idiomas?|languages?)\s*:?\s*([^\n]{5,150})',
-            text, re.IGNORECASE
-        )
-        if idioma_match:
-            parts.append(f"Idiomas: {_stop_at_section(_cf(idioma_match.group(1)), 10)}.")
+        if hab_lines:
+            # Usar máximo 3 habilidades — no usar _cf para no perder "y"
+            shown = hab_lines[:3]
+            if len(shown) == 1:
+                hab_str = shown[0]
+            elif len(shown) == 2:
+                hab_str = f"{shown[0]} y {shown[1]}"
+            else:
+                hab_str = f"{shown[0]}, {shown[1]} y {shown[2]}"
+            parts.append(f"Entre sus habilidades destacan: {hab_str}.")
 
-        # Contacto
+        # 5. IDIOMAS — recoger los idiomas listados después del encabezado
+        idiomas_list = []
+        in_idioma_section = False
+        for line in lines:
+            if re.match(r'^(?:idiomas?|languages?)\s*$', line, re.I):
+                in_idioma_section = True
+                continue
+            if in_idioma_section:
+                if line.isupper() or re.match(r'^(?:aptitudes?|contacto|educaci|historial|formaci|informaci)', line, re.I):
+                    break
+                # Extraer solo el nombre del idioma (antes de ":" o nivel)
+                lang_match = re.match(r'^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)', line)
+                if lang_match:
+                    lang = lang_match.group(1)
+                    if lang.lower() not in {'idioma', 'nativo', 'avanzado', 'intermedio', 'básico', 'nivel'}:
+                        idiomas_list.append(lang)
+                if len(idiomas_list) >= 3:
+                    break
+
+        if idiomas_list:
+            if len(idiomas_list) == 1:
+                parts.append(f"Idioma: {idiomas_list[0]}.")
+            elif len(idiomas_list) == 2:
+                parts.append(f"Idiomas: {idiomas_list[0]} e {idiomas_list[1]}.")
+            else:
+                parts.append(f"Idiomas: {', '.join(idiomas_list[:-1])} e {idiomas_list[-1]}.")
+
+        # 6. CONTACTO
         if ex.emails:
             parts.append(f"Correo: {ex.emails[0]}.")
-        if ex.phones:
+        elif ex.phones:
             parts.append(f"Teléfono: {ex.phones[0]}.")
 
         return " ".join(parts)
@@ -2352,6 +2623,43 @@ class NarrativeGenerator:
 
     # --- TARJETA DE FELICITACIÓN ---
 
+    @staticmethod
+    def _repair_greeting_text(text: str) -> str:
+        """
+        Restaura preposiciones/artículos comunes que el OCR pierde en frases de tarjetas.
+
+        El OCR script/decorativo frecuentemente omite artículos y preposiciones cortas,
+        resultando en frases como "lleno alegría amor" o "sido viaje lleno esfuerzo".
+        Solo repara patrones muy seguros para no inventar palabras.
+        """
+        # "Ha sido" al inicio → si empieza con "sido" probablemente falta "Ha"
+        text = re.sub(r'^\s*[Ss]ido\b', 'Ha sido', text)
+        # "sido viaje" → "sido un viaje"
+        text = re.sub(r'\b(sido)\s+(viaje|camino|proceso|recorrido)\b', r'\1 un \2', text, flags=re.I)
+        # "viaje lleno esfuerzo" → "viaje lleno de esfuerzo"
+        text = re.sub(r'\b(viaje|camino)\s+(llenos?)\s+(?!de\b)', r'\1 \2 de ', text, flags=re.I)
+        # "año vida" / "años vida" → "año de vida"
+        text = re.sub(r'\ba[ñn]os?\s+(?=vida\b)', lambda m: m.group(0).rstrip() + ' de ', text, flags=re.I)
+        # "lleno/llena X" → "lleno de X"  (cuando X no empieza con preposición)
+        text = re.sub(r'\b(llenos?\s+)(?!de\b)([a-záéíóú])', lambda m: m.group(1) + 'de ' + m.group(2), text, flags=re.I)
+        # "Lograrlo dado" → "Lograrlo te ha dado"
+        text = re.sub(r'\b([Ll]ograrlo)\s+(dado)\b', r'\1 te ha \2', text)
+        # "dado alas" → "dado alas" (ya correcto, pero sin artículo)
+        # Sustantivos sentimentales/esfuerzo seguidos sin conector → lista con comas y "y" final
+        # Cubre cadenas de 3: "A B C" → "A, B y C"
+        _SENT = r'(?:alegr[ií]a|amor|paz|[eé]xito|salud|felicidad|esperanza|sue[ñn]os?|prosperidad|dicha|cari[ñn]o|luz|esfuerzo|trabajo|perseverancia|dedicaci[oó]n|constancia)'
+        # Primera pasada: "A B C" — insertar coma entre primeros dos cuando hay un tercero
+        text = re.sub(rf'({_SENT})\s+({_SENT})\s+({_SENT})', r'\1, \2 y \3', text, flags=re.I)
+        # Segunda pasada: "A B" restantes sin conector → agregar "y"
+        text = re.sub(rf'({_SENT})\s+({_SENT})', r'\1 y \2', text, flags=re.I)
+        # Dos sustantivos donde el segundo es "muchas/muchos X" — agregar coma
+        text = re.sub(rf'({_SENT})\s+(muchas?\s+)', r'\1, \2', text, flags=re.I)
+        # Agregar punto antes de nuevas oraciones (nueva frase del mensaje)
+        text = re.sub(r'\s+([Ll]ograrlo|[Ll]ograste|[Hh]oy\s+eres|[Ee]res\s+un)\b', r'. \1', text)
+        # "cosas vida" → "cosas en la vida"
+        text = re.sub(r'\b(cosas)\s+(vida)\b', r'\1 en la \2', text, flags=re.I)
+        return text
+
     def _gen_tarjeta_felicitacion(self, mode: str, text: str, ex: ExtractedData,
                                    caption: Optional[str]) -> str:
         """Narrativa natural para tarjetas de felicitación y graduación."""
@@ -2360,12 +2668,23 @@ class NarrativeGenerator:
 
         parts = []
 
-        # Detectar tipo de celebración
-        if re.search(r'\b(?:graduaci[oó]n|te\s+grad[uú][aá](?:ste|s)?|gradu[oó]|egresad[oa]|licenciad[oa]|titulaci[oó]n)\b', text, re.I):
+        # Detectar tipo de celebración (también por el cuerpo del mensaje,
+        # por si el título decorativo no fue leído por el OCR).
+        # Nota: "año vida" (sin "de") ocurre cuando el OCR omite preposiciones.
+        is_grad = bool(re.search(
+            r'\b(?:graduaci[oó]n|te\s+grad[uú][aá](?:ste|s)?|gradu[oó]|egresad[oa]|licenciad[oa]|titulaci[oó]n|'
+            r'grado|por\s+tu\s+grado|felicitaciones?|lograrlo|lo\s+lograste|dado\s+alas?|'
+            r'esfuerzo\W{0,5}trabajo\W{0,5}perseverancia|grandes\s+cosas\s+en\s+la\s+vida|'
+            r'saber\s+que\s+puedes)\b', text, re.I))
+        is_bday = bool(re.search(
+            r'\b(?:cumplea[ñn]os?|birthday|nuevo\s+a[ñn]o\s+(?:de\s+)?vida|a[ñn]os?\s+(?:de\s+)?vida)\b', text, re.I))
+        is_xmas = bool(re.search(r'\b(?:navidad|a[ñn]o\s+nuevo)\b', text, re.I))
+
+        if is_grad:
             parts.append("Es una tarjeta de graduación.")
-        elif re.search(r'\b(?:cumplea[ñn]os?|birthday)\b', text, re.I):
+        elif is_bday:
             parts.append("Es una tarjeta de cumpleaños.")
-        elif re.search(r'\b(?:navidad|a[ñn]o\s+nuevo)\b', text, re.I):
+        elif is_xmas:
             parts.append("Es una tarjeta navideña.")
         else:
             parts.append("Es una tarjeta de felicitación.")
@@ -2382,17 +2701,32 @@ class NarrativeGenerator:
             if first_word not in _COMMON_WORDS:
                 parts.append(f"Va dirigida a {name_candidate}.")
 
-        if mode == "resumen":
-            # Extraer el mensaje principal
-            body = self._extract_body_preview(text, max_words=30)
-            if body:
-                parts.append(f"El mensaje dice: {body}.")
-            return " ".join(parts)
+        # Reparar preposiciones que el OCR omite en texto decorativo
+        text_repaired = self._repair_greeting_text(text)
 
-        # Detallado: leer mensaje completo
-        body = self._extract_body_preview(text, max_words=80)
+        # Para tarjetas, el texto ya viene limpio del reconstructor — usar directamente
+        # sin pasar por _clean_ocr_words que elimina puntuación de los tokens
+        max_w = 30 if mode == "resumen" else 80
+        words = text_repaired.split()
+        body = " ".join(words[:max_w]).strip()
+
         if body:
-            parts.append(f"El mensaje dice: {body}.")
+            # Limpiar trailing punctuation incompleto
+            body = body.rstrip(',;:').strip()
+            # Si la frase empieza con "Que" es un deseo → presentar como "Te desea que..."
+            if re.match(r'^[Qq]ue\b', body.strip()):
+                msg_intro = "Te desea"
+                body_lower = body.strip()[0].lower() + body.strip()[1:]
+                if not body_lower.rstrip()[-1:] in '.!?':
+                    body_lower = body_lower.rstrip() + '.'
+                parts.append(f"{msg_intro} {body_lower}")
+            else:
+                if not body.rstrip()[-1:] in '.!?':
+                    body = body.rstrip() + '.'
+                parts.append(f"El mensaje dice: {body}")
+
+        if mode == "resumen":
+            return " ".join(parts)
 
         # Firmado por (requiere nombre propio — no palabras comunes como "tu familia")
         _FIRMA_STOPWORDS = frozenset({'tu', 'tus', 'su', 'sus', 'mi', 'mis', 'nuestro', 'nuestra', 'toda', 'todo', 'los', 'las', 'con', 'de'})
@@ -2493,22 +2827,46 @@ class NarrativeGenerator:
 
     # --- BOLETO / TICKET ---
 
+    @staticmethod
+    def _truncate_at_travel_info(text: str) -> str:
+        """
+        Descarta la sección de información general de viaje en boarding passes.
+        Esa sección (equipaje, documentos, presentación) es información estática
+        que no aporta datos del vuelo específico y llenaría la narrativa de ruido.
+        """
+        stop_pattern = re.compile(
+            r'\b(?:informaci[oó]n\s+de\s+viaje|travel\s+information|'
+            r'equipaje\s+permitido|baggage\s+allowance|'
+            r'documentos?\s+(?:legales?|requeridos?)|required\s+documents?|'
+            r'presentaci[oó]n\s+en\s+el\s+aeropuerto|airport\s+arrival|'
+            r'descarga\s+(?:gratis\s+)?tu|download\s+(?:your\s+)?free)\b',
+            re.I
+        )
+        m = stop_pattern.search(text)
+        if m:
+            return text[:m.start()].strip()
+        return text
+
     def _gen_boleto(self, mode: str, text: str, ex: ExtractedData,
                     caption: Optional[str]) -> str:
         """Narrativa natural para boletos de avión, bus, tren o eventos."""
         if not text or not text.strip():
-            return "Es un boleto o ticket, pero no pude leer los detalles. Intenta acercar más la cámara."
+            return "Es un boleto o ticket, pero no pude leer los detalles."
+
+        # Descartar sección de información general de viaje (equipaje, normas, etc.)
+        # para quedarnos solo con los datos del vuelo/pasajero.
+        text = self._truncate_at_travel_info(text)
 
         parts = []
 
         # Detectar tipo de boleto
-        is_flight = bool(re.search(r'\b(?:vuelo|flight|boarding|embarque|aerol[ií]nea|airline)\b', text, re.I))
-        is_event = bool(re.search(r'\b(?:concierto|cine|teatro|evento|funci[oó]n|espect[aá]culo|show|entrada)\b', text, re.I))
-        is_bus = bool(re.search(r'\b(?:bus|aut[oó]bus|terminal\s+(?:de\s+)?(?:buses|transporte))\b', text, re.I))
-        is_train = bool(re.search(r'\b(?:tren|train|ferrocarril|and[eé]n)\b', text, re.I))
+        is_flight = bool(re.search(r'\b(?:vuelo|flight|boarding\s*pass|pase\s+de\s+abordar|embarque|aerolinea|airline)\b', text, re.I))
+        is_event  = bool(re.search(r'\b(?:concierto|cine|teatro|evento|funci[oó]n|espect[aá]culo|show|entrada)\b', text, re.I))
+        is_bus    = bool(re.search(r'\b(?:bus|aut[oó]bus|terminal\s+(?:de\s+)?(?:buses|transporte))\b', text, re.I))
+        is_train  = bool(re.search(r'\b(?:tren|train|ferrocarril|and[eé]n)\b', text, re.I))
 
         if is_flight:
-            parts.append("Tienes un boleto de avión.")
+            parts.append("Tienes un pase de abordar.")
         elif is_event:
             parts.append("Tienes una entrada para un evento.")
         elif is_bus:
@@ -2516,63 +2874,132 @@ class NarrativeGenerator:
         elif is_train:
             parts.append("Tienes un boleto de tren.")
         else:
-            parts.append("Tienes un boleto o ticket.")
+            parts.append("Tienes un boleto.")
 
-        # Aerolínea / compañía
-        airline_match = re.search(r'\b(Avianca|LATAM|Copa|Wingo|JetBlue|American|Delta|United|Volaris|VivaAerobus|Aeroméxico|Spirit)\b', text, re.I)
+        # Aerolínea (también detecta nombre del logo)
+        airline_match = re.search(
+            r'\b(Avianca|LATAM|Copa|Wingo|JetBlue|American\s+Airlines?|Delta|United|'
+            r'Volaris|VivaAerobus|Aeroméxico|Spirit|Iberia|Air\s+France|'
+            r'Trans\s+American\s+Airlines?|Sky)\b',
+            text, re.I
+        )
         if airline_match:
-            parts.append(f"Con {airline_match.group(1)}.")
+            parts.append(f"Aerolínea: {airline_match.group(1).title()}.")
 
-        # Número de vuelo/ruta
-        flight_match = re.search(r'\b(?:vuelo|flight)\s*(?:No\.?|#)?\s*([A-Z]{0,2}\d{2,5})\b', text, re.I)
+        # Número de vuelo — detecta código IATA+número (ej: AV838, LA2345)
+        # Primero con etiqueta explícita, luego patrón directo
+        flight_match = (
+            re.search(r'\b(?:vuelo|flight)\s*/?\s*(?:flight)?\s*([A-Z]{1,3}\d{3,5})\b', text, re.I)
+            or re.search(r'\b([A-Z]{2}\d{3,5})\b', text)  # ej: "AV838" standalone
+        )
         if flight_match:
-            parts.append(f"Vuelo número {flight_match.group(1)}.")
+            parts.append(f"Vuelo {flight_match.group(1).upper()}.")
 
-        # Origen y destino
-        origin_match = re.search(r'\b(?:origen|from|de|salida)\s*:?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-Za-záéíóúñ]+)?)', text, re.I)
-        dest_match = re.search(r'\b(?:destino|to|hacia|llegada)\s*:?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-Za-záéíóúñ]+)?)', text, re.I)
-        if origin_match and dest_match:
-            parts.append(f"Desde {origin_match.group(1)} hasta {dest_match.group(1)}.")
-        elif dest_match:
-            parts.append(f"Con destino a {dest_match.group(1)}.")
-
-        # Fecha y hora
-        if ex.dates:
-            parts.append(f"Fecha: {ex.dates[0]}.")
-        hora_match = re.search(r'\b(?:salida|departure|hora)\s*:?\s*(\d{1,2}:\d{2})\b', text, re.I)
-        if hora_match:
-            parts.append(f"Hora de salida: {hora_match.group(1)}.")
-
-        # Asiento
-        seat_match = re.search(r'\b(?:asiento|seat)\s*:?\s*(\d{1,3}[A-F]?)\b', text, re.I)
-        if seat_match:
-            seat = seat_match.group(1)
-            parts.append(f"Tu asiento es el {seat}.")
-
-        # Puerta
-        gate_match = re.search(r'\b(?:puerta|gate)\s*:?\s*([A-Z]?\d{1,3})\b', text, re.I)
-        if gate_match:
-            parts.append(f"Puerta de embarque: {gate_match.group(1)}.")
-
-        # Pasajero
-        pax_match = re.search(r'\b(?:pasajero|passenger|nombre|name)\s*:?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-Za-záéíóúñ]+){0,3})', text, re.I)
+        # Pasajero — formato bilingüe: "NOMBRE / NAME Apellido / Nombre"
+        pax_match = (
+            re.search(r'\b(?:nombre|name)\s*/?\s*(?:name)?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ\s/]+?)(?=\n|RESERVA|BOOKING|ORIGEN|FROM|TKT|$)', text, re.I)
+            or re.search(r'\b(?:pasajero|passenger)\s*:?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-Za-záéíóúñ]+){0,4})', text, re.I)
+        )
         if pax_match:
-            parts.append(f"A nombre de {pax_match.group(1)}.")
+            # Limpiar: "Ferro Soriano / Claudia Romina" → solo apellido/nombre primario
+            pax_raw = _cf(pax_match.group(1)).strip()
+            # Quitar la parte después de "/" si es solo el primer nombre
+            pax_parts = re.split(r'\s*/\s*', pax_raw)
+            if len(pax_parts) == 2:
+                pax = f"{pax_parts[0].strip()} {pax_parts[1].strip()}"
+            else:
+                pax = pax_parts[0].strip()
+            if pax and len(pax.split()) >= 2:
+                parts.append(f"Pasajero: {pax}.")
 
-        # PNR / Localizador
-        pnr_match = re.search(r'\b(?:PNR|localizador|confirmaci[oó]n|booking)\s*:?\s*([A-Z0-9]{4,8})\b', text, re.I)
-        if pnr_match:
-            parts.append(f"Código de reserva: {pnr_match.group(1)}.")
+        # Origen — formato bilingüe: "ORIGEN / FROM CUSCO / CUZ"
+        origin_match = re.search(
+            r'\b(?:origen|from)\s*/?\s*(?:from)?\s*([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ]+)(?:\s*/\s*[A-Z]{3})?\b',
+            text, re.I
+        )
+        # Destino — formato bilingüe: "DESTINO / TO LIMA / LIM"
+        dest_match = re.search(
+            r'\b(?:destino|to)\s*/?\s*(?:to)?\s*([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ]+)(?:\s*/\s*[A-Z]{3})?\b',
+            text, re.I
+        )
+        if origin_match and dest_match:
+            parts.append(f"De {origin_match.group(1).title()} a {dest_match.group(1).title()}.")
+        elif dest_match:
+            parts.append(f"Destino: {dest_match.group(1).title()}.")
+
+        # Fecha — "FECHA / DATE 06 Apr" o similar
+        fecha_match = re.search(
+            r'\b(?:fecha|date)\s*/?\s*(?:date)?\s*(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|'
+            r'ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)\w*(?:\s+\d{4})?)\b',
+            text, re.I
+        )
+        if fecha_match:
+            parts.append(f"Fecha: {fecha_match.group(1)}.")
+        elif ex.dates:
+            parts.append(f"Fecha: {ex.dates[0]}.")
+
+        # Hora de salida — "SALIDA/DEPARTURE 07:45"
+        salida_match = re.search(
+            r'\b(?:salida|departure)\s*/?\s*(?:departure)?\s*(\d{1,2}:\d{2})\b',
+            text, re.I
+        )
+        if salida_match:
+            parts.append(f"Hora de salida: {salida_match.group(1)}.")
+
+        # Asiento — "ASIENTO / SEAT 18A" o standalone en la misma línea
+        seat_match = (
+            re.search(r'\b(?:asiento|seat)\s*/?\s*(?:seat)?\s*(\d{1,3}[A-F])\b', text, re.I)
+            # Boarding pass: asiento suele estar al final de una línea con hora "07:00 18A"
+            or re.search(r'\b\d{1,2}:\d{2}\s+(\d{1,3}[A-F])\b', text)
+            # Standalone en su propia línea (ej: "18A\n" separado)
+            or re.search(r'^\s*(\d{1,3}[A-F])\s*$', text, re.M)
+        )
+        if seat_match:
+            parts.append(f"Asiento: {seat_match.group(1)}.")
+
+        # En sala / AT GATE (hora de abordaje)
+        gate_time_match = re.search(
+            r'\b(?:en\s+sala|at\s+gate)\s*/?\s*(?:at\s+gate)?\s*(\d{1,2}:\d{2})\b',
+            text, re.I
+        )
+        if gate_time_match:
+            parts.append(f"Abordaje: {gate_time_match.group(1)}.")
+
+        # Cabina
+        cabin_match = re.search(r'\b(?:cabina|cabin)\s*/?\s*(?:cabin)?\s*([A-Z])\b', text, re.I)
+        if cabin_match:
+            cabin_codes = {'Y': 'económica', 'J': 'ejecutiva', 'F': 'primera clase', 'W': 'económica premium'}
+            cabin_label = cabin_codes.get(cabin_match.group(1).upper(), cabin_match.group(1))
+            parts.append(f"Cabina {cabin_label}.")
+
+        # Secuencia de abordaje
+        seq_match = re.search(r'\b(?:secuencia|sequence)\s*/?\s*(?:sequence)?\s*(\d+)\b', text, re.I)
+        if seq_match:
+            parts.append(f"Turno de abordaje: {seq_match.group(1)}.")
+
+        # Grupo
+        group_match = re.search(r'\b(?:grupo|group)\s*/?\s*(?:group)?\s*([A-Z])\b', text, re.I)
+        if group_match:
+            parts.append(f"Grupo: {group_match.group(1)}.")
+
+        # PNR / Reserva / Localizador (excluir la propia palabra clave del match)
+        pnr_match = re.search(
+            r'\b(?:reserva|PNR|localizador|confirmaci[oó]n)\s*/?\s*(?:booking\b\s*)?\s*([A-Z0-9]{2,8})\b',
+            text, re.I
+        )
+        _PNR_EXCLUDE = {'BOOKING', 'RESERVA', 'PNR', 'LOCALIZADOR', 'CONFIRMACION', 'FROM',
+                        'SEAT', 'GATE', 'CABIN', 'VUELO', 'FLIGHT', 'ORIGEN', 'DESTINO'}
+        if pnr_match and pnr_match.group(1).upper() not in _PNR_EXCLUDE:
+            parts.append(f"Código de reserva: {pnr_match.group(1).upper()}.")
 
         # Evento específico
         if is_event:
             fila_match = re.search(r'\b(?:fila|row)\s*:?\s*(\d+)\b', text, re.I)
-            sec_match = re.search(r'\b(?:secci[oó]n|section|zona)\s*:?\s*([A-Za-z0-9]+)\b', text, re.I)
+            sec_match  = re.search(r'\b(?:secci[oó]n|section|zona)\s*:?\s*([A-Za-z0-9]+)\b', text, re.I)
             if fila_match:
                 parts.append(f"Fila {fila_match.group(1)}.")
             if sec_match:
                 parts.append(f"Sección {sec_match.group(1)}.")
-
 
         return " ".join(parts)
 
@@ -3244,34 +3671,73 @@ class NarrativeGenerator:
 
     def _gen_app_service(self, mode: str, text: str, ex: ExtractedData,
                          caption: Optional[str]) -> str:
-        """Narrativa natural para apps de transporte y delivery (Uber, Rappi, etc.)."""
+        """Narrativa natural para apps de transporte, delivery y tiendas online."""
         if not text or not text.strip():
             return "Es una pantalla de servicio o compra, pero no pude leer el contenido."
 
-        # Detectar tipo de app
-        app_name = None
-        for app in ["Uber", "Rappi", "Cabify", "DiDi", "InDriver", "Lyft", "Bolt",
-                    "PedidosYa", "iFood", "DoorDash", "Glovo"]:
-            if re.search(r'\b' + app + r'\b', text, re.IGNORECASE):
-                app_name = app
-                break
+        # Detectar nombre de app
+        _TRANSPORT_APPS = ["Uber", "Cabify", "DiDi", "InDriver", "Lyft", "Bolt", "Grab"]
+        _DELIVERY_APPS = ["Rappi", "PedidosYa", "iFood", "DoorDash", "Glovo"]
+        _SHOP_APPS = ["SHEIN", "AliExpress", "Amazon", "MercadoLibre", "Falabella",
+                      "Ripley", "Linio", "Temu", "Wish", "eBay", "Zara"]
 
-        # Detectar tipo de servicio (Economy, UberX, etc.)
+        app_name = None
+        app_type = None
+        for app in _TRANSPORT_APPS:
+            if re.search(r'\b' + re.escape(app) + r'\b', text, re.IGNORECASE):
+                app_name = app; app_type = "transport"; break
+        if not app_name:
+            for app in _DELIVERY_APPS:
+                if re.search(r'\b' + re.escape(app) + r'\b', text, re.IGNORECASE):
+                    app_name = app; app_type = "delivery"; break
+        if not app_name:
+            for app in _SHOP_APPS:
+                if re.search(r'\b' + re.escape(app) + r'\b', text, re.IGNORECASE):
+                    app_name = app; app_type = "shop"; break
+
+        # ---- TIENDA ONLINE ----
+        if app_type == "shop":
+            parts = [f"Es una pantalla de la tienda {app_name}."]
+
+            # Detectar tipo de sección (oferta, categoría, etc.)
+            if re.search(r'\b(?:venta\s+flash|flash\s+sale)\b', text, re.I):
+                parts.append("Tiene una venta flash activa.")
+            elif re.search(r'\b(?:productos?\s+m[aá]s\s+vendidos?|best\s+sellers?)\b', text, re.I):
+                parts.append("Muestra los productos más vendidos.")
+            elif re.search(r'\b(?:nuevos?\s+productos?|new\s+arrivals?)\b', text, re.I):
+                parts.append("Muestra productos nuevos.")
+
+            # Envío gratuito
+            if re.search(r'\b(?:env[ií]o\s+(?:gratuito|gratis)|free\s+shipping)\b', text, re.I):
+                # Ver si hay monto mínimo
+                min_match = re.search(
+                    r'(?:compra|spend|gasta)\s*\$?\s*([\d.,]+)\s*(?:m[aá]s\s+para|more)', text, re.I)
+                if min_match:
+                    parts.append(f"Ofrece envío gratuito desde ${min_match.group(1)}.")
+                else:
+                    parts.append("Ofrece envío gratuito.")
+
+            # Descuento/promo
+            if re.search(r'\b(?:ahorra|descuento|off|promo)\b', text, re.I) and not re.search(r'\bflash\b', text, re.I):
+                parts.append("Tiene promociones y descuentos disponibles.")
+
+            # Tiempo limitado
+            if re.search(r'\b(?:por\s+tiempo\s+limitado|tiempo\s+limitado)\b', text, re.I):
+                parts.append("La oferta es por tiempo limitado.")
+
+            return " ".join(parts)
+
+        # ---- TRANSPORTE ----
         servicio_match = re.search(
             r'\b(Economy|Comfort|Premium|UberX|UberXL|Black|Pool|Share|Express)\b',
             text, re.IGNORECASE
         )
-
-        # Detectar precio estimado
         precio_match = re.search(
             r'((?:COP|USD|MXN|EUR|BRL|Bs\.?)\s*[\d,.]+|[\d,.]+\s*(?:COP|USD|MXN|pesos|bolivianos))',
             text, re.IGNORECASE
         )
-
-        # Detectar tiempo estimado
         tiempo_match = re.search(r'(\d+)\s*min(?:utos?)?', text, re.IGNORECASE)
 
-        # Construir intro
         if app_name and servicio_match:
             parts = [f"Es la app de {app_name}, opción {servicio_match.group(1)}."]
         elif app_name:
@@ -3281,21 +3747,16 @@ class NarrativeGenerator:
 
         if precio_match:
             parts.append(f"Precio estimado: {precio_match.group(1).strip()}.")
-
         if tiempo_match:
             parts.append(f"Tiempo de llegada: {tiempo_match.group(1)} minutos.")
 
         if mode in ("resumen", "financiero"):
             return " ".join(parts)
 
-        # Detallado: información adicional
         if ex.amounts and not precio_match:
             parts.append(f"Monto: {ex.amounts[0]}.")
         if ex.dates:
             parts.append(f"Fecha: {ex.dates[0]}.")
-        body = self._extract_body_preview(text, max_words=30)
-        if body and len(body.split()) > 4:
-            parts.append(f"Dice: {body}.")
         return " ".join(parts)
 
     def _gen_interfaz_app(self, mode: str, text: str, ex: ExtractedData,
@@ -3358,65 +3819,164 @@ class NarrativeGenerator:
 
     # --- DESCONOCIDO (fallback universal) ---
 
+    # Tokens de UI / navegación que no aportan contenido real
+    _UI_NOISE_TOKENS = frozenset({
+        'vermás', 'vermas', 'vermás...', 'vermás.', 'inicio', 'menú', 'menu',
+        'atrás', 'atras', 'siguiente', 'anterior', 'cerrar', 'salir', 'volver',
+        'buscar', 'filtrar', 'ordenar', 'compartir', 'descargar', 'imprimir',
+        'ok', 'aceptar', 'cancelar', 'continuar', 'guardar', 'enviar',
+        'home', 'back', 'next', 'prev', 'close', 'open', 'submit', 'cancel',
+        'login', 'logout', 'register', 'settings', 'profile', 'account',
+        'notificaciones', 'ajustes', 'configuración', 'configuracion',
+        'más', 'mas', 'menos', 'todos', 'todas', 'ninguno',
+    })
+
+    @staticmethod
+    def _clean_desconocido_text(text: str, max_words: int = 50) -> str:
+        """
+        Limpieza adicional para el fallback 'desconocido'.
+
+        Elimina:
+        - Tokens de UI/navegación ("Vermás", "Inicio", "Menú")
+        - Palabras pegadas tipo CamelCase que el OCR generó ("VerMás", "PagoMínimo")
+        - Tokens de 1-2 chars que no son palabras reales
+        - Números sueltos sin contexto
+        """
+        # Separar palabras pegadas en CamelCase o minyúscula+Mayúscula
+        # "VerMás" → "Ver Más", "PagoMínimo" → "Pago Mínimo"
+        text = re.sub(r'([a-záéíóúñ])([A-ZÁÉÍÓÚÑ])', r'\1 \2', text)
+        # "vermás" todo junto en minúsculas también es basura — lo filtraremos por token
+
+        words = text.split()
+        clean_words = []
+
+        for w in words:
+            wl = w.lower().rstrip('.,;:!?')
+            # Descartar tokens de UI/navegación
+            if wl in NarrativeGenerator._UI_NOISE_TOKENS:
+                continue
+            clean_w = re.sub(r'[^\wáéíóúüñÁÉÍÓÚÜÑ]', '', w)
+            # Descartar tokens cortos que no son palabras reales
+            if len(clean_w) <= 2 and wl not in NarrativeGenerator._REAL_SHORT_WORDS:
+                continue
+            # Descartar tokens que son solo dígitos sueltos (sin contexto)
+            if clean_w.isdigit() and len(clean_w) <= 2:
+                continue
+            clean_words.append(w)
+
+        # Truncar inicio/fin de ruido residual
+        start = 0
+        for i, w in enumerate(clean_words):
+            cw = re.sub(r'[^\wáéíóúüñ]', '', w)
+            if len(cw) >= 3 and not cw.isdigit():
+                start = i
+                break
+        end = len(clean_words)
+        for i in range(len(clean_words) - 1, start - 1, -1):
+            cw = re.sub(r'[^\wáéíóúüñ]', '', clean_words[i])
+            if len(cw) >= 3 and not cw.isdigit():
+                end = i + 1
+                break
+
+        result = clean_words[start:end]
+        if len(result) > max_words:
+            result = result[:max_words]
+
+        return " ".join(result).strip()
+
     def _gen_desconocido(self, mode: str, text: str, ex: ExtractedData,
                          caption: Optional[str]) -> str:
+        """
+        Fallback universal cuando no se identifica el tipo de documento.
+
+        En lugar de volcar el texto tal cual, intenta:
+        1. Detectar si es un mensaje/tarjeta por el tono del contenido
+        2. Presentar el contenido de forma empática y limpia
+        3. Aportar los datos estructurados si los hay (fechas, montos)
+        """
         if not text or not text.strip():
             if caption:
                 return f"La imagen muestra: {caption}."
-            return "No se detectó texto en la imagen."
+            return "No se pudo detectar texto en la imagen. Intenta acercar más la cámara."
 
-        # Texto ya viene reconstruido del OCRTextReconstructor.
-        # Verificar que hay contenido legible.
-        preview_check = self._extract_body_preview(text, max_words=5)
-        if not preview_check:
+        # Limpiar ruido residual del texto
+        clean = self._clean_desconocido_text(text, max_words=60)
+        if not clean or len(clean.split()) < 3:
             if caption:
-                return f"La imagen muestra: {caption}. No se pudo leer texto claramente."
-            return "Se detectó algo de texto, pero no se pudo leer claramente. Intenta acercar más la cámara al texto."
+                return f"La imagen tiene contenido visual: {caption}."
+            return "Se detectó texto, pero no pudo leerse con claridad. Intenta mejorar la iluminación o acercar la cámara."
 
-        intro = "Se detectó un documento."
+        # Detectar contexto del contenido para dar intro adecuada
+        is_message = bool(re.search(
+            r'\b(?:alegr[ií]a|amor|paz|sorpresa|bendici[oó]n|[eé]xito|felicidad|'
+            r'sue[ñn]os?|deseos?|lleno|llena|vida|a[ñn]o|d[ií]a\s+especial|'
+            r'te\s+(?:deseo|quiero|amo)|con\s+cari[ñn]o|con\s+amor)\b', text, re.I
+        ))
+        is_banking = bool(re.search(
+            r'\b(?:cupo\s+disponible|pago\s+m[ií]nimo|saldo|transferencia|'
+            r'tarjeta\s+de\s+cr[eé]dito|d[eé]bito|extracto|movimiento|'
+            r'cuenta\s+(?:de\s+ahorro|corriente)|banco|bancolombia|nequi|daviplata|'
+            r'bbva|davivienda|itaú|scotiabank)\b', text, re.I
+        ))
+        is_menu_app = bool(re.search(
+            r'\b(?:inicio|configuraci[oó]n|perfil|notificaciones|'
+            r'historial|ajustes|privacidad|seguridad)\b', text, re.I
+        ) and len(clean.split()) < 20)
+        is_instruction = bool(re.search(
+            r'\b(?:por\s+favor|debe(?:s|n)?|tiene(?:s|n)?|puede(?:s|n)?|'
+            r'instrucciones?|pasos?|c[oó]mo|recuerde|tenga\s+en\s+cuenta)\b', text, re.I
+        ))
 
-        if mode == "resumen":
-            parts = [intro]
-            if ex.dates:
-                parts.append(f"Fecha: {ex.dates[0]}.")
-            if ex.amounts:
-                parts.append(f"Monto: {ex.amounts[0]}.")
-            preview = self._extract_body_preview(text, max_words=30)
-            if preview:
-                parts.append(f"Dice: {preview}.")
-            return " ".join(parts)
+        parts = []
 
-        if mode == "financiero":
-            parts = [intro]
-            if ex.totals:
-                for t in ex.totals:
+        if mode in ("resumen", "detallado", "financiero"):
+            # Intro según el contexto detectado
+            if is_message:
+                parts.append("Es una imagen con un mensaje personal.")
+            elif is_banking:
+                parts.append("Parece una pantalla de aplicación bancaria o financiera.")
+            elif ex.amounts or ex.totals:
+                parts.append("Hay un documento con información financiera.")
+            elif is_menu_app:
+                parts.append("Parece una pantalla de aplicación.")
+            elif is_instruction:
+                parts.append("Es un documento con instrucciones o información.")
+            else:
+                parts.append("Se detectó texto en la imagen.")
+
+            # Datos estructurados primero (si los hay)
+            if is_banking:
+                # Para banking: extraer etiquetas + valores clave
+                for pattern, label in [
+                    (r'cupo\s+disponible\s*:?\s*([\$\d][\d,.\s]*)', 'Cupo disponible'),
+                    (r'pago\s+m[ií]nimo\s*:?\s*([\$\d][\d,.\s]*)', 'Pago mínimo'),
+                    (r'saldo\s*(?:disponible|actual)?\s*:?\s*([\$\d][\d,.\s]*)', 'Saldo'),
+                ]:
+                    m = re.search(pattern, text, re.I)
+                    if m:
+                        parts.append(f"{label}: {m.group(1).strip()}.")
+            if ex.totals and not is_banking:
+                for t in ex.totals[:2]:
                     parts.append(f"{t}.")
-            elif ex.amounts:
-                parts.append("Montos encontrados: " + ", ".join(ex.amounts[:5]) + ".")
-            if ex.dates:
+            elif ex.amounts and not is_message and not is_banking:
+                parts.append("Montos: " + ", ".join(ex.amounts[:3]) + ".")
+            if ex.dates and not is_message:
                 parts.append(f"Fecha: {ex.dates[0]}.")
-            if not ex.amounts and not ex.totals:
-                preview = self._extract_body_preview(text, max_words=30)
-                if preview:
-                    parts.append(f"Dice: {preview}.")
-            return " ".join(parts)
+            if ex.emails:
+                parts.append(f"Correo: {ex.emails[0]}.")
+            if ex.phones:
+                parts.append(f"Teléfono: {ex.phones[0]}.")
 
-        # detallado: leer contenido limpio
-        parts = [intro]
-        if ex.headers:
-            parts.append(f"Título: {ex.headers[0]}.")
-        if ex.dates:
-            parts.append(f"Fecha: {ex.dates[0]}.")
-        if ex.amounts:
-            parts.append("Montos: " + ", ".join(ex.amounts[:5]) + ".")
-        if ex.emails:
-            parts.append(f"Correo: {ex.emails[0]}.")
-        if ex.phones:
-            parts.append(f"Teléfono: {ex.phones[0]}.")
-        # Leer el contenido principal (hasta 80 palabras)
-        body = self._extract_body_preview(text, max_words=80)
-        if body:
-            parts.append(f"Dice: {body}.")
+            # Contenido principal — solo si no es menú de app ni banking ya cubierto
+            if not is_menu_app and not (is_banking and len(parts) > 2):
+                max_w = 20 if mode == "resumen" else 40
+                body = self._clean_desconocido_text(text, max_words=max_w)
+                if body:
+                    if is_message:
+                        parts.append(f"El mensaje dice: {body}.")
+                    elif not is_banking:
+                        parts.append(f"El texto dice: {body}.")
+
         return " ".join(parts)
 
     # --- HELPERS ---
@@ -3426,6 +3986,7 @@ class NarrativeGenerator:
         'y', 'o', 'a', 'e', 'u', 'el', 'la', 'de', 'no', 'es',
         'lo', 'en', 'se', 'me', 'te', 'le', 'al', 'mi', 'tu',
         'si', 'ya', 'un', 'yo', 'ni', 'he', 'su', 'os', 'do',
+        'ha', 'an', 'na',  # auxiliares: "ha sido", "han", "na"
         'que', 'por', 'con', 'del', 'las', 'los', 'una', 'son',
         'fue', 'ser', 'hay', 'van', 'mas', 'más', 'sin', 'nos',
         'hoy', 'muy', 'día', 'dia', 'ver', 'dar', 'mal', 'bien',
@@ -3568,14 +4129,21 @@ class NarrativeGenerator:
         if not clean:
             return ""
         lines = [l.strip() for l in clean.split('\n') if l.strip()]
-        body_words: List[str] = []
+        # Unir líneas con ", " para que cada salto de línea del OCR se convierta
+        # en una pausa natural al leer en voz alta (tarjetas, mensajes, versos, etc.)
+        line_parts: List[str] = []
+        total_words = 0
         for line in lines:
-            if len(line.split()) < 2:
+            words = line.split()
+            if len(words) < 2:
                 continue
-            body_words.extend(line.split())
-            if len(body_words) >= max_words:
+            remaining = max_words - total_words
+            if remaining <= 0:
                 break
-        return " ".join(body_words[:max_words])
+            chunk = " ".join(words[:remaining])
+            line_parts.append(chunk)
+            total_words += min(len(words), remaining)
+        return ", ".join(line_parts)
 
 
 # ============================================================================
@@ -3931,7 +4499,12 @@ class ProsodyEnhancer:
     # ---- UTILIDADES EXISTENTES (mejoradas) ----
 
     def _normalize_sentence_endings(self, text: str) -> str:
+        # Salto de línea entre minúscula y mayúscula → punto
         text = re.sub(r'([a-záéíóúñ0-9])\s*\n\s*([A-ZÁÉÍÓÚÑ])', r'\1. \2', text)
+        # Salto de línea entre cualquier otra combinación → coma (pausa natural)
+        text = re.sub(r'([a-zA-ZáéíóúñÁÉÍÓÚÑ0-9])\s*\n\s*([a-zA-ZáéíóúñÁÉÍÓÚÑ])', r'\1, \2', text)
+        # Añadir coma después de ":" introductorio que no la tiene (ej. "El mensaje dice: ")
+        text = re.sub(r'(:\s*)([^,.\n])', lambda m: m.group(0) if m.group(2)[0].isupper() else m.group(0), text)
         return text
 
     def _repeat_key_amounts(self, text: str) -> str:
@@ -3943,7 +4516,7 @@ class ProsodyEnhancer:
                 text = text[:end] + f"... {amount}" + text[end:]
         return text
 
-    def _break_long_sentences(self, text: str, max_words: int = 40) -> str:
+    def _break_long_sentences(self, text: str, max_words: int = 18) -> str:
         sentences = re.split(r'(?<=[.!?])\s+', text)
         result = []
         for sentence in sentences:
@@ -3951,11 +4524,11 @@ class ProsodyEnhancer:
             if len(words) <= max_words:
                 result.append(sentence)
             else:
+                # Romper en TODAS las conjunciones para oraciones largas
                 broken = re.sub(
-                    r'\s+(y|pero|sin embargo|además|también|aunque)\s+',
+                    r'\s+(y|e|o|u|pero|sino|sin embargo|además|también|aunque|porque|para que|así que)\s+',
                     r', \1 ',
                     sentence,
-                    count=1,
                     flags=re.IGNORECASE
                 )
                 result.append(broken)
@@ -4220,6 +4793,59 @@ class SmartReadingService:
             "image_quality": quality_data,
         }
 
+    def _summarize_surrounding_text(
+        self, raw_text: str, word_count: int, ocr_confidence: float,
+        reading_mode: str = "resumen"
+    ) -> str:
+        """
+        Genera un resumen legible del texto que rodea a un código QR o de barras.
+
+        En vez de volcar texto crudo (ilegible para TTS), pasa el texto por el
+        pipeline completo: reconstrucción → clasificación → narrativa.
+
+        Returns:
+            Texto narrativo limpio, o "" si no hay nada útil que decir.
+        """
+        try:
+            # 1. Reconstruir texto (limpiar ruido OCR)
+            reconstructor = get_text_reconstructor()
+            clean = reconstructor.reconstruct(raw_text)
+            if not clean or len(clean.split()) < 4:
+                return ""
+
+            # 2. Extraer campos estructurados
+            extracted = self._extractor.extract(raw_text)
+
+            # 3. Clasificar el texto usando solo keywords (sin layout).
+            # NO usar HierarchicalDocumentClassifier.classify() porque
+            # word_boxes=[] → density=0 → pre-check falla con "IMAGEN_VISUAL".
+            # SubtypeClassifier evalúa solo por keywords y no tiene pre-check.
+            from app.services.document_classifier import SubtypeClassifier
+            sub_clf = SubtypeClassifier()
+            doc_type, _, _, _, _, _ = sub_clf.classify(clean, "DOCUMENTO_FORMAL", word_count)
+
+            # 4. Generar narrativa en modo resumen (breve).
+            # Para boletos: usar texto CRUDO porque la reconstrucción elimina tokens
+            # de una sola letra que son datos clave (Y=cabina, D=grupo, P=reserva, 18A=asiento).
+            gen_text = raw_text if doc_type in ('boleto', 'ticket_transporte') else clean
+            narrative = self._generator.generate(doc_type, reading_mode, gen_text, extracted, None)
+
+            # Evitar narrativas genéricas que no aportan info
+            if narrative and not re.match(
+                r'^(?:Es un documento\.|Hay texto\.|No se pudo|Es una imagen)',
+                narrative, re.IGNORECASE
+            ):
+                return narrative
+
+            # Fallback: preview limpio de hasta 30 palabras
+            words = clean.split()
+            preview = " ".join(words[:30]) + ("..." if len(words) > 30 else "")
+            return f"El documento también contiene: {preview}."
+
+        except Exception as e:
+            logger.warning(f"[SmartReading/Barcode] Error resumiendo texto circundante: {e}")
+            return ""
+
     def _build_barcode_response(self, barcode_result, image: np.ndarray) -> dict:
         """
         Construye la respuesta cuando se detecta un código QR o de barras.
@@ -4242,8 +4868,25 @@ class SmartReadingService:
             doc_type = "codigo_barras"
             doc_label = "Código de barras"
 
+        # Determinar si el dato del QR es legible o es binario/codificado
+        qr_data = barcode_result.codes[0].data if barcode_result.codes else ""
+        _is_binary_qr = bool(re.search(
+            r'^[A-Za-z0-9+/]{20,}={0,2}$|'   # base64
+            r'^[0-9a-fA-F]{16,}$|'            # hex
+            r'signatureDetail|'                # firma digital
+            r'^[0-9]{10,}$',                   # solo dígitos largos (EAN, código interno)
+            qr_data.strip()
+        ))
+
         # Construir narrative base desde el resumen del QR
-        narrative = barcode_result.summary
+        if _is_binary_qr:
+            # QR con datos internos/firma — no leer el dato crudo
+            if barcode_result.codes[0].type == "QR_CODE":
+                narrative = "Contiene un código QR de verificación."
+            else:
+                narrative = "Contiene un código de barras."
+        else:
+            narrative = barcode_result.summary
 
         # Correr OCR para detectar texto circundante al código
         surrounding_text = ""
@@ -4264,11 +4907,19 @@ class SmartReadingService:
         except Exception as e:
             logger.warning(f"[SmartReading/Barcode] OCR falló: {e}")
 
-        # Combinar narrativa del QR con texto circundante si es significativo
-        # Mínimo 4 palabras y confianza aceptable
+        # Combinar narrativa del QR con texto circundante
         if ocr_word_count >= 4 and surrounding_text:
-            preview = surrounding_text[:200] + ("..." if len(surrounding_text) > 200 else "")
-            narrative = f"{narrative}. Alrededor del código hay texto que dice: {preview}"
+            # Si el QR es binario y hay bastante texto, leer en detallado (es el doc principal)
+            surr_mode = "detallado" if (_is_binary_qr and ocr_word_count >= 15) else "resumen"
+            surrounding_narrative = self._summarize_surrounding_text(
+                surrounding_text, ocr_word_count, ocr_confidence, reading_mode=surr_mode
+            )
+            if surrounding_narrative:
+                if _is_binary_qr and ocr_word_count >= 15:
+                    # QR binario con texto rico: el documento circundante es lo principal
+                    narrative = f"{surrounding_narrative} {narrative}"
+                else:
+                    narrative = f"{narrative}. {surrounding_narrative}"
 
         # Construir raw_text para compatibilidad
         raw_text = "; ".join([f"{c['type']}: {c['data']}" for c in codes_data])

@@ -525,10 +525,6 @@ NAVIA usa un sistema de **cola con prioridades** para evitar que las voces se ca
 
 ## Proyecto de Tesis
 
-<<<<<<< HEAD
 **Universidad San Buenaventura Cali**
-=======
-**Universidad San Buenaventura**
->>>>>>> 7a02a98 (fix: update university name in thesis project description)
 
 NAVIA es una aplicacion de asistencia visual que busca mejorar la autonomia y seguridad en la movilidad de personas con discapacidad visual, utilizando tecnicas de vision por computadora y procesamiento de lenguaje natural para proporcionar informacion del entorno en tiempo real a traves de audio.
