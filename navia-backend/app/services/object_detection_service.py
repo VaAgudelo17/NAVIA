@@ -54,19 +54,34 @@ WORLD_CLASSES_ES = {
     "kid": ("niño", "m"),
     "baby": ("bebé", "m"),
     "infant": ("bebé", "m"),
+    "newborn baby": ("bebé", "m"),
+    "baby lying on back": ("bebé", "m"),
+    "baby crawling on floor": ("bebé", "m"),
+    "baby in someone's arms": ("bebé", "m"),
+    "toddler walking": ("bebé", "m"),
     "wheelchair user": ("persona en silla de ruedas", "f"),
 
     # ===================== ANIMALES =====================
     # Perro (múltiples variantes para mejor detección)
     "dog": ("perro", "m"),
-    "puppy": ("cachorro", "m"),
-    "guide dog": ("perro guía", "m"),
-    "service dog": ("perro de servicio", "m"),
+    "puppy": ("perro", "m"),
+    "dog lying down": ("perro", "m"),
+    "dog sitting": ("perro", "m"),
+    "dog from above": ("perro", "m"),
+    "dog sleeping on floor": ("perro", "m"),
+    "dog running": ("perro", "m"),
+    "guide dog": ("perro", "m"),
+    "service dog": ("perro", "m"),
     # Gato
     "cat": ("gato", "m"),
-    "kitten": ("gatito", "m"),
+    "kitten": ("gato", "m"),
+    "cat lying down": ("gato", "m"),
+    "cat sitting": ("gato", "m"),
+    "cat from above": ("gato", "m"),
+    "cat sleeping curled up": ("gato", "m"),
     # Pájaros
     "bird": ("pájaro", "m"),
+    "bird perched": ("pájaro", "m"),
     "parrot": ("loro", "m"),
     "canary": ("canario", "m"),
     "chicken": ("gallina", "f"),
@@ -170,7 +185,7 @@ WORLD_CLASSES_ES = {
     "floor lamp": ("lámpara de pie", "f"),
     "ceiling light fixture": ("luz de techo", "f"),
     "chandelier": ("candelabro", "m"),
-    "wall mirror": ("espejo", "m"),         # "wall mirror" no se confunde con ventana
+    "wall mirror with visible frame": ("espejo", "m"),  # frame visible distingue de TV apagado
     "window with glass": ("ventana", "f"),   # "window with glass" no se confunde con espejo
     "door panel": ("puerta", "f"),           # más genérico que "wooden door"
     "sliding door panel": ("puerta corrediza", "f"),
@@ -259,6 +274,9 @@ WORLD_CLASSES_ES = {
 
     # ===================== ELECTRÓNICA =====================
     "television screen": ("televisor", "m"),
+    "flat screen TV mounted on wall": ("televisor", "m"),
+    "smart TV with colorful display": ("televisor", "m"),
+    "television set showing video": ("televisor", "m"),
     "remote control": ("control remoto", "m"),
     "cell phone": ("teléfono celular", "m"),
     "laptop computer": ("computadora portátil", "f"),
@@ -852,7 +870,38 @@ class ObjectDetectionService:
                 detected_objects.append(detected_obj)
 
         detected_objects.sort(key=lambda x: x.confidence, reverse=True)
+        detected_objects = self._deduplicate(detected_objects)
         return detected_objects, raw_depths
+
+    @staticmethod
+    def _iou(a: "DetectedObject", b: "DetectedObject") -> float:
+        ax1, ay1 = a.bounding_box.x_min, a.bounding_box.y_min
+        ax2, ay2 = a.bounding_box.x_max, a.bounding_box.y_max
+        bx1, by1 = b.bounding_box.x_min, b.bounding_box.y_min
+        bx2, by2 = b.bounding_box.x_max, b.bounding_box.y_max
+        ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+        ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+        inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+        if inter == 0:
+            return 0.0
+        union = (ax2-ax1)*(ay2-ay1) + (bx2-bx1)*(by2-by1) - inter
+        return inter / union if union > 0 else 0.0
+
+    @staticmethod
+    def _deduplicate(objects: List["DetectedObject"]) -> List["DetectedObject"]:
+        """Elimina detecciones duplicadas del mismo objeto físico.
+        Si dos detecciones tienen el mismo name_es y IoU > 0.45, conserva
+        solo la de mayor confianza (ya ordenadas desc por confianza)."""
+        kept = []
+        for obj in objects:
+            duplicate = False
+            for k in kept:
+                if k.name_es == obj.name_es and ObjectDetectionService._iou(k, obj) > 0.45:
+                    duplicate = True
+                    break
+            if not duplicate:
+                kept.append(obj)
+        return kept
 
     @staticmethod
     def _get_article(name_es: str, count: int) -> str:
