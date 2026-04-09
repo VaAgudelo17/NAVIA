@@ -1506,6 +1506,12 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:WhatsApp|Telegram|en\s+l[ií]na|typing|escribiendo)\b', re.I), -10),
     ],
     "mapa": [
+        # Negativos fuertes: los mapas nunca tienen estas señales
+        (re.compile(r'\d{1,2}:\d{2}\s*(?:p\.?m\.?|a\.?m\.?|PM|AM)', re.I), -20),   # timestamp de chat (8:13 AM)
+        (re.compile(r'\b(?:WhatsApp|Telegram|Messenger|Signal|iMessage)\b', re.I), -25),
+        (re.compile(r'\b(?:jaja[ja]*|jeje[je]*|haha|lol|omg|wtf)\b', re.I), -15),
+        (re.compile(r'\b(?:publica|publicar|estados|historia|story|stories)\b', re.I), -10),
+        (re.compile(r'\b(?:salmo|vers[ií]culo|bíblico|biblia|dios|señor|amen)\b', re.I), -12),
         # Palabra clave directa
         (re.compile(r'\b(?:mapa|map)\b', re.I), 8),
         (re.compile(r'\b(?:mapa\s+(?:de\s+)?(?:calles|carreteras|tr[aá]nsito|tr[aá]fico|sat[eé]lite))\b', re.I), 12),
