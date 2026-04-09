@@ -365,10 +365,17 @@ class SceneDescriptionService:
                 descriptions = []
                 width = image_info["width"]
 
-                for obj in objects[:6]:  # Top 6 objetos por confianza
+                # Agrupar por nombre para evitar duplicados (ej: "un perfume y un perfume")
+                seen_names: dict = {}  # name_es → objeto de mayor confianza
+                for obj in objects[:6]:
                     if not hasattr(obj, 'bounding_box'):
                         continue
+                    name = obj.name_es
+                    if name not in seen_names:
+                        seen_names[name] = obj
+                    # ya queda el de mayor confianza (objects ya viene ordenado desc)
 
+                for name, obj in seen_names.items():
                     bbox = obj.bounding_box
                     center_x = (bbox.x_min + bbox.x_max) / 2
                     ratio = center_x / width if width > 0 else 0.5
@@ -380,11 +387,9 @@ class SceneDescriptionService:
                     else:
                         pos = "frente a ti"
 
-                    name = obj.name_es
                     gender = GENDER_MAP.get(name, "m")
                     article = "una" if gender == "f" else "un"
 
-                    # Agregar zona de distancia si es relevante
                     zone_text = ""
                     if obj.distance_zone == "muy_cerca":
                         zone_text = " muy cerca"
