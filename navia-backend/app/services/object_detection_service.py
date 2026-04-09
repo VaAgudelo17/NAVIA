@@ -427,7 +427,7 @@ WORLD_CLASSES_ES = {
     # ===================== BAÑO =====================
     "bathroom toilet with tank and seat": ("inodoro", "m"),
     "bathroom sink with faucet": ("lavamanos", "m"),
-    "bathtub in bathroom": ("bañera", "f"),
+    "white porcelain bathtub with faucet and drain": ("bañera", "f"),
     "shower head fixture on wall": ("ducha", "f"),
     "bar of soap": ("jabón", "m"),
     "toothbrush": ("cepillo de dientes", "m"),
