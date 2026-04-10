@@ -2551,6 +2551,22 @@ class NarrativeGenerator:
 
         parts = ["Es una pantalla de tu aplicación bancaria."]
 
+        # Transferencia / envío (Nequi, Daviplata, etc.)
+        destinatario_match = re.search(r'\bpara\b\s*\n?\s*([A-ZÁÉÍÓÚÜÑa-záéíóúüñ][^\n]{1,40})', text, re.I)
+        monto_nequi_match = re.search(r'(?:cu[aá]nto\??\s*\n?|valor\s*\n?|monto\s*\n?)\s*\$?\s*([\d.,]+)', text, re.I)
+        nequi_num_match = re.search(r'(?:n[uú]mero\s+nequi|celular\s+nequi|n[uú]mero)\s*\n?\s*([\d\s]{7,15})', text, re.I)
+
+        if destinatario_match or monto_nequi_match:
+            if destinatario_match:
+                parts.append(f"Para: {destinatario_match.group(1).strip()}.")
+            if monto_nequi_match:
+                parts.append(f"Monto: {monto_nequi_match.group(1).strip()}.")
+            if nequi_num_match:
+                parts.append(f"Número Nequi: {nequi_num_match.group(1).strip()}.")
+            if ex.dates:
+                parts.append(f"Fecha: {ex.dates[0]}.")
+            return " ".join(parts)
+
         # Cupo disponible
         cupo_match = re.search(
             r'(?:cupo\s+(?:disponible|total|utilizado|de\s+cr[eé]dito))\s*:?\s*([\$]?\s*[\d,.]+(?:\s*(?:COP|USD|pesos))?)',
@@ -4416,13 +4432,13 @@ class ProsodyEnhancer:
             domain = parts[1]
 
             # Deletrear local part con separadores naturales
-            local_spoken = local.replace('.', ', punto, ').replace('_', ', guion bajo, ').replace('-', ', guion, ')
+            local_spoken = local.replace('.', ' punto ').replace('_', ' guion bajo ').replace('-', ' guion ')
 
             # Dominio: separar en partes
             domain_parts = domain.split('.')
-            domain_spoken = ', punto, '.join(domain_parts)
+            domain_spoken = ' punto '.join(domain_parts)
 
-            return f"{local_spoken}, arroba, {domain_spoken}"
+            return f"{local_spoken} arroba {domain_spoken}"
 
         return self._PAT_EMAIL_TTS.sub(email_to_speech, text)
 

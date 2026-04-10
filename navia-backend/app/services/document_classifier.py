@@ -938,6 +938,11 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         # Instrucción explícita de validación de campo
         (re.compile(r'\bintroducid?\s+un\s+n[uú]mero\s+v[aá]lido\b', re.I), 8),
         (re.compile(r'\bpor\s+favor\s+(?:complete|llene|ingrese|introduzca)\b', re.I), 7),
+        # Negativos: contenido conversacional/emocional → no es formulario
+        (re.compile(r'\b(?:créeme|te\s+quiero|hablemos|infidelidad|ansiosos?|iniciativa)\b', re.I), -15),
+        (re.compile(r'\b(?:demasiado\s+(?:viejo|vieja|joven)|seminueva|preanciana|chismes)\b', re.I), -15),
+        (re.compile(r'["«»""].{10,}["«»""]', re.I), -10),  # texto entre comillas largas → cita
+        (re.compile(r'\d{1,2}:\d{2}\s*(?:AM|PM|a\.m\.|p\.m\.)', re.I), -12),  # timestamp de chat
     ],
     "contrato": [
         (re.compile(r'\bcontrato\b', re.I), 10),
@@ -1050,6 +1055,15 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:preguntas|Q&A|gracias\s+por\s+su\s+atenci[oó]n)\b', re.I), 7),
     ],
     "etiqueta": [
+        # Marcas de productos de cuidado personal / cosméticos
+        (re.compile(r'\b(?:La\s+Roche[- ]Posay|Cetaphil|Neutrogena|Av[eè]ne|Vichy|CeraVe|Bioderma|Nivea|Eucerin|Garnier|L\'Or[eé]al)\b', re.I), 14),
+        (re.compile(r'\b(?:[Áa]cido\s+[Ss]alic[íi]lico|[Áa]cido\s+[Gg]lic[oó]lico|[Rr]etinol|[Nn]iacinamida|[Hh]ialur[oó]nico)\b', re.I), 12),
+        (re.compile(r'\b(?:oil\s+control|matificante|hidratante\s+facial|antimanchas|anti[\s-]imperfec|triple\s+correction)\b', re.I), 11),
+        (re.compile(r'\b(?:pieles?\s+(?:mixtas?|grasas?|secas?|sensibles?)|barros|espinillas|acné)\b', re.I), 8),
+        (re.compile(r'\b(?:dermatol[oó]gico|probado\s+(?:dermatol[oó]gica|cl[íi]nicamente)|sin\s+parabenos)\b', re.I), 9),
+        (re.compile(r'\b(?:EFFACLAR|EFFIDERM|TOLERIANE|ANTHELIOS|CICAPLAST)\b', re.I), 12),
+        (re.compile(r'\b\d+\s*(?:ml|mL|g|mg|oz|fl\.?\s*oz)\b', re.I), 7),
+        (re.compile(r'\b(?:uso\s+externo|solo\s+para\s+uso\s+externo|external\s+use\s+only)\b', re.I), 10),
         (re.compile(r'\bingredientes\b', re.I), 10),
         (re.compile(r'\bvencimiento\b', re.I), 8),
         (re.compile(r'\bpeso\b.*\bneto\b', re.I), 9),
@@ -1212,6 +1226,10 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:semana|week|mensual|monthly|diario|daily|semanal|weekly)\b', re.I), 6),
         (re.compile(r'\b(?:turno\s+(?:ma[ñn]ana|tarde|noche)|jornada)\b', re.I), 7),
         (re.compile(r'\b(?:hora\s+de\s+(?:entrada|salida|almuerzo|descanso|inicio|fin))\b', re.I), 8),
+        # Negativos: productos de skincare/cosmética → etiqueta, no horario
+        (re.compile(r'\b(?:La\s+Roche[- ]Posay|Cetaphil|Neutrogena|Av[eè]ne|Vichy|CeraVe|Bioderma|Nivea|Eucerin)\b', re.I), -20),
+        (re.compile(r'\b(?:[Áa]cido\s+[Ss]alic[íi]lico|hidratante\s+facial|oil\s+control|matificante|antimanchas)\b', re.I), -18),
+        (re.compile(r'\b(?:uso\s+externo|pieles?\s+(?:mixtas?|grasas?|secas?)|barros|espinillas)\b', re.I), -15),
     ],
     "instrucciones": [
         # Palabra clave directa
@@ -1404,6 +1422,9 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:respaldo|backup|restaurar|restore|restablecer|reset)\b', re.I), 8),
         # Keywords negativos
         (re.compile(r'\b(?:iniciar\s+sesi[oó]n|registrar|log\s*in|sign\s*in)\b', re.I), -10),
+        # Lista de verbos/frases en inglés → es un libro/glosario, no pantalla de ajustes
+        (re.compile(r'\b(?:TURN\s+(?:UP|OFF|ON|DOWN)|CALL\s+ON|GET\s+OVER|GO\s+OVER|GO\s+THROUGH|LOOK\s+AFTER|RUN\s+INTO|CATCH\s+UP|BREAK\s+IN)\b', re.I), -20),
+        (re.compile(r'\b(?:SWITCH\s+(?:OFF|ON)|RECOVER\s+FROM|TAKE\s+CARE\s+OF|FIND\s+BY\s+CHANCE|KEEP\s+ABREAST)\b', re.I), -20),
     ],
     "app_login": [
         (re.compile(r'\b(?:iniciar?\s+sesi[oó]n|log\s*in|sign\s*in)\b', re.I), 12),
