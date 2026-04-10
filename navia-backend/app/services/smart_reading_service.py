@@ -3927,7 +3927,9 @@ class NarrativeGenerator:
         is_message = bool(re.search(
             r'\b(?:alegr[ií]a|amor|paz|sorpresa|bendici[oó]n|[eé]xito|felicidad|'
             r'sue[ñn]os?|deseos?|lleno|llena|vida|a[ñn]o|d[ií]a\s+especial|'
-            r'te\s+(?:deseo|quiero|amo)|con\s+cari[ñn]o|con\s+amor)\b', text, re.I
+            r'te\s+(?:deseo|quiero|amo)|con\s+cari[ñn]o|con\s+amor|'
+            r'vieja|joven|chismes?|seminueva|preanciana|'
+            r'me\s+siento|demasiado\s+(?:vieja|joven|viejo))\b', text, re.I
         ))
         is_banking = bool(re.search(
             r'\b(?:cupo\s+disponible|pago\s+m[ií]nimo|saldo|transferencia|'
@@ -4394,10 +4396,20 @@ class ProsodyEnhancer:
                     decimal_part = clean.rsplit(',', 1)[1] if ',' in clean else ''
                 elif re.search(r'\.\d{1,2}$', clean):
                     # Anglosajón: 1,234.56
-                    integer_part = clean.rsplit('.', 1)[0].replace(',', '')
-                    decimal_part = clean.rsplit('.', 1)[1] if '.' in clean else ''
+                    # PERO: si el decimal es "00" y el entero < 1000, puede ser
+                    # un precio latinoamericano mal leído por OCR: "$17.900" → "$179.00"
+                    # En ese caso, multiplicar ×100 (convertir centavos → pesos)
+                    raw_int = clean.rsplit('.', 1)[0].replace(',', '')
+                    raw_dec = clean.rsplit('.', 1)[1]
+                    if raw_dec in ('00', '000') and raw_int.isdigit() and int(raw_int) < 1000:
+                        # Probable OCR de precio colombiano: 179.00 → 17900 (×100)
+                        integer_part = str(int(raw_int) * 100)
+                        decimal_part = ''
+                    else:
+                        integer_part = raw_int
+                        decimal_part = raw_dec
                 else:
-                    # Sin decimales
+                    # Sin decimales (incluye formato latino de miles: 17.900 → 17900)
                     integer_part = clean.replace('.', '').replace(',', '')
                     decimal_part = ''
 

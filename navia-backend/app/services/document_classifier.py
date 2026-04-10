@@ -1432,11 +1432,15 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         # Keywords negativos
         (re.compile(r'\b(?:iniciar\s+sesi[oó]n|registrar|log\s*in|sign\s*in)\b', re.I), -10),
         # Lista de verbos/frases en inglés → es un libro/glosario, no pantalla de ajustes
-        (re.compile(r'\b(?:TURN\s+(?:UP|OFF|ON|DOWN)|CALL\s+ON|GET\s+OVER|GO\s+OVER|GO\s+THROUGH|LOOK\s+AFTER|RUN\s+INTO|CATCH\s+UP|BREAK\s+IN)\b', re.I), -20),
-        (re.compile(r'\b(?:SWITCH\s+(?:OFF|ON)|RECOVER\s+FROM|TAKE\s+CARE\s+OF|FIND\s+BY\s+CHANCE|KEEP\s+ABREAST)\b', re.I), -20),
+        (re.compile(r'\b(?:TURN\s*(?:UP|OFF|ON|DOWN)|CALL\s*ON|GET\s*OVER|GO\s*OVER|GO\s*THROUGH|LOOK\s*AFTER|RUN\s*INTO|CATCH\s*UP|BREAK\s*IN)\b', re.I), -20),
+        (re.compile(r'\b(?:SWITCH\s*(?:OFF|ON)|RECOVER\s*FROM|TAKE\s*CARE\s*OF|FIND\s*BY\s*CHANCE|KEEP\s*ABREAST)\b', re.I), -20),
         # Palabras que NUNCA aparecen en pantallas de settings pero sí en libros de inglés
         (re.compile(r'\b(?:RESEMBLE|REPULSE|ABREAST|RECITE|INVESTIGATE|EXHAUST|SICKNESS|DISAPPOINTMENT)\b', re.I), -18),
-        (re.compile(r'\b(?:FAST\s+ENGLISH|phrasal\s+verb|ENGLISH\s+FAST|vocabulary)\b', re.I), -25),
+        (re.compile(r'\b(?:FAST\s*ENGLISH|phrasal\s+verb|ENGLISH\s*FAST|vocabulary)\b', re.I), -25),
+        # "RAISE THE VOLUME" es una definición de phrasal verb, no un ajuste de volumen
+        (re.compile(r'\bRAISE\s+THE\s+VOLUME\b', re.I), -20),
+        # Patrones de OCR mergeado de libros de inglés (sin espacio entre palabras)
+        (re.compile(r'\b(?:TURNON|TURNOFF|CALLON|GETOVER|GOOVER|RUNINTO|LOOKAFTER|FASTENGLISH)\b', re.I), -25),
     ],
     "app_login": [
         (re.compile(r'\b(?:iniciar?\s+sesi[oó]n|log\s*in|sign\s*in)\b', re.I), 12),
@@ -1467,6 +1471,9 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:validar|validaci[oó]n|error|campo\s+inv[aá]lido|invalid)\b', re.I), 6),
         (re.compile(r'\b(?:confirmar|confirmaci[oó]n|confirm)\b', re.I), 5),
         (re.compile(r'\b(?:aceptar|accept|rechazar|reject|decline)\b', re.I), 5),
+        # Negativos: mensajes de chat no son formularios
+        (re.compile(r'\b(?:iMessage|WhatsApp|Telegram|Messenger|Signal)\b', re.I), -20),
+        (re.compile(r'\b(?:Me\s+avisas|vaya\s+bien|te\s+quiero|te\s+amo|buen\s+d[ií]a)\b', re.I), -15),
     ],
     "app_social": [
         # Plataformas
