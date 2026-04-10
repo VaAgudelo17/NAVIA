@@ -1028,6 +1028,12 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:publicado\s+(?:el|hace)|actualizado\s+(?:el|hace))\b', re.I), 6),
         (re.compile(r'\b(?:compartir|enviar|guardar|imprimir)\b.*(?:noticia|art[ií]culo)', re.I | re.S), 6),
         (re.compile(r'\b(?:suscr[ií]b[ae](?:se|te)?|premium|paywall)\b', re.I), 6),
+        # Negativos: contenido conversacional/informal → no es noticia
+        (re.compile(r'\b(?:cr[eé]eme|hablemos|infidelidad|chismes|engaño|traici[oó]n)\b', re.I), -18),
+        (re.compile(r'\b(?:me\s+siento|demasiado\s+(?:vieja|joven|viejo))\b', re.I), -15),
+        (re.compile(r'\d{1,2}:\d{2}\s*(?:AM|PM|a\.m\.|p\.m\.)', re.I), -15),
+        (re.compile(r'\b(?:WhatsApp|Telegram|Messenger)\b', re.I), -22),
+        (re.compile(r'\b(?:jaja|jeje|xd|lol|omg)\b', re.I), -15),
     ],
     "correo": [
         (re.compile(r'\b(?:bandeja\s+de\s+entrada|inbox)\b', re.I), 10),
@@ -1425,6 +1431,9 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         # Lista de verbos/frases en inglés → es un libro/glosario, no pantalla de ajustes
         (re.compile(r'\b(?:TURN\s+(?:UP|OFF|ON|DOWN)|CALL\s+ON|GET\s+OVER|GO\s+OVER|GO\s+THROUGH|LOOK\s+AFTER|RUN\s+INTO|CATCH\s+UP|BREAK\s+IN)\b', re.I), -20),
         (re.compile(r'\b(?:SWITCH\s+(?:OFF|ON)|RECOVER\s+FROM|TAKE\s+CARE\s+OF|FIND\s+BY\s+CHANCE|KEEP\s+ABREAST)\b', re.I), -20),
+        # Palabras que NUNCA aparecen en pantallas de settings pero sí en libros de inglés
+        (re.compile(r'\b(?:RESEMBLE|REPULSE|ABREAST|RECITE|INVESTIGATE|EXHAUST|SICKNESS|DISAPPOINTMENT)\b', re.I), -18),
+        (re.compile(r'\b(?:FAST\s+ENGLISH|phrasal\s+verb|ENGLISH\s+FAST|vocabulary)\b', re.I), -25),
     ],
     "app_login": [
         (re.compile(r'\b(?:iniciar?\s+sesi[oó]n|log\s*in|sign\s*in)\b', re.I), 12),

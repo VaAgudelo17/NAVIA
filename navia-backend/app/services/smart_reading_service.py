@@ -2552,7 +2552,8 @@ class NarrativeGenerator:
         parts = ["Es una pantalla de tu aplicación bancaria."]
 
         # Transferencia / envío (Nequi, Daviplata, etc.)
-        destinatario_match = re.search(r'\bpara\b\s*\n?\s*([A-ZÁÉÍÓÚÜÑa-záéíóúüñ][^\n]{1,40})', text, re.I)
+        # "Para" seguido de un nombre propio (1-3 palabras capitalizadas, sin oración larga)
+        destinatario_match = re.search(r'\bPara\b\s*\n?\s*([A-ZÁÉÍÓÚ][a-záéíóúüñ]+(?:\s+[A-ZÁÉÍÓÚ][a-záéíóúüñ]+){0,2})(?=\s*(?:\n|¿|\?|$))', text)
         monto_nequi_match = re.search(r'(?:cu[aá]nto\??\s*\n?|valor\s*\n?|monto\s*\n?)\s*\$?\s*([\d.,]+)', text, re.I)
         nequi_num_match = re.search(r'(?:n[uú]mero\s+nequi|celular\s+nequi|n[uú]mero)\s*\n?\s*([\d\s]{7,15})', text, re.I)
 
