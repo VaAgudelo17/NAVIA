@@ -861,6 +861,9 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         # Proveedor / cliente
         (re.compile(r'\b(?:proveedor|vendedor|emisor|cliente|comprador|receptor)\b', re.I), 5),
         (re.compile(r'\braz[oó]n\s+social\b', re.I), 7),
+        # Venta (factura de venta — OCR puede dropear "FACTURA" del título)
+        (re.compile(r'\b(?:de\s+venta|factura\s+venta|venta\s+al\s+contado)\b', re.I), 9),
+        (re.compile(r'\bventa\b', re.I), 5),
         # Keywords negativos (rechaza si aparecen)
         (re.compile(r'\b(?:cancelado|pagado|en\s+concepto\s+de)\b', re.I), -5),
     ],
@@ -1589,6 +1592,8 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:llamada\s+de\s+voz|videoLLamada|voice\s+call)\b', re.I), 10),
         # Timestamps de mensajes (señal MUY fuerte de chat)
         (re.compile(r'\d{1,2}:\d{2}\s*(?:p\.?m\.?|a\.?m\.?|PM|AM)', re.I), 8),
+        # Timestamp sin AM/PM (frecuente en WhatsApp): "8:13", "10:42"
+        (re.compile(r'(?:^|\s)\d{1,2}:\d{2}(?:\s|$)', re.I | re.M), 5),
         # Estado de conexión
         (re.compile(r'\b(?:en\s+l[ií]na|online)\b', re.I), 10),
         (re.compile(r'\b(?:[uú]lt(?:ima)?\s*vez|last\s+seen)\b', re.I), 8),
@@ -1706,6 +1711,12 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'ejemplo@\w+\.\w+|\(000\)\s*000', re.I), -10),
         (re.compile(r'\bintroducid?\s+un\s+n[uú]mero\s+v[aá]lido\b', re.I), -10),
         (re.compile(r'\bnombre\s+de\s+la\s+compa[ñn][ií]a\b', re.I), -8),
+        # Negativos: facturas/recibos tienen TOTAL + montos pero NO son credenciales
+        (re.compile(r'\b(?:total|subtotal)\s*:?\s*\$?\s*[\d.,]+', re.I), -14),
+        (re.compile(r'\b(?:i\.?v\.?a\.?|impuesto)\b', re.I), -12),
+        (re.compile(r'\b(?:cliente|comprador)\s*:', re.I), -10),
+        (re.compile(r'\b(?:producto|art[ií]culo|item)\s*:', re.I), -10),
+        (re.compile(r'\bventa\b', re.I), -12),
     ],
     "app_banking": [
         # Palabras clave directas de banca
