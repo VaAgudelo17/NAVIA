@@ -1592,8 +1592,9 @@ _SUBTYPE_RULES: Dict[str, List[Tuple[re.Pattern, int]]] = {
         (re.compile(r'\b(?:llamada\s+de\s+voz|videoLLamada|voice\s+call)\b', re.I), 10),
         # Timestamps de mensajes (señal MUY fuerte de chat)
         (re.compile(r'\d{1,2}:\d{2}\s*(?:p\.?m\.?|a\.?m\.?|PM|AM)', re.I), 8),
-        # Timestamp sin AM/PM (frecuente en WhatsApp): "8:13", "10:42"
-        (re.compile(r'(?:^|\s)\d{1,2}:\d{2}(?:\s|$)', re.I | re.M), 5),
+        # Timestamp sin AM/PM al FINAL de línea (WhatsApp): "8:13\n", "10:42 \n"
+        # Requiere fin de línea para no confundir con referencias de libro/sección "1:2"
+        (re.compile(r'\d{1,2}:\d{2}\s*$', re.M), 5),
         # Estado de conexión
         (re.compile(r'\b(?:en\s+l[ií]na|online)\b', re.I), 10),
         (re.compile(r'\b(?:[uú]lt(?:ima)?\s*vez|last\s+seen)\b', re.I), 8),
