@@ -23,23 +23,23 @@ NAVIA procesa imagenes en tiempo real y bajo demanda para detectar obstaculos, e
 
 ## Arquitectura
 
-NAVIA se compone de tres modulos independientes que se comunican via HTTP y WebSocket:
+NAVIA se compone de dos modulos que se comunican via HTTP y WebSocket:
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  navia-mobile   │     │  navia-fronted   │     │  navia-backend  │
-│  (React Native  │     │  (Next.js)       │     │  (FastAPI)      │
-│   + Expo)       │     │  Puerto: 3002    │     │  Puerto: 8000   │
-│                 │     │                  │     │                 │
-│  Camara movil   │────>│  Camara web      │────>│  YOLO-World v2  │
-│  TTS nativo     │<────│  TTS web         │<────│  Depth Anything │
-│  AsyncStorage   │     │  localStorage    │     │  Florence-2     │
-│                 │     │                  │     │  Piper TTS      │
-└─────────────────┘     └──────────────────┘     │  Tesseract OCR  │
-                                                 │  Gemini 2.0     │
-                                                 │  ByteTrack      │
-                                                 │  SQLite         │
-                                                 └─────────────────┘
+┌─────────────────┐          ┌─────────────────┐
+│  navia-mobile   │          │  navia-backend  │
+│  (React Native  │          │  (FastAPI)      │
+│   + Expo)       │          │  Puerto: 8000   │
+│                 │          │                 │
+│  Camara movil   │─────────>│  YOLO-World v2  │
+│  TTS nativo     │<─────────│  Depth Anything │
+│  AsyncStorage   │          │  Florence-2     │
+│                 │          │  Piper TTS      │
+└─────────────────┘          │  Tesseract OCR  │
+                             │  Gemini 2.0     │
+                             │  ByteTrack      │
+                             │  SQLite         │
+                             └─────────────────┘
 ```
 
 **Flujo de datos en tiempo real (WebSocket):**
@@ -135,16 +135,6 @@ Lectura inteligente de documentos con clasificacion automatica.
 | TTS | piper-tts >= 1.2.0 |
 | PDF | pymupdf >= 1.23.0 |
 
-### Frontend Web (TypeScript)
-
-| Componente | Tecnologia |
-|------------|-----------|
-| Framework | Next.js ^16.1.6 (App Router) |
-| UI | React ^18.3.1 |
-| Estilos | Tailwind CSS ^3.4.10 |
-| Componentes | Radix UI + shadcn/ui |
-| Iconos | lucide-react ^0.441.0 |
-
 ### App Movil (TypeScript)
 
 | Componente | Tecnologia |
@@ -226,14 +216,7 @@ cp .env.example .env
 # Editar .env con tus valores (GEMINI_API_KEY, TESSERACT_CMD, etc.)
 ```
 
-### 3. Frontend Web
-
-```bash
-cd navia-fronted
-npm install
-```
-
-### 4. App Movil
+### 3. App Movil
 
 ```bash
 cd navia-mobile
@@ -250,19 +233,7 @@ export const API_BASE_URL = 'http://<tu-ip-local>:8000';
 
 ## Ejecucion
 
-### Todo junto (backend + frontend + mobile)
-
-```bash
-./navia.sh
-```
-
-### Solo backend + frontend web
-
-```bash
-./start.sh
-```
-
-### Solo backend + app movil
+### Backend + App Movil
 
 ```bash
 ./start-mobile.sh
@@ -275,11 +246,7 @@ export const API_BASE_URL = 'http://<tu-ip-local>:8000';
 cd navia-backend && source venv/bin/activate
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
-# Terminal 2: Frontend
-cd navia-fronted
-npm run dev -- -p 3002
-
-# Terminal 3: Mobile
+# Terminal 2: Mobile
 cd navia-mobile
 npx expo start
 ```
@@ -291,7 +258,6 @@ npx expo start
 | Backend API | http://localhost:8000 |
 | Documentacion Swagger | http://localhost:8000/docs |
 | Documentacion ReDoc | http://localhost:8000/redoc |
-| Frontend Web | http://localhost:3002 |
 | Expo (mobile) | Escanear QR con Expo Go |
 
 ---
@@ -428,28 +394,6 @@ NAVIA/
 │           ├── image_utils.py           # Procesamiento de imagenes
 │           └── pdf_utils.py             # Conversion de PDF
 │
-├── navia-fronted/
-│   ├── package.json
-│   ├── app/
-│   │   ├── layout.tsx                   # Layout raiz
-│   │   ├── page.tsx                     # Pagina principal
-│   │   └── globals.css                  # Estilos globales
-│   ├── components/
-│   │   ├── navia/
-│   │   │   ├── navia-app.tsx            # Componente principal
-│   │   │   └── AnimatedEye.tsx          # Ojo animado (UI)
-│   │   └── ui/                          # Componentes shadcn/ui
-│   ├── context/
-│   │   └── PreferencesContext.tsx        # Contexto de preferencias
-│   ├── hooks/
-│   │   ├── useLocalStorage.ts           # Hook de localStorage
-│   │   └── useRealtimeDetection.ts      # Hook de deteccion en tiempo real
-│   └── lib/
-│       ├── api.ts                       # Cliente de API
-│       ├── websocket.ts                 # Cliente WebSocket
-│       ├── ttsManager.ts                # Gestor de TTS
-│       └── realtimeTts.ts               # TTS para tiempo real
-│
 ├── navia-mobile/
 │   ├── package.json
 │   ├── app.json                         # Configuracion Expo
@@ -475,8 +419,6 @@ NAVIA/
 │       └── types/
 │           └── api.ts                   # Tipos TypeScript
 │
-├── navia.sh                             # Iniciar todo
-├── start.sh                             # Iniciar backend + web
 ├── start-mobile.sh                      # Iniciar backend + mobile
 └── README.md
 ```
@@ -499,12 +441,6 @@ NAVIA/
 | `GEMINI_API_KEY` | Opcional | API key de Google Gemini (para modo lectura avanzado) |
 | `GEMINI_ENABLED` | No | Habilitar Gemini OCR (default: `True`) |
 
-### Frontend Web (`.env.local`)
-
-| Variable | Descripcion |
-|----------|-------------|
-| `NEXT_PUBLIC_API_URL` | URL del backend (default: `http://localhost:8000`) |
-
 ---
 
 ## Sistema de TTS (Text-to-Speech)
@@ -519,7 +455,7 @@ NAVIA usa un sistema de **cola con prioridades** para evitar que las voces se ca
 
 **Cadena de fallback:**
 1. Piper TTS del backend (voz VITS natural en espanol)
-2. Si falla → Web Speech API (web) o expo-speech (mobile)
+2. Si falla → expo-speech (mobile)
 
 ---
 
