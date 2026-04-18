@@ -1,6 +1,6 @@
 # NAVIA - Navegacion Visual Asistida con Inteligencia Artificial
 
-**Aplicacion de asistencia visual para personas con discapacidad visual**, desarrollada como proyecto de tesis en la **Universidad Simon Bolivar**.
+**Aplicacion de asistencia visual para personas con discapacidad visual**, desarrollada como proyecto de tesis en la **Universidad San Buenaventura Cali**.
 
 NAVIA procesa imagenes en tiempo real y bajo demanda para detectar obstaculos, estimar distancias, leer textos y describir entornos, convirtiendo todo en instrucciones de audio claras y priorizadas en espanol.
 
@@ -152,7 +152,7 @@ Lectura inteligente de documentos con clasificacion automatica.
 
 | Modelo | Funcion | Tamano | Ejecucion |
 |--------|---------|--------|-----------|
-| **YOLO-World v2 Medium** | Deteccion de objetos (vocabulario abierto, ~298 clases) | ~30 MB | CPU/GPU local |
+| **YOLO-World v2 Small** | Deteccion de objetos (vocabulario abierto, ~298 clases) | ~30 MB | CPU/GPU local |
 | **Depth Anything V2 Small** | Estimacion monocular de profundidad | ~98 MB | CPU local |
 | **Florence-2 Base** | Captioning de escenas | ~1 GB | CPU local |
 | **Piper TTS (VITS)** | Sintesis de voz en espanol (modelo `es_ES-davefx-medium`) | ~100 MB | CPU local |
@@ -353,7 +353,7 @@ NAVIA/
 │   ├── requirements.txt                 # Dependencias Python
 │   ├── .env                             # Variables de entorno
 │   ├── navia.db                         # Base de datos SQLite
-│   ├── yolov8m-worldv2.pt              # Modelo YOLO-World
+│   ├── yolov8s-worldv2.pt              # Modelo YOLO-World
 │   ├── models/
 │   │   └── es_ES-davefx-medium.onnx    # Modelo de voz Piper TTS
 │   └── app/
@@ -436,7 +436,7 @@ NAVIA/
 | `DEBUG_MODE` | No | Modo debug, precarga modelos (default: `True`) |
 | `TESSERACT_CMD` | Si | Ruta al binario de Tesseract |
 | `YOLO_MODEL` | No | Archivo del modelo YOLO (default: `yolov8m-worldv2.pt`) |
-| `YOLO_CONFIDENCE_THRESHOLD` | No | Umbral de confianza (default: `0.20`) |
+| `YOLO_CONFIDENCE_THRESHOLD` | No | Umbral de confianza (default: `0.35`) |
 | `DATABASE_URL` | No | URL de la base de datos (default: SQLite local) |
 | `GEMINI_API_KEY` | Opcional | API key de Google Gemini (para modo lectura avanzado) |
 | `GEMINI_ENABLED` | No | Habilitar Gemini OCR (default: `True`) |
