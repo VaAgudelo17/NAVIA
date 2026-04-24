@@ -187,11 +187,11 @@ class TtsManager {
 
   private preprocessForReading(text: string): string {
     return text
-      .replace(/:\s+/g, '... ')
-      .replace(/\.\s+/g, '.  ')
-      .replace(/\s*[-–]\s+/g, '.  ')
+      .replace(/:\s+/g, ': ')
+      .replace(/\.\s+/g, '. ')
+      .replace(/\s*[-–]\s+/g, ', ')
       .replace(/[#*_~`|]/g, ' ')
-      .replace(/[ \t]{3,}/g, '  ')
+      .replace(/[ \t]{2,}/g, ' ')
       .trim();
   }
 }

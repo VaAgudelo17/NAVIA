@@ -106,7 +106,7 @@ class Settings(BaseSettings):
     # --- CONFIGURACIÓN DE GEMINI (GOOGLE AI) ---
     # Gemini Vision para OCR avanzado de documentos (primario, con Tesseract fallback)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_MODEL: str = "gemini-2.0-flash"  # Rapido, gratis, excelente OCR
+    GEMINI_MODEL: str = "gemini-2.5-flash"  # Tier gratuito activo, excelente OCR
     GEMINI_ENABLED: bool = True  # Desactivar para usar solo Tesseract
     GEMINI_TIMEOUT: int = 15  # Timeout en segundos para la API
 

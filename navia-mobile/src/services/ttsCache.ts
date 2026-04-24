@@ -9,7 +9,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { API_BASE_URL, API_ENDPOINTS } from '../constants/config';
 
-const CACHE_DIR = `${FileSystem.cacheDirectory}navia_phrases/`;
+const CACHE_DIR = `${FileSystem.cacheDirectory}navia_tts_v2/`;
 const CHUNK = 4096;
 
 function simpleHash(text: string): string {

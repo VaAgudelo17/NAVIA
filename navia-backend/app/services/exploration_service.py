@@ -119,7 +119,7 @@ class ExplorationService:
         self.min_ocr_chars = 6  # Mínimo caracteres válidos (subido de 4 a 6)
         self.min_word_length_avg = 2.5  # Longitud promedio mínima de palabras
         self.max_uppercase_ratio = 0.7  # Máximo ratio de mayúsculas (ruido suele ser TODO MAYÚSCULAS)
-        self.enable_color_detection = False  # Desactivado: da resultados incorrectos frecuentemente
+        self.enable_color_detection = True  # Activado: usa recorte central para mayor precisión
 
     def _ensure_initialized(self) -> None:
         """Inicializa servicios de forma lazy."""
@@ -202,7 +202,7 @@ class ExplorationService:
             ocr_result = self._conditional_ocr(image, img_area)
             
             # 7. Generar narrativa estructurada
-            description = self._generate_narrative(enriched_objects, ocr_result)
+            description = self._generate_narrative(enriched_objects, ocr_result, all_objects)
             
             return ExplorationResponse(
                 success=True,
@@ -568,16 +568,29 @@ class ExplorationService:
             Nombre del color en español o None
         """
         try:
-            # Extraer región del bbox
+            # Extraer región central del bbox (40% interior)
+            # Evita incluir fondo y bordes donde el color del objeto es menos representativo
             x1 = max(0, bbox.x_min)
             y1 = max(0, bbox.y_min)
             x2 = min(image.shape[1], bbox.x_max)
             y2 = min(image.shape[0], bbox.y_max)
-            
+
             if x2 <= x1 or y2 <= y1:
                 return None
-            
-            roi = image[y1:y2, x1:x2]
+
+            bw = x2 - x1
+            bh = y2 - y1
+            margin_x = int(bw * 0.3)
+            margin_y = int(bh * 0.3)
+            cx1 = x1 + margin_x
+            cy1 = y1 + margin_y
+            cx2 = x2 - margin_x
+            cy2 = y2 - margin_y
+
+            if cx2 <= cx1 or cy2 <= cy1:
+                roi = image[y1:y2, x1:x2]
+            else:
+                roi = image[cy1:cy2, cx1:cx2]
             
             if roi.size == 0:
                 return None
@@ -833,26 +846,73 @@ class ExplorationService:
         return False
 
     # =========================================================================
+    # 6.5 CONTEXTO AMBIENTAL
+    # =========================================================================
+    def _detect_environment_context(self, objects: List[DetectedObject]) -> Optional[str]:
+        """
+        Infiere si el entorno es interior o exterior a partir de los objetos detectados.
+
+        Retorna "interior", "exterior" o None si no hay suficientes señales.
+        Se requieren al menos 2 señales del mismo tipo para evitar falsos positivos.
+        """
+        interior_signals = {
+            "silla", "mesa", "sofá", "cama", "escritorio", "estante",
+            "televisor", "refrigerador", "estufa", "lavadora", "secadora",
+            "inodoro", "lavamanos", "bañera", "puerta", "puerta de vidrio",
+            "puerta cerrada", "lámpara", "ventana", "espejo", "cortina",
+            "alfombra", "armario", "closet", "microondas", "tostadora",
+        }
+        exterior_signals = {
+            "carro", "autobús", "camión", "motocicleta", "bicicleta",
+            "scooter eléctrico", "taxi", "semáforo", "señal de pare",
+            "señal de tráfico", "poste", "farola", "árbol", "borde de acera",
+            "tapa de alcantarilla", "reductor de velocidad", "andamio",
+            "contenedor de basura", "cono de tráfico", "barrera vial",
+        }
+
+        names = {o.name_es.lower() for o in objects if o.name_es}
+        interior_count = len(names & interior_signals)
+        exterior_count = len(names & exterior_signals)
+
+        if interior_count >= 2 and interior_count > exterior_count:
+            return "interior"
+        if exterior_count >= 2 and exterior_count > interior_count:
+            return "exterior"
+        return None
+
+    # =========================================================================
     # 7. GENERACIÓN DE NARRATIVA ESTRUCTURADA
     # =========================================================================
     def _generate_narrative(
         self,
         enriched_objects: List[Dict],
-        ocr_result: Optional[Dict]
+        ocr_result: Optional[Dict],
+        all_objects: Optional[List[DetectedObject]] = None,
     ) -> str:
         """
         Genera narrativa natural y concisa.
-        
+
         Formato mejorado:
-        - Objeto principal: descripción completa
+        - Prefijo de contexto ambiental (interior/exterior) si hay suficientes señales
+        - Objeto principal: descripción completa con color si está disponible
         - Objetos secundarios: más breve, evita redundancia
         - Agrupa por posición similar
-        
+
         Ejemplo:
-        "Un ventilador frente a ti, muy cerca. También hay una cómoda y una mesa a la derecha."
+        "Parece un entorno interior. Un ventilador de color blanco frente a ti, muy cerca.
+         También hay una cómoda y una mesa a la derecha."
         """
         if not enriched_objects:
             return "No se detectan objetos relevantes en el entorno."
+
+        # Detectar contexto ambiental
+        context_prefix = ""
+        if all_objects:
+            env = self._detect_environment_context(all_objects)
+            if env == "interior":
+                context_prefix = "Parece un entorno interior. "
+            elif env == "exterior":
+                context_prefix = "Parece un entorno exterior. "
         
         parts = []
 
@@ -901,7 +961,8 @@ class ExplorationService:
                 preview = ' '.join(text.split()[:10])
                 parts.append(f"Hay un texto que dice: {preview}...")
 
-        return " ".join(parts) if parts else "No se detectan objetos relevantes en el entorno."
+        narrative = " ".join(parts) if parts else "No se detectan objetos relevantes en el entorno."
+        return context_prefix + narrative
 
     def _describe_object(self, obj_data: Dict, is_main: bool = False) -> str:
         """
@@ -920,16 +981,20 @@ class ExplorationService:
         article = "Una" if gender == "f" else "Un"
         
         # Formato conciso: "Un ventilador frente a ti, muy cerca."
-        phrase = f"{article} {name_es} {position}, {distance}."
-        
+        color = obj_data.get("color")
+        if color and name_es not in {"persona", "niño", "bebé", "persona en silla de ruedas"}:
+            phrase = f"{article} {name_es} de color {color} {position}, {distance}."
+        else:
+            phrase = f"{article} {name_es} {position}, {distance}."
+
         # Verificar si tiene accesorios (persona + lentes/sombrero/etc)
         accessories = obj_data.get("accessories")
         if accessories and len(accessories) > 0:
             accessory = accessories[0]
             acc_gender = GENDER_MAP.get(accessory, "m")
             acc_article = "unos" if accessory.endswith("s") else ("una" if acc_gender == "f" else "un")
-            phrase = f"{article} {name_es} {position}, {distance}. Tiene puesto {acc_article} {accessory}."
-        
+            phrase = phrase.rstrip(".") + f". Tiene puesto {acc_article} {accessory}."
+
         return phrase
 
     def _describe_secondary_objects(self, objects: List[Dict]) -> str:

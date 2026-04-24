@@ -378,6 +378,7 @@ class NavigationGuidanceService:
         img_width: int,
         img_height: int,
         track_movement: bool = True,
+        directional_depth: Optional[Dict[str, float]] = None,
     ) -> dict:
         """
         Pipeline completo de navegación + riesgo.
@@ -517,7 +518,7 @@ class NavigationGuidanceService:
                 alert_type = "atencion"
 
         # --- PASO 6: Generar instrucciones ---
-        instruction = self._generate_instructions(analyzed, path_clear)
+        instruction = self._generate_instructions(analyzed, path_clear, directional_depth)
 
         return {
             "instruction": instruction,
@@ -808,15 +809,18 @@ class NavigationGuidanceService:
         self,
         analyzed: list,
         path_clear: bool,
+        directional_depth: Optional[Dict[str, float]] = None,
     ) -> str:
         """
-        Genera instrucción combinada frente + lateral en una sola frase.
+        Genera instrucción combinada frente + lateral(es) en una sola frase.
+        Cuando hay profundidad direccional disponible, añade orientación del
+        camino más libre ("El paso más libre está a tu izquierda/derecha").
 
         Formato:
-          - Obstáculo al frente + lateral notable → "Atención: silla al frente, cama a la izquierda."
-          - Solo frente bloqueado                → "Atención: silla muy cerca al frente."
-          - Frente libre + lateral notable        → "Camino libre al frente, cama a la izquierda."
-          - Nada relevante                        → "Camino libre."
+          - Obstáculo al frente + laterales → "Atención: silla al frente, cama a la izquierda y mesa a la derecha."
+          - Solo frente bloqueado           → "Atención: silla muy cerca al frente. El paso más libre está a tu derecha."
+          - Frente libre + lateral notable  → "Cama a tu derecha, el camino al frente está libre."
+          - Nada relevante                  → "Camino libre."
         """
         if not analyzed:
             return "Camino libre."
@@ -848,7 +852,6 @@ class NavigationGuidanceService:
         # --- Parte del frente ---
         if front_obs:
             top = front_obs[0]
-            # Objetos lejanos pero peligrosos (escaleras, balcón, etc.)
             if top["proximity"] == "lejos":
                 name_cap = top["name_es"].capitalize()
                 if top["name_es"] in PELIGRO_CLASSES:
@@ -860,35 +863,42 @@ class NavigationGuidanceService:
                     top["name_es"], top["position"], top["proximity"],
                     top["movement"], top["height_zone"], top["risk_score"],
                 )
-            # Quitar punto final si lo tuviera (lo añadimos al combinar)
             front_phrase = front_phrase.rstrip(".")
         else:
             front_phrase = "Camino libre al frente"
 
-        # --- Parte lateral (máximo 1 objeto) ---
-        lateral_phrase = ""
-        if lateral_obs:
-            best = lateral_obs[0]
+        # --- Parte lateral (hasta 2 objetos en escenas densas) ---
+        lateral_parts = []
+        max_laterals = 2 if len(mentionable) >= 3 else 1
+        for obs in lateral_obs[:max_laterals]:
             lat = self._build_phrase(
-                best["name_es"], best["position"], best["proximity"],
-                best["movement"], best["height_zone"], best["risk_score"],
+                obs["name_es"], obs["position"], obs["proximity"],
+                obs["movement"], obs["height_zone"], obs["risk_score"],
             ).rstrip(".")
             if lat:
-                # Lateral siempre en minúscula al combinarse
-                lateral_phrase = lat[0].lower() + lat[1:]
+                lateral_parts.append(lat[0].lower() + lat[1:])
+
+        lateral_phrase = " y ".join(lateral_parts)
+
+        # --- Orientación del camino libre (profundidad direccional) ---
+        free_side_hint = ""
+        if directional_depth and front_obs:
+            left_load = directional_depth.get("izquierda", 0.5)
+            right_load = directional_depth.get("derecha", 0.5)
+            diff = abs(left_load - right_load)
+            if diff >= 0.15:
+                # Menor carga = más espacio libre
+                free_side = "izquierda" if left_load < right_load else "derecha"
+                free_side_hint = f" El paso más libre está a tu {free_side}."
 
         # --- Combinar ---
-        # Si el frente está libre: lateral primero, luego confirmación del frente.
-        #   "Cama a tu derecha, el camino al frente está libre."
-        # Si hay obstáculo al frente: el aviso del frente va primero (es lo prioritario).
-        #   "Atención: silla muy cerca al frente, cama a tu izquierda."
         if front_obs and lateral_phrase:
-            return f"{front_phrase}, {lateral_phrase}."
+            return f"{front_phrase}, {lateral_phrase}.{free_side_hint}"
         elif not front_obs and lateral_phrase:
             lat_cap = lateral_phrase[0].upper() + lateral_phrase[1:]
             return f"{lat_cap}, el camino al frente está libre."
         elif front_phrase:
-            return front_phrase + "."
+            return front_phrase + "." + free_side_hint
         return "Camino libre."
 
     @staticmethod

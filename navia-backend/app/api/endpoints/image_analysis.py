@@ -477,9 +477,18 @@ async def analyze_navigation(
         # Pipeline unificado: navegación + riesgo
         h, w = cv2_image.shape[:2]
         guidance_service = get_navigation_guidance_service()
+
+        # Calcular profundidad direccional si el mapa está disponible
+        directional_depth = None
+        depth_map = result.get("depth_map")
+        if depth_map is not None:
+            from app.services.depth_estimation_service import get_depth_estimation_service
+            directional_depth = get_depth_estimation_service().compute_directional_depth(depth_map)
+
         guidance = guidance_service.generate_guidance(
             result["objects"], w, h,
             track_movement=False,  # HTTP no tiene frames consecutivos
+            directional_depth=directional_depth,
         )
 
         processing_time = (time.time() - start_time) * 1000

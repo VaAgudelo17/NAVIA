@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     libgomp1 \
     libgl1 \
     git \
+    curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,8 +33,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar código (excluye lo que está en .dockerignore)
 COPY . .
 
+# Descargar modelo Piper TTS (es_MX-claude-high) desde HuggingFace
+RUN mkdir -p models && \
+    curl -L "https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_MX/claude/high/es_MX-claude-high.onnx" \
+         -o models/es_MX-claude-high.onnx && \
+    curl -L "https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_MX/claude/high/es_MX-claude-high.onnx.json" \
+         -o models/es_MX-claude-high.onnx.json
+
 ENV TESSERACT_CMD=/usr/bin/tesseract
-ENV TTS_BACKEND=gtts
+ENV TTS_BACKEND=piper
+ENV TTS_MODEL_NAME=es_MX-claude-high
 ENV DEBUG_MODE=False
 ENV HF_HOME=/app/.cache/huggingface
 ENV TRANSFORMERS_CACHE=/app/.cache/huggingface

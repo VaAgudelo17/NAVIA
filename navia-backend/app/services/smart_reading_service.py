@@ -4598,6 +4598,13 @@ class SmartReadingService:
         self._optimizer = None
         self._captioning = None
 
+        if settings.GEMINI_ENABLED and not settings.GEMINI_API_KEY:
+            logger.warning(
+                "[SmartReading] GEMINI_API_KEY no está configurada. "
+                "El modo lectura usará solo Tesseract OCR (menor precisión). "
+                "Configura GEMINI_API_KEY en las variables de entorno de Railway."
+            )
+
     def _get_classifier(self):
         if self._classifier_v2 is None:
             from app.services.document_classifier import get_document_classifier
@@ -4724,7 +4731,15 @@ class SmartReadingService:
         quality_analyzer = self._get_quality_analyzer()
         quality_report = quality_analyzer.analyze(image)
 
-        # 2. Pipeline Tesseract local + Clasificador v3
+        # 2. Intentar con Gemini primero (mejor OCR + clasificación)
+        if settings.GEMINI_ENABLED and settings.GEMINI_API_KEY:
+            logger.info("[SmartReading] Intentando con Gemini Vision...")
+            gemini_result = self._try_gemini(image)
+            if gemini_result:
+                return self._build_response_from_gemini(gemini_result, quality_report, reading_mode)
+            logger.info("[SmartReading] Gemini falló, usando Tesseract como fallback")
+
+        # 3. Pipeline Tesseract local + Clasificador v3 (fallback)
         logger.info("[SmartReading] Usando Tesseract + Clasificador v3")
         return self._analyze_with_tesseract(image, quality_report, reading_mode)
 
