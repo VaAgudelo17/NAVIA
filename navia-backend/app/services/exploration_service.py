@@ -198,18 +198,16 @@ class ExplorationService:
                     enriched["accessories"] = person_accessories[obj_name]
                 enriched_objects.append(enriched)
             
-            # 6. OCR condicional
-            ocr_result = self._conditional_ocr(image, img_area)
-            
-            # 7. Generar narrativa estructurada
-            description = self._generate_narrative(enriched_objects, ocr_result, all_objects)
-            
+            # 6. Generar narrativa estructurada (sin OCR: la lectura de texto la
+            #    cubre el modo Lectura. Acá el OCR generaba ruido tipo "eel fio wie".)
+            description = self._generate_narrative(enriched_objects, None, all_objects)
+
             return ExplorationResponse(
                 success=True,
                 message="Entorno explorado correctamente",
                 description=description,
-                detected_text=ocr_result.get("text", "") if ocr_result else "",
-                has_text=ocr_result.get("has_text", False) if ocr_result else False,
+                detected_text="",
+                has_text=False,
                 objects=[obj["detected_object"] for obj in enriched_objects],
                 object_count=len(enriched_objects),
             )

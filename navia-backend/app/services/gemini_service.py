@@ -173,6 +173,21 @@ class GeminiService:
             logger.info(f"[Gemini] Enviando imagen ({len(image_bytes) // 1024} KB)")
 
             # Llamar a Gemini con imagen + prompt
+            # - thinking_budget=0: Gemini 2.5 Flash usa "thinking tokens" por defecto
+            #   que consumen el budget de salida y truncan la respuesta a ~180 chars.
+            # - response_mime_type=application/json: fuerza JSON estricto sin
+            #   envoltura markdown, evita parsing frágil.
+            gen_config_kwargs = {
+                "temperature": 0.1,
+                "max_output_tokens": 4096,
+                "response_mime_type": "application/json",
+            }
+            try:
+                gen_config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+            except AttributeError:
+                # SDK viejo sin ThinkingConfig — el modelo usará thinking por defecto.
+                pass
+
             response = self._client.models.generate_content(
                 model=settings.GEMINI_MODEL,
                 contents=[
@@ -182,10 +197,7 @@ class GeminiService:
                     ),
                     _GEMINI_PROMPT,
                 ],
-                config=types.GenerateContentConfig(
-                    temperature=0.1,  # Baja temperatura para respuestas consistentes
-                    max_output_tokens=2048,
-                ),
+                config=types.GenerateContentConfig(**gen_config_kwargs),
             )
 
             # Extraer texto de la respuesta
@@ -242,7 +254,7 @@ class GeminiService:
             data = json.loads(text)
         except json.JSONDecodeError as e:
             logger.warning(f"[Gemini] JSON inválido: {e}")
-            logger.debug(f"[Gemini] Respuesta raw: {response_text[:500]}")
+            logger.warning(f"[Gemini] Respuesta raw ({len(response_text)} chars): {response_text[:500]}")
             return None
 
         # Validar campos requeridos

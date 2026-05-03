@@ -62,8 +62,10 @@ PEDESTRIAN_RELEVANT_CLASSES = {
     "escalón",                  # un solo peldaño: más peligroso porque no se espera
     "borde de acera",           # desnivel, fácil de tropezar
     "tapa de alcantarilla",     # hueco o superficie resbaladiza
+    "hueco", "agujero",         # huecos en el piso
     "reductor de velocidad",    # resalto en la vía
-    "maleta", "mochila", "patineta", "caja de cartón",  # objetos inesperados en el piso
+    # NOTA: maleta, mochila, patineta, caja de cartón se eliminaron — YOLO los
+    # confunde con texturas/sombras y generan demasiados falsos positivos.
 
     # ── OBSTÁCULOS A NIVEL CORPORAL (colisión frontal) ────────────────────────
     # Muebles principales (suficientes — no necesitamos cada variante)
@@ -84,6 +86,8 @@ PEDESTRIAN_RELEVANT_CLASSES = {
     "semáforo",                 # referencia y obstáculo físico
     "hidrante",                 # obstáculo bajo a nivel de rodilla
     "señal de piso mojado",     # piso resbaladizo
+    "letrero", "señal",         # señalización útil para orientarse
+    "señal de pare", "señal de tráfico",
 
     # ── PAREDES Y ESTRUCTURAS SÓLIDAS ───────────────────────────────────────
     "pared", "pared de ladrillo", "pared de vidrio",
@@ -97,6 +101,9 @@ PEDESTRIAN_RELEVANT_CLASSES = {
     "puerta", "puerta abierta", "puerta cerrada",
     "puerta de vidrio", "puerta giratoria", "puerta corrediza",
     "reja", "ascensor",
+    # ── VENTANAS Y SUPERFICIES ALTAS ─────────────────────────────────────────
+    "ventana",                  # superficie de vidrio, peligro de colisión
+    "ventilador",               # peligro a altura de cabeza, riesgo de golpe
 
     # ── COCINA / LAVANDERÍA (interior) ───────────────────────────────────────
     "estufa", "horno",
@@ -141,10 +148,7 @@ DANGER_WEIGHT: Dict[str, float] = {
     "barandal": 0.72,
     "reductor de velocidad": 0.65,
     "escalón": 0.80,                # un solo peldaño: muy peligroso porque no se espera
-    "patineta": 0.65,
-    "maleta": 0.55,
-    "mochila": 0.45,
-    "caja de cartón": 0.40,
+    "hueco": 0.90, "agujero": 0.90, # huecos en el piso, peligro de caída
 
     # ── ESTRUCTURAS SÓLIDAS: colisión frontal ─────────────────────────────────
     "pared de vidrio": 0.80,        # invisible, muy peligrosa
@@ -167,6 +171,14 @@ DANGER_WEIGHT: Dict[str, float] = {
     "puerta": 0.50, "puerta corrediza": 0.50,
     "puerta abierta": 0.35,         # menos peligro pero delimita el espacio
     "reja": 0.60, "ascensor": 0.40,
+    "ventana": 0.70,                # vidrio invisible, colisión
+
+    # ── ALTURA DE CABEZA: golpes de cabeza ────────────────────────────────────
+    "ventilador": 0.65,             # aspas en movimiento, riesgo de golpe
+
+    # ── SEÑALIZACIÓN: orientación e información ───────────────────────────────
+    "letrero": 0.30, "señal": 0.30,
+    "señal de pare": 0.50, "señal de tráfico": 0.40,
 
     # ── COCINA: peligros en interiores ───────────────────────────────────────
     "estufa": 0.70,                 # quemadura + obstáculo
@@ -205,10 +217,13 @@ PELIGRO_CLASSES: set = {
     # Caídas
     "escaleras", "escalera mecánica", "escalón", "balcón", "cornisa",
     "borde de acera", "tapa de alcantarilla", "barandal de balcón",
+    "hueco", "agujero",
     # Peligros térmicos
     "estufa", "horno",
     # Superficies invisibles / peligro de colisión oculta
-    "pared de vidrio", "puerta de vidrio",
+    "pared de vidrio", "puerta de vidrio", "ventana",
+    # Altura de cabeza con piezas en movimiento
+    "ventilador",
     # Andamios y obras
     "andamio",
 }
@@ -229,7 +244,7 @@ IGNORE_CLASSES: set = {
     # ── Elementos de pared / techo ────────────────────────────────────────────
     "espejo", "espejo de baño", "espejo compacto",
     "cortina", "cortina de baño", "persiana",
-    "ventana",                      # superficie vertical transparente en la pared
+    # NOTA: "ventana" se quitó de la lista negra. Es vidrio = peligro de colisión.
     "candelabro", "lámpara", "foco",
     # ── Calzado y ropa ────────────────────────────────────────────────────────
     "zapato", "tenis", "tacón", "bota", "sandalia", "pantufla",
@@ -280,8 +295,13 @@ MIN_CONFIDENCE_CRITICAL = 0.22
 # Confianza mínima para el resto de objetos relevantes
 MIN_CONFIDENCE_GENERAL = 0.28
 # Área mínima del bounding box como fracción del área total de la imagen
-# Objetos que ocupan menos del 0.3% de la imagen son probablemente ruido
-MIN_BBOX_AREA_FRACTION = 0.003
+# Objetos que ocupan menos del 1% de la imagen son probablemente ruido o
+# están demasiado lejos para preocupar al usuario peatón.
+# Objetos críticos (carros, personas) tienen su propia constante más permisiva.
+MIN_BBOX_AREA_FRACTION = 0.01
+# Para objetos críticos (vehículos, personas, animales grandes) basta con 0.4%
+# porque importan aunque estén lejos.
+MIN_BBOX_AREA_FRACTION_CRITICAL = 0.004
 
 # Objetos con alta tasa de confusión visual → requieren mayor confianza
 # Clave: nombre en español, Valor: umbral mínimo de confianza
@@ -367,6 +387,16 @@ class NavigationGuidanceService:
         # Clave: name_es, Valor: (center_x, center_y, area)
         self._previous_bboxes: Dict[str, Tuple[float, float, float]] = {}
         self._frame_count: int = 0
+        # Estabilidad por objeto: cuántos frames consecutivos lleva el mismo objeto
+        # en posición/proximidad iguales. Usado para suprimir alertas repetidas
+        # cuando el usuario está parado frente al mismo obstáculo.
+        # Clave: name_es, Valor: (position, proximity, frames_count)
+        self._stable_state: Dict[str, Tuple[str, str, int]] = {}
+        # Fingerprint de la escena: conjunto de (nombre, proximidad) ordenados.
+        # Si el fingerprint no cambia varios frames, el usuario está parado y
+        # ya escuchó la advertencia — supresión completa de TTS.
+        self._last_scene_fingerprint: str = ""
+        self._scene_unchanged_frames: int = 0
 
     # ====================================================================
     # PIPELINE PRINCIPAL
@@ -490,6 +520,32 @@ class NavigationGuidanceService:
         priority = self._score_to_priority(max_score)
         has_danger = priority in ("critical", "high")
 
+        # --- PASO 5a: Detectar estabilidad de la escena (modelo Waze) ---
+        # Fingerprint: conjunto ordenado de (nombre, posición, proximidad) de
+        # los obstáculos mencionables. Si el fingerprint no cambia ≥3 frames,
+        # el usuario está parado y ya conoce la escena → suprimir TTS.
+        # En cuanto un obstáculo aparece, desaparece, o cambia de zona, el
+        # fingerprint cambia y la voz vuelve a hablar (con la nueva info).
+        mentionable_for_fingerprint = [
+            a for a in analyzed
+            if a["proximity"] in ("muy_cerca", "cerca")
+            or a["movement"] == "acercandose"
+        ]
+        fingerprint_items = sorted(
+            f"{a['name_es']}|{a['position']}|{a['proximity']}"
+            for a in mentionable_for_fingerprint
+        )
+        fingerprint = "::".join(fingerprint_items)
+
+        if fingerprint == self._last_scene_fingerprint and fingerprint:
+            self._scene_unchanged_frames += 1
+        else:
+            self._scene_unchanged_frames = 0
+            self._last_scene_fingerprint = fingerprint
+
+        # 3 frames a ~3fps ≈ 1 segundo de inmovilidad
+        scene_stable = self._scene_unchanged_frames >= 3
+
         # --- PASO 5b: Determinar tipo de alerta visual ---
         # "peligro"  → objeto intrínsecamente peligroso (vehículo, escalera, balcón,
         #              estufa...) sin importar posición ni distancia.
@@ -527,6 +583,7 @@ class NavigationGuidanceService:
             "has_danger": has_danger,
             "priority": priority,
             "alert_type": alert_type,
+            "scene_stable": scene_stable,
             "obstacle_details": [
                 {
                     "name": a["name_es"],
@@ -562,6 +619,28 @@ class NavigationGuidanceService:
                 logger.debug(f"[Nav/Filter] '{obj.name_es}' en lista negra → ignorado")
                 continue
 
+            # Criterio 0.5: descartar reflejos del usuario.
+            # Si una "persona" cubre >45% del frame y está centrada, casi seguro
+            # es el reflejo del usuario en un espejo o la propia mano/cuerpo
+            # frente al lente. Avisar de "persona muy cerca" en estos casos
+            # confunde al usuario sobre obstáculos reales.
+            if (
+                obj.name_es in {"persona", "niño"}
+                and obj.bounding_box
+                and img_area > 0
+            ):
+                bbox = obj.bounding_box
+                bbox_area = (bbox.x_max - bbox.x_min) * (bbox.y_max - bbox.y_min)
+                area_ratio = bbox_area / img_area
+                cx = (bbox.x_min + bbox.x_max) / 2
+                centered = abs(cx / img_width - 0.5) < 0.2 if img_width > 0 else False
+                if area_ratio > 0.45 and centered:
+                    logger.debug(
+                        f"[Nav/Filter] '{obj.name_es}' descartado: probable reflejo "
+                        f"(área={area_ratio:.0%}, centrada)"
+                    )
+                    continue
+
             # Criterio 1: clase relevante para caminata
             if obj.name_es not in PEDESTRIAN_RELEVANT_CLASSES:
                 continue
@@ -581,14 +660,23 @@ class NavigationGuidanceService:
                 )
                 continue
 
-            # Criterio 3: área mínima del bounding box
+            # Criterio 3: área mínima del bounding box.
+            # Críticos (vehículos, personas, animales grandes) usan umbral más
+            # bajo porque importan aunque estén lejos. El resto debe ocupar al
+            # menos 1% del frame para evitar reportar texturas/sombras como
+            # obstáculos diminutos (caja de cartón, mochila confundidas).
             if obj.bounding_box and img_area > 0:
                 bbox = obj.bounding_box
                 bbox_area = (bbox.x_max - bbox.x_min) * (bbox.y_max - bbox.y_min)
-                if bbox_area / img_area < MIN_BBOX_AREA_FRACTION:
+                min_area = (
+                    MIN_BBOX_AREA_FRACTION_CRITICAL
+                    if obj.name_es in CRITICAL_OBJECTS
+                    else MIN_BBOX_AREA_FRACTION
+                )
+                if bbox_area / img_area < min_area:
                     logger.debug(
                         f"[Nav/Filter] '{obj.name_es}' descartado por bbox diminuto "
-                        f"({bbox_area/img_area*100:.2f}% < {MIN_BBOX_AREA_FRACTION*100}%)"
+                        f"({bbox_area/img_area*100:.2f}% < {min_area*100}%)"
                     )
                     continue
 
@@ -619,17 +707,17 @@ class NavigationGuidanceService:
         """
         Posición horizontal del objeto respecto al usuario.
 
-        Divide la imagen en 3 columnas:
-          - Izquierda: 0-33%
-          - Frente: 33-66%
-          - Derecha: 66-100%
+        Cono de atención estrecho: solo el 30% central (35%-65%) cuenta
+        como "frente a ti". Antes era 28%-72% (44% del ancho), lo que
+        provocaba alertas innecesarias por objetos casi laterales que
+        en realidad no estaban en el camino del usuario.
         """
         center_x = (bbox.x_min + bbox.x_max) / 2
         ratio = center_x / img_width if img_width > 0 else 0.5
 
-        if ratio < 0.28:
+        if ratio < 0.35:
             return "a tu izquierda"
-        elif ratio > 0.72:
+        elif ratio > 0.65:
             return "a tu derecha"
         else:
             return "frente a ti"
@@ -812,15 +900,20 @@ class NavigationGuidanceService:
         directional_depth: Optional[Dict[str, float]] = None,
     ) -> str:
         """
-        Genera instrucción combinada frente + lateral(es) en una sola frase.
-        Cuando hay profundidad direccional disponible, añade orientación del
-        camino más libre ("El paso más libre está a tu izquierda/derecha").
+        Genera instrucción tipo Waze: identifica varios obstáculos pero
+        siempre termina con UNA sugerencia de acción.
 
         Formato:
-          - Obstáculo al frente + laterales → "Atención: silla al frente, cama a la izquierda y mesa a la derecha."
-          - Solo frente bloqueado           → "Atención: silla muy cerca al frente. El paso más libre está a tu derecha."
-          - Frente libre + lateral notable  → "Cama a tu derecha, el camino al frente está libre."
-          - Nada relevante                  → "Camino libre."
+          - Frente bloqueado + lado libre claro:
+              "Silla y mesa al frente. Muévete a la izquierda."
+          - Frente bloqueado sin escapatoria (ambos lados ocupados):
+              "Silla y mesa al frente. Detente."
+          - Solo laterales (frente libre):
+              "Mesa a tu derecha. Al frente está libre."
+          - Peligro intrínseco al frente (carro, escaleras, vidrio):
+              "¡Cuidado! Carro al frente. Detente."
+          - Nada relevante:
+              "Camino libre."
         """
         if not analyzed:
             return "Camino libre."
@@ -841,64 +934,75 @@ class NavigationGuidanceService:
         if not mentionable:
             return "Camino libre."
 
-        # Separar frente y laterales
+        # Separar por posición
         front_obs = [a for a in mentionable if a["position"] == "frente a ti"]
-        lateral_obs = [
-            a for a in mentionable
-            if a["position"] != "frente a ti"
-            and (a["proximity"] in ("muy_cerca", "cerca") or a["movement"] == "acercandose")
-        ]
+        left_obs = [a for a in mentionable if a["position"] == "a tu izquierda"]
+        right_obs = [a for a in mentionable if a["position"] == "a tu derecha"]
 
-        # --- Parte del frente ---
-        if front_obs:
-            top = front_obs[0]
-            if top["proximity"] == "lejos":
-                name_cap = top["name_es"].capitalize()
-                if top["name_es"] in PELIGRO_CLASSES:
-                    front_phrase = f"¡Cuidado! {name_cap} al frente"
-                else:
-                    front_phrase = f"Atención: {name_cap} al frente"
-            else:
-                front_phrase = self._build_phrase(
-                    top["name_es"], top["position"], top["proximity"],
-                    top["movement"], top["height_zone"], top["risk_score"],
-                )
-            front_phrase = front_phrase.rstrip(".")
-        else:
-            front_phrase = "Camino libre al frente"
-
-        # --- Parte lateral (hasta 2 objetos en escenas densas) ---
-        lateral_parts = []
-        max_laterals = 2 if len(mentionable) >= 3 else 1
-        for obs in lateral_obs[:max_laterals]:
-            lat = self._build_phrase(
-                obs["name_es"], obs["position"], obs["proximity"],
-                obs["movement"], obs["height_zone"], obs["risk_score"],
-            ).rstrip(".")
-            if lat:
-                lateral_parts.append(lat[0].lower() + lat[1:])
-
-        lateral_phrase = " y ".join(lateral_parts)
-
-        # --- Orientación del camino libre (profundidad direccional) ---
-        free_side_hint = ""
-        if directional_depth and front_obs:
+        # --- Decidir lado libre ---
+        free_side = None
+        if directional_depth:
             left_load = directional_depth.get("izquierda", 0.5)
             right_load = directional_depth.get("derecha", 0.5)
-            diff = abs(left_load - right_load)
-            if diff >= 0.15:
-                # Menor carga = más espacio libre
+            if abs(left_load - right_load) >= 0.15:
                 free_side = "izquierda" if left_load < right_load else "derecha"
-                free_side_hint = f" El paso más libre está a tu {free_side}."
 
-        # --- Combinar ---
-        if front_obs and lateral_phrase:
-            return f"{front_phrase}, {lateral_phrase}.{free_side_hint}"
-        elif not front_obs and lateral_phrase:
-            lat_cap = lateral_phrase[0].upper() + lateral_phrase[1:]
-            return f"{lat_cap}, el camino al frente está libre."
-        elif front_phrase:
-            return front_phrase + "." + free_side_hint
+        if free_side is None:
+            left_blocked = any(a["proximity"] in ("muy_cerca", "cerca") for a in left_obs)
+            right_blocked = any(a["proximity"] in ("muy_cerca", "cerca") for a in right_obs)
+            if left_blocked and not right_blocked:
+                free_side = "derecha"
+            elif right_blocked and not left_blocked:
+                free_side = "izquierda"
+            elif not left_blocked and not right_blocked:
+                # Ningún lateral bloqueado: cualquiera sirve, prefiere derecha
+                free_side = "derecha"
+
+        # --- Caso 1: hay obstáculo(s) al frente ---
+        if front_obs:
+            # Hasta 2 nombres distintos al frente, evitando duplicados
+            seen = set()
+            front_names = []
+            for f in front_obs:
+                n = f["name_es"]
+                if n not in seen:
+                    front_names.append(n)
+                    seen.add(n)
+                if len(front_names) == 2:
+                    break
+
+            # ¿Hay clase intrínseca de peligro al frente?
+            has_danger = any(f["name_es"] in PELIGRO_CLASSES for f in front_obs[:2])
+            prefix = "¡Cuidado! " if has_danger else ""
+
+            if len(front_names) == 1:
+                obj_phrase = front_names[0].capitalize()
+            else:
+                obj_phrase = f"{front_names[0].capitalize()} y {front_names[1]}"
+
+            # Decidir acción
+            if free_side:
+                action = f"Muévete a la {free_side}"
+            else:
+                # Ambos lados bloqueados o sin info → detener
+                action = "Detente"
+
+            return f"{prefix}{obj_phrase} al frente. {action}."
+
+        # --- Caso 2: frente libre, hay laterales notables ---
+        # Mencionar el lateral más cercano y confirmar frente libre
+        all_laterals = sorted(
+            left_obs + right_obs,
+            key=lambda a: 0 if a["proximity"] == "muy_cerca" else 1
+        )
+        if all_laterals:
+            lat = all_laterals[0]
+            lat_phrase = self._build_phrase(
+                lat["name_es"], lat["position"], lat["proximity"],
+                lat["movement"], lat["height_zone"], lat["risk_score"],
+            ).rstrip(".")
+            return f"{lat_phrase}. Al frente está libre."
+
         return "Camino libre."
 
     @staticmethod
@@ -911,74 +1015,53 @@ class NavigationGuidanceService:
         score: float,
     ) -> str:
         """
-        Construye una frase individual de alerta.
+        Construye una frase individual de alerta — versión concisa.
 
-        Formato según nivel de peligro:
-          - Critical: "Cuidado: [objeto] [movimiento] [posición]"
-          - High: "Atención: [objeto] [proximidad] [posición]"
-          - Medium: "[objeto] [proximidad] [posición]"
+        Diseño: en navegación cada palabra cuenta. Frases largas como
+        "Atención: Cama muy cerca frente a ti a nivel del suelo." (12 palabras)
+        se sustituyen por "Cama al frente." (3 palabras). El nivel de peligro
+        ya viaja en `priority` y la móvil lo refleja con vibración / cadencia.
 
-        Args:
-            name: Nombre del objeto
-            position: "a tu izquierda", "frente a ti", "a tu derecha"
-            proximity: "muy_cerca", "cerca", "lejos"
-            movement: "acercandose", "alejandose", "estatico"
-            height: "suelo", "cuerpo", "cabeza"
-            score: Score de riesgo
+        Solo se mantiene "¡Cuidado!" para PELIGRO_CLASSES intrínsecas
+        (vehículos, escaleras, balcones, vidrio…) porque sí necesitan
+        prefijo de alarma para reaccionar inmediatamente.
 
-        Returns:
-            Frase de alerta o string vacío si no merece mención
+        Altura solo se menciona cuando es relevante para no chocar
+        ("a nivel de la cabeza" sí, "a nivel del suelo" no — es lo normal
+        de un mueble).
         """
         name_cap = name.capitalize()
-        prox_label = PROXIMITY_LABELS.get(proximity, proximity)
         is_front = position == "frente a ti"
+        is_danger_class = name in PELIGRO_CLASSES
 
-        # ── Objetos que merecen "¡Cuidado!" — usa PELIGRO_CLASSES (fuente única) ──
-        _CUIDADO_CLASSES = PELIGRO_CLASSES
+        # Posición concisa: "frente a ti" → "al frente"
+        pos_short = "al frente" if is_front else position
 
-        # ── Objetos que merecen "Precaución" (solo al frente) ────────────────
-        _PRECAUCION_CLASSES = {
-            "persona", "niño", "bebé", "persona en silla de ruedas",
-            "perro", "caballo", "vaca", "cerdo", "burro",
-            "mesa", "silla", "sofá", "cama", "escritorio",
-            "mesa de comedor", "mostrador", "banco",
-            "carrito de compras", "cochecito de bebé", "silla de ruedas",
-            "pared", "pared de ladrillo", "pared de vidrio", "pilar", "columna",
-            "andamio", "barrera vial", "contenedor de basura",
-            "estufa", "horno", "refrigerador",
-        }
+        # Altura solo se menciona si es a nivel de cabeza (peligro de golpe)
+        height_info = " a nivel de la cabeza" if height == "cabeza" else ""
 
-        # Objeto acercándose: alerta solo si viene al frente
+        # Objeto acercándose: caso más urgente
         if movement == "acercandose":
+            if is_danger_class and is_front:
+                return f"¡Cuidado! {name_cap} se acerca."
             if is_front:
-                if name in _CUIDADO_CLASSES:
-                    return f"¡Cuidado! {name_cap} se acerca {position}"
-                return f"Atención: {name_cap} se acerca {position}"
-            # Lateral acercándose: informativo sin prefijo
-            return f"{name_cap} se acerca {position}"
+                return f"{name_cap} se acerca."
+            return f"{name_cap} se acerca {position}."
 
         # Objeto muy cerca
         if proximity == "muy_cerca":
-            height_info = ""
-            if height == "suelo":
-                height_info = " a nivel del suelo"
-            elif height == "cabeza":
-                height_info = " a nivel de la cabeza"
-
+            if is_danger_class and is_front:
+                return f"¡Cuidado! {name_cap} {pos_short}{height_info}."
             if is_front:
-                # Al frente: usar prefijo según peligro
-                if name in _CUIDADO_CLASSES:
-                    return f"¡Cuidado! {name_cap} {prox_label} {position}{height_info}"
-                if name in _PRECAUCION_CLASSES:
-                    return f"Atención: {name_cap} {prox_label} {position}{height_info}"
-                return f"{name_cap} {prox_label} {position}{height_info}"
-            else:
-                # Lateral muy cerca: solo informativo, sin prefijo
-                return f"{name_cap} {prox_label} {position}{height_info}"
+                return f"{name_cap} {pos_short}{height_info}."
+            # Lateral muy cerca: informativo, sin prefijo
+            return f"{name_cap} {position}{height_info}."
 
-        # Objeto a unos metros: solo informativo sin prefijo (frente o lateral)
+        # Objeto a unos metros: informativo, frase corta
         if proximity == "cerca":
-            return f"{name_cap} {prox_label} {position}"
+            if is_front:
+                return f"{name_cap} {pos_short}."
+            return f"{name_cap} {position}."
 
         return ""
 
@@ -996,12 +1079,16 @@ class NavigationGuidanceService:
             "has_danger": False,
             "priority": "none",
             "alert_type": None,
+            "scene_stable": False,
             "obstacle_details": [],
         }
 
     def reset_movement_state(self) -> None:
         """Reinicia el estado de movimiento (nueva sesión o reset)."""
         self._previous_bboxes.clear()
+        self._stable_state.clear()
+        self._last_scene_fingerprint = ""
+        self._scene_unchanged_frames = 0
         self._frame_count = 0
 
 

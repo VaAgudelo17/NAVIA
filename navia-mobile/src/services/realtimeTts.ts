@@ -25,6 +25,8 @@ interface GuidanceData {
   has_danger: boolean;
   priority: string;
   path_clear: boolean;
+  /** El backend marcó la escena como estable (mismo objeto en misma posición ≥5 frames). */
+  scene_stable?: boolean;
 }
 
 // Tiempo mínimo sin peligro antes de decir "camino libre" (ms)
@@ -33,6 +35,14 @@ const SAFE_CONFIRMATION_DELAY = 3000;
 const MIN_INTERRUPT_INTERVAL = 1500;
 // Cooldown por obstáculo único: no repetir advertencia del mismo obstáculo/posición
 const OBSTACLE_REPEAT_COOLDOWN = 6000;
+// Cooldown extendido cuando la escena está estable (usuario parado): 18s
+const STABLE_SCENE_COOLDOWN = 18000;
+// Cada cuánto reasegurar al usuario "camino libre" si todo está OK (ms)
+const REASSURANCE_INTERVAL = 12000;
+// Mínimo absoluto entre cualquier dos TTS no-críticos. Garantiza que el
+// usuario tenga tiempo de oír y procesar cada frase antes de que llegue otra.
+// Solo CRITICAL puede saltar este límite (peligro inmediato).
+const MIN_GLOBAL_TTS_INTERVAL = 4500;
 
 export class RealtimeTtsManager {
   private lastSpeakTime = 0;
@@ -45,6 +55,7 @@ export class RealtimeTtsManager {
   private lastHighDangerSpeak = 0; // cooldown global para HIGH: evita que cambios de
                                    // posición (frente↔lateral) re-disparen el TTS
   private obstacleLastSpokenAt: Record<string, number> = {};  // guidance_key → timestamp
+  private lastReassurance = 0;     // última vez que se reaseguró "camino libre"
 
   setMode(mode: NaviaMode): void {
     this.mode = mode;
@@ -99,16 +110,58 @@ export class RealtimeTtsManager {
       return;
     }
 
+    // Reassurance periódica: cada 12s sin nada relevante, decir "Camino libre"
+    // para que el usuario sepa que la app sigue activa. Sin esto, si camina por
+    // un pasillo abierto durante 30s sin obstáculos, no oye nada y duda si el
+    // sistema funciona.
+    if (
+      isCaminoLibre &&
+      !ttsManager.isSpeaking() &&
+      (now - this.lastSpeakTime) >= REASSURANCE_INTERVAL &&
+      (now - this.lastReassurance) >= REASSURANCE_INTERVAL
+    ) {
+      this.lastReassurance = now;
+      this.lastSpeakTime = now;
+      ttsManager.speak('Camino libre.', TtsPriority.LOW);
+      return;
+    }
+
     // Cooldown por guidance_key — aplica a TODAS las instrucciones (peligrosas o no).
     // Evita que fluctuaciones de zona (cerca↔muy_cerca) o cambios menores en la frase
     // combinada ("camino libre + lateral") re-disparen el TTS del mismo obstáculo.
     // No aplica a CRITICAL (siempre interrumpe).
+    //
+    // Si el backend marca scene_stable=true (usuario parado, mismo obstáculo
+    // varios frames), extender el cooldown a 18s para no spamearle "cama al
+    // frente" cada 6 segundos. Si el usuario se mueve o el objeto cambia de
+    // zona, scene_stable vuelve a false y el cooldown estándar aplica.
+    const cooldownMs = guidanceData?.scene_stable
+      ? STABLE_SCENE_COOLDOWN
+      : OBSTACLE_REPEAT_COOLDOWN;
     const isObstacleCooldownActive = (
       guidanceKey &&
       guidanceData?.priority !== 'critical' &&
-      (now - (this.obstacleLastSpokenAt[guidanceKey] ?? 0)) < OBSTACLE_REPEAT_COOLDOWN
+      (now - (this.obstacleLastSpokenAt[guidanceKey] ?? 0)) < cooldownMs
     );
     if (isObstacleCooldownActive) return;
+
+    // Cooldown GLOBAL: ningún TTS no-crítico dentro de los 4.5s del anterior.
+    // CRITICAL salta este límite (peligro inmediato).
+    const isCritical = guidanceData?.has_danger && guidanceData.priority === 'critical';
+    if (!isCritical && (now - this.lastSpeakTime) < MIN_GLOBAL_TTS_INTERVAL) {
+      return;
+    }
+
+    // ESCENA ESTABLE (modelo Waze): el backend marca scene_stable=true cuando
+    // el conjunto de obstáculos lleva varios frames idéntico (usuario parado
+    // o caminando muy lento sin que cambie nada). En ese caso suprimimos
+    // completamente el TTS — el usuario YA escuchó la advertencia y repetirla
+    // solo confunde. La voz vuelve cuando aparezca un nuevo obstáculo o
+    // alguno cambie de proximidad/zona, porque el fingerprint cambia y
+    // scene_stable vuelve a false.
+    if (!isCritical && guidanceData?.scene_stable) {
+      return;
+    }
 
     // Peligro critical: interrumpir speech actual (siempre, sin cooldown)
     if (guidanceData?.has_danger && guidanceData.priority === 'critical') {
@@ -189,6 +242,7 @@ export class RealtimeTtsManager {
     this.lastDangerTime = 0;
     this.lastInterruptTime = 0;
     this.lastHighDangerSpeak = 0;
+    this.lastReassurance = 0;
     this.obstacleLastSpokenAt = {};
   }
 }

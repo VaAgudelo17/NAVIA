@@ -101,6 +101,7 @@ export function useRealtimeDetection({
             has_danger: data.has_danger ?? false,
             priority: data.priority ?? 'none',
             path_clear: data.path_clear ?? true,
+            scene_stable: (data as any).scene_stable ?? false,
           },
           data.guidance_key,
         );

@@ -37,9 +37,29 @@ function normalizeForTts(text: string): string {
     .replace(/\babriendo\b/gi, 'iniciando')
     .replace(/\bcargando\b/gi, 'iniciando')
     .replace(/\briesgo\b/gi, 'peligro')
-    // Abreviaturas comunes
+    // Abreviaturas técnicas
     .replace(/\bIA\b/g, 'inteligencia artificial')
-    .replace(/\bOCR\b/g, 'reconocimiento de texto')
+    .replace(/\bOCR\b/g, 'reconocimiento óptico de texto')
+    // Meses abreviados en español (formato corto de toLocaleDateString)
+    .replace(/\bene\.?(?=\s|,|$)/gi, 'enero')
+    .replace(/\bfeb\.?(?=\s|,|$)/gi, 'febrero')
+    .replace(/\bmar\.?(?=\s|,|$)/gi, 'marzo')
+    .replace(/\babr\.?(?=\s|,|$)/gi, 'abril')
+    .replace(/\bmay\.?(?=\s|,|$)/gi, 'mayo')
+    .replace(/\bjun\.?(?=\s|,|$)/gi, 'junio')
+    .replace(/\bjul\.?(?=\s|,|$)/gi, 'julio')
+    .replace(/\bago\.?(?=\s|,|$)/gi, 'agosto')
+    .replace(/\bsept?\.?(?=\s|,|$)/gi, 'septiembre')
+    .replace(/\boct\.?(?=\s|,|$)/gi, 'octubre')
+    .replace(/\bnov\.?(?=\s|,|$)/gi, 'noviembre')
+    .replace(/\bdic\.?(?=\s|,|$)/gi, 'diciembre')
+    // Unidades de tiempo / cantidad
+    .replace(/(\d+(?:[.,]\d+)?)\s*ms\b/gi, '$1 milisegundos')
+    .replace(/(\d+(?:[.,]\d+)?)\s*min\b/gi, '$1 minutos')
+    .replace(/(\d+(?:[.,]\d+)?)\s*seg\b/gi, '$1 segundos')
+    .replace(/(\d+(?:[.,]\d+)?)\s*hr?s?\b/gi, '$1 horas')
+    // Porcentajes: "85%" → "85 por ciento"
+    .replace(/(\d+(?:[.,]\d+)?)\s*%/g, '$1 por ciento')
     // Limpiar espacios múltiples
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
@@ -61,6 +81,25 @@ class TtsManager {
   private enabled = true;
   private currentSound: Audio.Sound | null = null;
   private currentFetchController: AbortController | null = null;
+  // Promesa que resuelve cuando el sonido anterior termina de detenerse/descargarse.
+  // speakNow la espera antes de reproducir uno nuevo para evitar doble voz.
+  private stopPromise: Promise<void> | null = null;
+  // Listeners para que la UI pueda reaccionar a cambios del estado de habla
+  // (ej. animación de onda de voz que solo se muestra mientras suena el TTS).
+  private speakingListeners: Set<(speaking: boolean) => void> = new Set();
+
+  /** Setter que actualiza el estado y notifica listeners. */
+  private setSpeakingState(v: boolean): void {
+    if (this.speaking === v) return;
+    this.speaking = v;
+    this.speakingListeners.forEach((cb) => { try { cb(v); } catch { /**/ } });
+  }
+
+  /** Suscribirse a cambios del estado de habla. Devuelve una función de cleanup. */
+  onSpeakingChange(callback: (speaking: boolean) => void): () => void {
+    this.speakingListeners.add(callback);
+    return () => { this.speakingListeners.delete(callback); };
+  }
 
   private constructor() {
     this.initAudio();
@@ -103,12 +142,15 @@ class TtsManager {
     this.queue = [];
     this.currentFetchController?.abort();
     this.currentFetchController = null;
-    if (this.currentSound) {
-      this.currentSound.stopAsync().catch(() => {});
-      this.currentSound.unloadAsync().catch(() => {});
-      this.currentSound = null;
+    const sound = this.currentSound;
+    this.currentSound = null;
+    this.setSpeakingState(false);
+    if (sound) {
+      this.stopPromise = (async () => {
+        try { await sound.stopAsync(); } catch { /**/ }
+        try { await sound.unloadAsync(); } catch { /**/ }
+      })();
     }
-    this.speaking = false;
   }
 
   isSpeaking(): boolean { return this.speaking; }
@@ -118,9 +160,9 @@ class TtsManager {
   private enqueue(text: string, priority: TtsPriority, reading: boolean): void {
     if (priority === TtsPriority.INTERRUPT) {
       this.stop();
-      this.speaking = true;
+      this.setSpeakingState(true);
       this.speakNow(text, reading, priority).finally(() => {
-        this.speaking = false;
+        this.setSpeakingState(false);
         this.processQueue();
       });
       return;
@@ -136,14 +178,22 @@ class TtsManager {
     if (this.speaking || this.queue.length === 0) return;
     this.queue.sort((a, b) => a.priority - b.priority);
     const item = this.queue.shift()!;
-    this.speaking = true;
+    this.setSpeakingState(true);
     this.speakNow(item.text, item.reading, item.priority).finally(() => {
-      this.speaking = false;
+      this.setSpeakingState(false);
       this.processQueue();
     });
   }
 
   private async speakNow(text: string, _reading: boolean, _priority: TtsPriority): Promise<void> {
+    // Esperar a que cualquier sonido anterior termine de detenerse antes de
+    // empezar uno nuevo. Sin esto, dos voces se solapan brevemente.
+    if (this.stopPromise) {
+      const p = this.stopPromise;
+      this.stopPromise = null;
+      try { await p; } catch { /**/ }
+    }
+
     // 1. Buscar en caché — reproduce Piper al instante si está guardado
     try {
       const cached = await ttsCache.get(text);
@@ -175,10 +225,14 @@ class TtsManager {
 
     await new Promise<void>((resolve) => {
       sound.setOnPlaybackStatusUpdate((status) => {
-        if (!status.isLoaded) return;
+        // Si stop() descargó el sonido, también resolver para no dejar el await colgado.
+        if (!status.isLoaded) {
+          resolve();
+          return;
+        }
         if (status.didJustFinish) {
           sound.unloadAsync().catch(() => {});
-          this.currentSound = null;
+          if (this.currentSound === sound) this.currentSound = null;
           resolve();
         }
       });

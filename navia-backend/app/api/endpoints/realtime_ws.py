@@ -281,13 +281,16 @@ async def realtime_detection(websocket: WebSocket):
                                 f"{guidance['instruction']}"
                             )
 
-                    # Clave única por obstáculo sin incluir proximidad.
-                    # Evita que cambios de zona (cerca↔muy_cerca) re-disparen el TTS.
+                    # Clave estable: solo nombre del objeto top, sin posición ni
+                    # proximidad. Si entre frames el ranking cambia (silla→mesa
+                    # →escritorio en una habitación llena), antes la guidance_key
+                    # cambiaba y el cooldown se reseteaba, generando spam de TTS.
+                    # Ahora el cooldown aplica por "objeto principal de la escena".
                     top_obs = (guidance.get("obstacle_details") or [{}])[0]
                     if guidance.get("_wall_key"):
                         guidance_key = guidance["_wall_key"]
                     elif top_obs.get("name"):
-                        guidance_key = f"{top_obs['name']}:{top_obs['position']}"
+                        guidance_key = top_obs["name"]
                     else:
                         guidance_key = ""
 
@@ -309,6 +312,7 @@ async def realtime_detection(websocket: WebSocket):
                         "obstacle_details": guidance["obstacle_details"],
                         "guidance_key": guidance_key,
                         "alert_type": guidance.get("alert_type"),
+                        "scene_stable": guidance.get("scene_stable", False),
                     }
 
                     await websocket.send_json(response)

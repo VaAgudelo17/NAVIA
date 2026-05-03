@@ -11,7 +11,7 @@
  * feedback de audio para usuarios ciegos.
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -31,7 +31,9 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Button } from '../components/Button';
 import { AnimatedEye } from '../components/AnimatedEye';
-import { COLORS, ANALYSIS_MODES, REALTIME_MODES, AnalysisMode } from '../constants/config';
+import { VoiceWave } from '../components/VoiceWave';
+import { ANALYSIS_MODES, REALTIME_MODES, AnalysisMode } from '../constants/config';
+import { ThemeColors } from '../constants/themes';
 import {
   analyzeNavigation,
   analyzeExploration,
@@ -54,10 +56,201 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 type AppState = 'home' | 'camera' | 'processing' | 'results' | 'error' | 'realtime' | 'history';
 
+// ============================================================================
+// NARRATIVAS DEL DETALLE DEL HISTORIAL
+// ----------------------------------------------------------------------------
+// El detalle se divide en secciones que el usuario puede tocar para escuchar
+// cada parte por separado. Esto evita que la voz junte todo y confunda.
+// Cada función devuelve una frase corta enfocada en SU sección.
+// ============================================================================
+
+const HISTORY_MODE_LABELS: Record<string, string> = {
+  navegacion: 'Navegación',
+  exploracion: 'Exploración',
+  lectura: 'Lectura',
+};
+
+/** Resumen corto (1-2 frases) leído al abrir y al tocar la card "Resumen". */
+function buildShortSummary(item: HistoryEntry): string {
+  const data = (item.resultData || {}) as any;
+  if (item.mode === 'navegacion') {
+    const obstacleCounts = (data.topObstacles ?? data.obstacle_counts) as Record<string, number> | undefined;
+    const dangers = data.dangerCount ?? data.danger_count;
+    const unique = obstacleCounts ? Object.keys(obstacleCounts).length : 0;
+    if (unique > 0 && dangers !== undefined) {
+      return `Sesión de navegación con ${unique} tipos de obstáculos detectados y ${dangers} alertas de peligro.`;
+    }
+    return 'Sesión de navegación.';
+  }
+  if (item.mode === 'exploracion') {
+    const objCount = data.object_count;
+    const objects = data.objects as any[] | undefined;
+    if (objCount !== undefined && objects && objects.length) {
+      const avg = objects.reduce((s, o) => s + (o.confidence || 0), 0) / objects.length;
+      return `Análisis del entorno con ${objCount} objetos detectados a ${(avg * 100).toFixed(0)} por ciento de confianza promedio.`;
+    }
+    return 'Análisis del entorno.';
+  }
+  if (item.mode === 'lectura') {
+    const docType = data.document_type;
+    const confidence = data.confidence;
+    const c = typeof confidence === 'number' ? confidence : Number(confidence);
+    const pct = c <= 1 ? c * 100 : c;
+    if (docType && !isNaN(pct)) {
+      return `Lectura de un documento tipo ${docType} con ${pct.toFixed(0)} por ciento de exactitud.`;
+    }
+    if (docType) return `Lectura de un documento tipo ${docType}.`;
+    return 'Lectura de un documento.';
+  }
+  return item.resultSummary || 'Sin resumen.';
+}
+
+/** Narrativa de la card SESIÓN (fecha, hora, duración). */
+function buildSessionSpeech(item: HistoryEntry): string {
+  const date = new Date(item.createdAt);
+  const dateLong = date.toLocaleDateString('es-ES', {
+    day: 'numeric', month: 'long', year: 'numeric',
+  });
+  const hour = date.getHours();
+  const minute = date.getMinutes();
+  const horaTxt = `${hour} y ${minute < 10 ? '0' + minute : minute} minutos`;
+
+  const parts: string[] = [];
+  parts.push(`Sesión del ${dateLong} a las ${horaTxt}.`);
+
+  if (item.mode === 'navegacion') {
+    const data = (item.resultData || {}) as any;
+    const durationSec = data.durationSeconds ?? data.session_duration_seconds;
+    if (durationSec !== undefined) {
+      const min = Number(durationSec) / 60;
+      if (min < 1) {
+        parts.push(`Duración: ${Math.round(Number(durationSec))} segundos.`);
+      } else {
+        parts.push(`Duración: ${min.toFixed(1)} minutos.`);
+      }
+    }
+  }
+  return parts.join(' ');
+}
+
+/** Narrativa de la card ESTADÍSTICAS (datos específicos del modo). */
+function buildStatsSpeech(item: HistoryEntry): string {
+  const data = (item.resultData || {}) as any;
+  const parts: string[] = [];
+
+  if (item.mode === 'navegacion') {
+    const frames = data.framesProcessed ?? data.frames_processed;
+    const dangers = data.dangerCount ?? data.danger_count;
+    const obstacleCounts = (data.topObstacles ?? data.obstacle_counts) as Record<string, number> | undefined;
+    if (frames !== undefined) parts.push(`${frames} frames procesados.`);
+    if (obstacleCounts) {
+      const total = Object.values(obstacleCounts).reduce((s, n) => s + n, 0);
+      parts.push(`${total} detecciones totales de ${Object.keys(obstacleCounts).length} objetos únicos.`);
+    }
+    if (dangers !== undefined) parts.push(`${dangers} alertas de peligro.`);
+  } else if (item.mode === 'exploracion') {
+    if (data.object_count !== undefined) parts.push(`${data.object_count} objetos detectados.`);
+    parts.push(data.has_text ? 'Se detectó texto en la imagen.' : 'No se detectó texto.');
+  } else if (item.mode === 'lectura') {
+    if (data.document_type) parts.push(`Tipo de documento: ${data.document_type}.`);
+    if (data.word_count !== undefined) parts.push(`${data.word_count} palabras detectadas.`);
+    const source = data.ocr_source || data.source;
+    if (source) parts.push(`Motor usado: ${source}.`);
+  }
+  return parts.join(' ') || 'Sin estadísticas.';
+}
+
+/** Narrativa de la card OBSTÁCULOS MÁS FRECUENTES (solo navegación). */
+function buildObstaclesSpeech(item: HistoryEntry): string {
+  const data = (item.resultData || {}) as any;
+  const obstacleCounts = (data.topObstacles ?? data.obstacle_counts) as Record<string, number> | undefined;
+  if (!obstacleCounts) return 'Sin obstáculos registrados.';
+  const top = Object.entries(obstacleCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([n, c]) => `${n} ${c} veces`)
+    .join(', ');
+  return `Obstáculos más frecuentes: ${top}.`;
+}
+
+/** Narrativa de la card OBJETOS DETECTADOS (solo exploración). */
+function buildObjectsSpeech(item: HistoryEntry): string {
+  const data = (item.resultData || {}) as any;
+  const objects = data.objects as any[] | undefined;
+  if (!objects || objects.length === 0) return 'No se detectaron objetos.';
+  const top = objects
+    .slice(0, 5)
+    .map((o) => {
+      const conf = typeof o.confidence === 'number' ? o.confidence : 0;
+      return `${o.name_es || o.name}, ${(conf * 100).toFixed(0)} por ciento`;
+    })
+    .join('; ');
+  return `Objetos detectados: ${top}.`;
+}
+
+/** Narrativa breve para la card EXACTITUD. */
+function buildAccuracySpeech(pct: number, mode: string): string {
+  const what =
+    mode === 'lectura' ? 'OCR del documento'
+    : mode === 'exploracion' ? 'confianza promedio'
+    : 'detección promedio';
+  return `Exactitud: ${pct.toFixed(0)} por ciento. ${what}.`;
+}
+
+/** Narrativa completa que se reproduce al ABRIR el detalle.
+ *  Lee todas las secciones de corrido y termina invitando al usuario a
+ *  tocar cualquier sección para repetirla. */
+function buildHistoryDetailNarrative(item: HistoryEntry): string {
+  const mode = HISTORY_MODE_LABELS[item.mode] || item.mode;
+  const data = (item.resultData || {}) as any;
+  const objects = data.objects as any[] | undefined;
+
+  const parts: string[] = [];
+  parts.push(`Abriendo detalle de ${mode}.`);
+
+  // Resumen corto
+  parts.push(buildShortSummary(item));
+
+  // Exactitud (si aplica)
+  let accuracyPct: number | null = null;
+  if (item.mode === 'lectura' && data.confidence !== undefined) {
+    const c = typeof data.confidence === 'number' ? data.confidence : Number(data.confidence);
+    accuracyPct = c <= 1 ? c * 100 : c;
+  } else if (item.mode === 'exploracion' && objects && objects.length > 0) {
+    const avg = objects.reduce((s, o) => s + (o.confidence || 0), 0) / objects.length;
+    accuracyPct = avg * 100;
+  }
+  if (accuracyPct !== null) {
+    parts.push(buildAccuracySpeech(accuracyPct, item.mode));
+  }
+
+  // Sesión
+  parts.push(buildSessionSpeech(item));
+
+  // Estadísticas
+  const stats = buildStatsSpeech(item);
+  if (stats && stats !== 'Sin estadísticas.') parts.push(stats);
+
+  // Obstáculos (solo navegación) o objetos (solo exploración)
+  if (item.mode === 'navegacion') {
+    const obstacleCounts = (data.topObstacles ?? data.obstacle_counts) as Record<string, number> | undefined;
+    if (obstacleCounts && Object.keys(obstacleCounts).length > 0) {
+      parts.push(buildObstaclesSpeech(item));
+    }
+  } else if (item.mode === 'exploracion' && objects && objects.length > 0) {
+    parts.push(buildObjectsSpeech(item));
+  }
+
+  // Cierre — invitación a repetir
+  parts.push('Si quieres escuchar una sección de nuevo, tócala.');
+
+  return parts.join(' ');
+}
+
 // Configuración de cada modo
 const MODE_CONFIG: Record<AnalysisMode, { label: string; icon: string; description: string }> = {
   navegacion: { label: 'Navegación', icon: 'compass', description: 'Navegación asistida con detección de riesgo' },
-  exploracion: { label: 'Exploración', icon: 'eye', description: 'Describe el entorno' },
+  exploracion: { label: 'Exploración', icon: 'search', description: 'Describe el entorno' },
   lectura: { label: 'Lectura', icon: 'document-text', description: 'Lee textos' },
 };
 
@@ -77,6 +270,9 @@ export function HomeScreen() {
   const [settingsVisible, setSettingsVisible] = useState(false);
   const C = theme;
   const fs = (size: number) => Math.round(size * fontScale);
+  // Regenera el StyleSheet cuando cambia el tema. Sin esto, los estilos
+  // quedan fijos al tema "normal" porque StyleSheet.create() es estático.
+  const styles = useMemo(() => createStyles(C), [C]);
 
   // Estados principales
   const [appState, setAppState] = useState<AppState>('home');
@@ -94,6 +290,10 @@ export function HomeScreen() {
 
   // Historial local
   const [historyItems, setHistoryItems] = useState<HistoryEntry[]>([]);
+  // Item del historial seleccionado para ver detalle (null = lista)
+  const [selectedHistoryItem, setSelectedHistoryItem] = useState<HistoryEntry | null>(null);
+  // Detección de doble tap por item: guarda último id + timestamp
+  const lastTapRef = useRef<{ id: string; time: number }>({ id: '', time: 0 });
 
   // Cámara
   const [permission, requestPermission] = useCameraPermissions();
@@ -145,6 +345,22 @@ export function HomeScreen() {
       TtsPriority.HIGH,
     );
   }, []);
+
+  // Al abrir el detalle de un item del historial, leer el resumen completo.
+  // El ref evita que Strict Mode (que ejecuta useEffect dos veces en dev)
+  // llame speak() dos veces — eso causaba flicker en el estado speaking
+  // y la animación de la onda no funcionaba bien.
+  const lastSpokenItemRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selectedHistoryItem) {
+      lastSpokenItemRef.current = null;
+      return;
+    }
+    if (lastSpokenItemRef.current === selectedHistoryItem.id) return;
+    lastSpokenItemRef.current = selectedHistoryItem.id;
+    const narrative = buildHistoryDetailNarrative(selectedHistoryItem);
+    if (narrative) ttsManager.speak(narrative, TtsPriority.INTERRUPT);
+  }, [selectedHistoryItem]);
 
   const checkBackendConnection = async () => {
     const maxRetries = 5;
@@ -329,6 +545,7 @@ export function HomeScreen() {
     setExplorationResult(null);
     setSmartResult(null);
     setError(null);
+    setSelectedHistoryItem(null);
   };
 
   // Repetir resultado por TTS
@@ -354,6 +571,8 @@ export function HomeScreen() {
   // ============================================================================
 
   const renderContent = () => {
+    // Si hay item de historial seleccionado, mostrar detalle (sobre cualquier estado).
+    if (selectedHistoryItem) return renderHistoryDetail(selectedHistoryItem);
     switch (appState) {
       case 'camera': return renderCamera();
       case 'realtime': return renderRealtime();
@@ -394,9 +613,9 @@ export function HomeScreen() {
             styles.connectionDot,
             {
               backgroundColor:
-                isBackendConnected === null ? COLORS.warning
-                  : isBackendConnected ? COLORS.success
-                  : COLORS.error,
+                isBackendConnected === null ? C.warning
+                  : isBackendConnected ? C.success
+                  : C.error,
             },
           ]}
         />
@@ -407,6 +626,8 @@ export function HomeScreen() {
         </Text>
       </View>
 
+      {/* Onda de voz: visible mientras el TTS habla */}
+      <VoiceWave color={C.primary} />
 
       {/* Selector de modo - grid 2x2 */}
       <View style={styles.modeSelector}>
@@ -453,14 +674,14 @@ export function HomeScreen() {
         </View>
       </View>
 
-      {/* Botones principales */}
+      {/* Botones principales — estilo pill */}
       <View style={styles.mainButtons}>
         <Button
           title={isRealtimeMode ? 'Iniciar Cámara' : 'Abrir Cámara'}
           onPress={handleOpenCamera}
           size="xl"
           disabled={isBackendConnected === false}
-          icon={<Ionicons name="camera" size={28} color={COLORS.background} />}
+          icon={<Ionicons name="camera" size={28} color={C.background} />}
           style={styles.mainButton}
         />
 
@@ -471,7 +692,7 @@ export function HomeScreen() {
             variant="outline"
             size="large"
             disabled={isBackendConnected === false}
-            icon={<Ionicons name="image" size={24} color={COLORS.primary} />}
+            icon={<Ionicons name="image" size={24} color={C.primary} />}
             style={styles.secondaryButton}
           />
         )}
@@ -484,7 +705,6 @@ export function HomeScreen() {
           ttsManager.stop();
           ttsManager.setEnabled(true);
           if (ttsEnabled) {
-            // Desactivando: hablar primero, luego deshabilitar
             skipTtsSync.current = true;
             ttsManager.speak('Voz desactivada.', TtsPriority.INTERRUPT);
             setTimeout(() => {
@@ -492,7 +712,6 @@ export function HomeScreen() {
               skipTtsSync.current = false;
             }, 4000);
           } else {
-            // Activando: habilitar y hablar
             setTtsEnabled(true);
             ttsManager.speak('Voz activada.', TtsPriority.INTERRUPT);
           }
@@ -540,6 +759,421 @@ export function HomeScreen() {
   };
 
   // Pantalla de Historial
+  // Vista de detalle de un item del historial (doble tap)
+  const renderHistoryDetail = (item: HistoryEntry) => {
+    const modeLabels: Record<string, string> = {
+      navegacion: 'Navegación',
+      exploracion: 'Exploración',
+      lectura: 'Lectura',
+    };
+    const modeIcons: Record<string, string> = {
+      navegacion: 'compass',
+      exploracion: 'search',
+      lectura: 'document-text',
+    };
+
+    const date = new Date(item.createdAt);
+    const dateStr = date.toLocaleDateString('es-ES', {
+      day: 'numeric', month: 'long', year: 'numeric',
+    });
+    const timeStr = date.toLocaleTimeString('es-ES', {
+      hour: '2-digit', minute: '2-digit',
+    });
+
+    const data = (item.resultData || {}) as any;
+    const mode = item.mode;
+    const objects = data.objects as any[] | undefined;
+
+    // ── Calcular exactitud (porcentaje destacado) ─────────────────────────
+    let accuracyPct: number | null = null;
+    if (mode === 'lectura' && data.confidence !== undefined) {
+      const c = typeof data.confidence === 'number' ? data.confidence : Number(data.confidence);
+      accuracyPct = c <= 1 ? c * 100 : c;
+    } else if (mode === 'exploracion' && objects && objects.length > 0) {
+      const avg = objects.reduce((s, o) => s + (o.confidence || 0), 0) / objects.length;
+      accuracyPct = avg * 100;
+    } else if (mode === 'navegacion' && data.avg_confidence !== undefined) {
+      const c = Number(data.avg_confidence);
+      accuracyPct = c <= 1 ? c * 100 : c;
+    }
+
+    // ── Construir secciones de stats por modo ─────────────────────────────
+    interface Stat { icon: string; label: string; value: string }
+    const sessionStats: Stat[] = [
+      { icon: 'calendar-outline', label: 'Fecha', value: dateStr },
+      { icon: 'time-outline', label: 'Hora', value: timeStr },
+    ];
+    const detailStats: Stat[] = [];
+
+    if (mode === 'navegacion') {
+      // claves camelCase (móvil guarda así, ver handleRealtimeSessionEnd)
+      const frames = data.framesProcessed ?? data.frames_processed;
+      const dangers = data.dangerCount ?? data.danger_count;
+      const obstacleCounts =
+        (data.topObstacles ?? data.obstacle_counts) as Record<string, number> | undefined;
+      const durationSec = data.durationSeconds ?? data.session_duration_seconds;
+
+      if (durationSec !== undefined) {
+        const min = Number(durationSec) / 60;
+        sessionStats.push({
+          icon: 'hourglass-outline',
+          label: 'Duración',
+          value: min < 1
+            ? `${Math.round(Number(durationSec))} segundos`
+            : `${min.toFixed(1)} minutos`,
+        });
+      }
+      if (frames !== undefined) {
+        detailStats.push({
+          icon: 'film-outline',
+          label: 'Frames procesados',
+          value: String(frames),
+        });
+        if (durationSec && Number(durationSec) > 0) {
+          const fps = Number(frames) / Number(durationSec);
+          detailStats.push({
+            icon: 'speedometer-outline',
+            label: 'Tasa de análisis',
+            value: `${fps.toFixed(1)} frames / segundo`,
+          });
+        }
+      }
+      if (obstacleCounts) {
+        const total = Object.values(obstacleCounts).reduce((s, n) => s + n, 0);
+        const uniqueObjects = Object.keys(obstacleCounts).length;
+        detailStats.push({
+          icon: 'apps-outline',
+          label: 'Detecciones totales',
+          value: String(total),
+        });
+        detailStats.push({
+          icon: 'cube-outline',
+          label: 'Objetos únicos',
+          value: String(uniqueObjects),
+        });
+      }
+      if (dangers !== undefined) {
+        detailStats.push({
+          icon: 'alert-circle-outline',
+          label: 'Alertas de peligro',
+          value: String(dangers),
+        });
+      }
+    } else if (mode === 'exploracion') {
+      if (data.object_count !== undefined) {
+        detailStats.push({
+          icon: 'cube-outline',
+          label: 'Objetos detectados',
+          value: String(data.object_count),
+        });
+      }
+      detailStats.push({
+        icon: 'reader-outline',
+        label: 'Texto en imagen',
+        value: data.has_text ? 'Sí' : 'No',
+      });
+    } else if (mode === 'lectura') {
+      if (data.document_type) {
+        detailStats.push({
+          icon: 'document-outline',
+          label: 'Tipo de documento',
+          value: String(data.document_type),
+        });
+      }
+      if (data.word_count !== undefined) {
+        detailStats.push({
+          icon: 'text-outline',
+          label: 'Palabras detectadas',
+          value: String(data.word_count),
+        });
+      }
+      const source = data.ocr_source || data.source;
+      if (source) {
+        detailStats.push({
+          icon: 'cog-outline',
+          label: 'Motor usado',
+          value: String(source),
+        });
+      }
+    }
+
+    // ── Top obstáculos (solo navegación) ──────────────────────────────────
+    const obstacleCounts =
+      (data.topObstacles ?? data.obstacle_counts) as Record<string, number> | undefined;
+    const topObstacles = obstacleCounts
+      ? Object.entries(obstacleCounts).sort((a, b) => b[1] - a[1]).slice(0, 6)
+      : [];
+
+    // ── Helper: hacer una card tocable que reproduce su sección ──────────
+    // stop() antes de cada speak garantiza que NUNCA se solapen audios.
+    const speakSection = (narrative: string) => {
+      ttsManager.stop();
+      ttsManager.speak(narrative, TtsPriority.INTERRUPT);
+    };
+
+    // ── Render de fila de stat ────────────────────────────────────────────
+    const renderStatRow = (s: Stat, idx: number, last: boolean) => (
+      <View
+        key={idx}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingVertical: 10,
+          borderBottomWidth: last ? 0 : 1,
+          borderBottomColor: C.border,
+          gap: 12,
+        }}
+      >
+        <Ionicons name={s.icon as any} size={20} color={C.primary} />
+        <Text style={{ flex: 1, color: C.textSecondary, fontSize: fs(14) }}>{s.label}</Text>
+        <Text style={{ color: C.text, fontSize: fs(14), fontWeight: '600' }}>{s.value}</Text>
+      </View>
+    );
+
+    return (
+      <View style={styles.resultsContainer}>
+        <ScrollView contentContainerStyle={styles.resultsContent}>
+          {/* Header */}
+          <View style={styles.historyHeader}>
+            <View style={[styles.statusBadge, { backgroundColor: C.primary + '20' }]}>
+              <Ionicons
+                name={(modeIcons[mode] || 'help-circle') as any}
+                size={16}
+                color={C.primary}
+              />
+              <Text style={[styles.statusBadgeText, { color: C.primary }]}>
+                {modeLabels[mode] || mode}
+              </Text>
+            </View>
+            <Text style={[styles.resultTitle, { color: C.text, fontSize: fs(22), marginTop: 8 }]}>
+              Detalle de la sesión
+            </Text>
+          </View>
+
+          {/* Onda de voz — visible mientras el TTS habla */}
+          <VoiceWave color={C.primary} />
+
+          {/* Card EXACTITUD destacada (con número grande) — tocable */}
+          {accuracyPct !== null && (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => speakSection(buildAccuracySpeech(accuracyPct!, mode))}
+              accessibilityLabel="Exactitud"
+              accessibilityHint="Toca para escuchar"
+              accessibilityRole="button"
+              style={[
+                styles.resultCard,
+                {
+                  backgroundColor: C.primary + '15',
+                  alignItems: 'center',
+                  paddingVertical: 24,
+                },
+              ]}
+            >
+              <Text style={{ color: C.textSecondary, fontSize: fs(13), letterSpacing: 1 }}>
+                EXACTITUD
+              </Text>
+              <Text style={{ color: C.primary, fontSize: fs(56), fontWeight: 'bold', marginTop: 4 }}>
+                {accuracyPct.toFixed(0)}%
+              </Text>
+              <Text style={{ color: C.textSecondary, fontSize: fs(13), marginTop: 4 }}>
+                {mode === 'lectura' ? 'OCR del documento'
+                  : mode === 'exploracion' ? 'confianza promedio'
+                  : 'detección promedio'}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Card RESUMEN (corto, generado localmente, tocable) */}
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => speakSection(buildShortSummary(item))}
+            accessibilityLabel="Resumen"
+            accessibilityHint="Toca para escuchar el resumen"
+            accessibilityRole="button"
+            style={[styles.resultCard, { backgroundColor: C.surface }]}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <Ionicons name="document-text-outline" size={18} color={C.primary} />
+              <Text style={{ color: C.textSecondary, fontSize: fs(13), fontWeight: '700', letterSpacing: 1 }}>
+                RESUMEN
+              </Text>
+              <View style={{ flex: 1 }} />
+              <Ionicons name="volume-medium-outline" size={16} color={C.textSecondary} />
+            </View>
+            <Text style={[styles.resultDescription, { color: C.text, fontSize: fs(15) }]}>
+              {buildShortSummary(item)}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Card SESIÓN — tocable */}
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => speakSection(buildSessionSpeech(item))}
+            accessibilityLabel="Sesión"
+            accessibilityHint="Toca para escuchar fecha, hora y duración"
+            accessibilityRole="button"
+            style={[styles.resultCard, { backgroundColor: C.surface }]}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <Ionicons name="information-circle-outline" size={18} color={C.primary} />
+              <Text style={{ color: C.textSecondary, fontSize: fs(13), fontWeight: '700', letterSpacing: 1 }}>
+                SESIÓN
+              </Text>
+              <View style={{ flex: 1 }} />
+              <Ionicons name="volume-medium-outline" size={16} color={C.textSecondary} />
+            </View>
+            {sessionStats.map((s, i) => renderStatRow(s, i, i === sessionStats.length - 1))}
+          </TouchableOpacity>
+
+          {/* Card ESTADÍSTICAS específicas del modo — tocable */}
+          {detailStats.length > 0 && (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => speakSection(buildStatsSpeech(item))}
+              accessibilityLabel="Estadísticas"
+              accessibilityHint="Toca para escuchar las estadísticas"
+              accessibilityRole="button"
+              style={[styles.resultCard, { backgroundColor: C.surface }]}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <Ionicons name="stats-chart-outline" size={18} color={C.primary} />
+                <Text style={{ color: C.textSecondary, fontSize: fs(13), fontWeight: '700', letterSpacing: 1 }}>
+                  ESTADÍSTICAS
+                </Text>
+                <View style={{ flex: 1 }} />
+                <Ionicons name="volume-medium-outline" size={16} color={C.textSecondary} />
+              </View>
+              {detailStats.map((s, i) => renderStatRow(s, i, i === detailStats.length - 1))}
+            </TouchableOpacity>
+          )}
+
+          {/* Card OBSTÁCULOS MÁS FRECUENTES (solo navegación) — tocable */}
+          {topObstacles.length > 0 && (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => speakSection(buildObstaclesSpeech(item))}
+              accessibilityLabel="Obstáculos más frecuentes"
+              accessibilityHint="Toca para escuchar"
+              accessibilityRole="button"
+              style={[styles.resultCard, { backgroundColor: C.surface }]}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <Ionicons name="warning-outline" size={18} color={C.primary} />
+                <Text style={{ color: C.textSecondary, fontSize: fs(13), fontWeight: '700', letterSpacing: 1 }}>
+                  OBSTÁCULOS MÁS FRECUENTES
+                </Text>
+                <View style={{ flex: 1 }} />
+                <Ionicons name="volume-medium-outline" size={16} color={C.textSecondary} />
+              </View>
+              {topObstacles.map(([name, count], i) => (
+                <View
+                  key={i}
+                  style={{
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    paddingVertical: 8,
+                    borderBottomWidth: i < topObstacles.length - 1 ? 1 : 0,
+                    borderBottomColor: C.border,
+                  }}
+                >
+                  <Text style={{ color: C.text, fontSize: fs(14), textTransform: 'capitalize' }}>
+                    {name}
+                  </Text>
+                  <Text style={{ color: C.primary, fontSize: fs(14), fontWeight: '700' }}>
+                    {count}×
+                  </Text>
+                </View>
+              ))}
+            </TouchableOpacity>
+          )}
+
+          {/* Card OBJETOS DETECTADOS (exploración) — tocable */}
+          {objects && objects.length > 0 && (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => speakSection(buildObjectsSpeech(item))}
+              accessibilityLabel="Objetos detectados"
+              accessibilityHint="Toca para escuchar"
+              accessibilityRole="button"
+              style={[styles.resultCard, { backgroundColor: C.surface }]}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <Ionicons name="grid-outline" size={18} color={C.primary} />
+                <Text style={{ color: C.textSecondary, fontSize: fs(13), fontWeight: '700', letterSpacing: 1 }}>
+                  OBJETOS DETECTADOS ({objects.length})
+                </Text>
+                <View style={{ flex: 1 }} />
+                <Ionicons name="volume-medium-outline" size={16} color={C.textSecondary} />
+              </View>
+              {objects.slice(0, 15).map((o: any, idx: number) => {
+                const conf = typeof o.confidence === 'number' ? o.confidence : 0;
+                const dist = o.distance_zone || o.distance_estimate || '';
+                const last = idx === Math.min(15, objects.length) - 1;
+                return (
+                  <View
+                    key={idx}
+                    style={{
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      paddingVertical: 8,
+                      borderBottomWidth: last ? 0 : 1,
+                      borderBottomColor: C.border,
+                    }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: C.text, fontSize: fs(14), textTransform: 'capitalize' }}>
+                        {o.name_es || o.name || 'desconocido'}
+                      </Text>
+                      {dist ? (
+                        <Text style={{ color: C.textSecondary, fontSize: fs(12), marginTop: 2 }}>
+                          {String(dist).replace('_', ' ')}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <View
+                      style={{
+                        backgroundColor: C.primary + '20',
+                        paddingHorizontal: 10,
+                        paddingVertical: 4,
+                        borderRadius: 12,
+                      }}
+                    >
+                      <Text style={{ color: C.primary, fontSize: fs(13), fontWeight: '700' }}>
+                        {(conf * 100).toFixed(0)}%
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })}
+              {objects.length > 15 && (
+                <Text style={{ color: C.textSecondary, fontSize: fs(12), marginTop: 8, fontStyle: 'italic' }}>
+                  …y {objects.length - 15} objetos más.
+                </Text>
+              )}
+            </TouchableOpacity>
+          )}
+        </ScrollView>
+
+        <View style={styles.historyFixedActions}>
+          <Button
+            title="Volver al historial"
+            onPress={() => {
+              ttsManager.stop();
+              setSelectedHistoryItem(null);
+              ttsManager.speak('Volviendo al historial.', TtsPriority.HIGH);
+            }}
+            size="large"
+            icon={<Ionicons name="arrow-back" size={20} color={C.background} />}
+            style={styles.resultActionButton}
+          />
+        </View>
+      </View>
+    );
+  };
+
   const renderHistory = () => {
     const modeLabels: Record<string, string> = {
       navegacion: 'Navegación',
@@ -549,7 +1183,7 @@ export function HomeScreen() {
 
     const modeIcons: Record<string, string> = {
       navegacion: 'compass',
-      exploracion: 'eye',
+      exploracion: 'search',
       lectura: 'document-text',
     };
 
@@ -565,10 +1199,13 @@ export function HomeScreen() {
             </Text>
           </View>
 
+          {/* Onda de voz */}
+          <VoiceWave color={C.primary} />
+
           {/* Lista vacía */}
           {historyItems.length === 0 && (
             <View style={styles.historyEmpty}>
-              <Ionicons name="time-outline" size={48} color={COLORS.textSecondary} />
+              <Ionicons name="time-outline" size={48} color={C.textSecondary} />
               <Text style={styles.historyEmptyText}>
                 Aún no hay análisis en tu historial.
               </Text>
@@ -589,15 +1226,36 @@ export function HomeScreen() {
                 key={item.id}
                 style={styles.historyItem}
                 onPress={() => {
-                  ttsManager.speakFromBackend(item.resultSummary, TtsPriority.HIGH);
+                  // Doble tap (≤400 ms entre dos toques en el MISMO item) abre el detalle.
+                  // Single tap solo anuncia el modo y la fecha — no lee todo el resumen.
+                  const now = Date.now();
+                  const isDoubleTap =
+                    lastTapRef.current.id === item.id &&
+                    (now - lastTapRef.current.time) < 400;
+                  lastTapRef.current = { id: item.id, time: now };
+
+                  if (isDoubleTap) {
+                    // Detener cualquier voz previa. La narrativa completa la
+                    // dispara el useEffect cuando selectedHistoryItem cambia,
+                    // con prioridad INTERRUPT para que suene seguro.
+                    ttsManager.stop();
+                    setSelectedHistoryItem(item);
+                  } else {
+                    ttsManager.stop();
+                    ttsManager.speak(
+                      `${modeLabels[item.mode] || item.mode}, ${dateStr} a las ${timeStr}. Toca dos veces para ver detalles.`,
+                      TtsPriority.INTERRUPT,
+                    );
+                  }
                 }}
-                accessibilityLabel={`${modeLabels[item.mode] || item.mode}. ${item.resultSummary}`}
+                accessibilityLabel={`${modeLabels[item.mode] || item.mode}, ${dateStr} ${timeStr}`}
+                accessibilityHint="Toca dos veces para ver los detalles"
               >
                 <View style={styles.historyItemIcon}>
                   <Ionicons
                     name={(modeIcons[item.mode] || 'help-circle') as any}
                     size={20}
-                    color={COLORS.primary}
+                    color={C.primary}
                   />
                 </View>
                 <View style={styles.historyItemContent}>
@@ -625,7 +1283,7 @@ export function HomeScreen() {
               onPress={handleClearHistory}
               variant="outline"
               size="large"
-              icon={<Ionicons name="trash" size={20} color={COLORS.error} />}
+              icon={<Ionicons name="trash" size={20} color={C.error} />}
               style={styles.resultActionButton}
             />
           )}
@@ -636,7 +1294,7 @@ export function HomeScreen() {
               ttsManager.speak('Volviendo al inicio.', TtsPriority.HIGH);
             }}
             size="large"
-            icon={<Ionicons name="arrow-back" size={20} color={COLORS.background} />}
+            icon={<Ionicons name="arrow-back" size={20} color={C.background} />}
             style={styles.resultActionButton}
           />
         </View>
@@ -657,7 +1315,7 @@ export function HomeScreen() {
                 <View
                   style={[
                     styles.connectionDot,
-                    { backgroundColor: wsStatus === 'connected' ? COLORS.success : COLORS.warning },
+                    { backgroundColor: wsStatus === 'connected' ? C.success : C.warning },
                   ]}
                 />
                 <Text style={styles.realtimeStatusText}>
@@ -770,7 +1428,7 @@ export function HomeScreen() {
             accessibilityLabel="Detener"
             accessibilityRole="button"
           >
-            <Ionicons name="stop" size={28} color={COLORS.text} />
+            <Ionicons name="stop" size={28} color={C.text} />
             <Text style={styles.stopRealtimeText}>Detener</Text>
           </TouchableOpacity>
         </View>
@@ -806,7 +1464,7 @@ export function HomeScreen() {
           accessibilityLabel="Cancelar y volver"
           accessibilityRole="button"
         >
-          <Ionicons name="close" size={32} color={COLORS.text} />
+          <Ionicons name="close" size={32} color={C.text} />
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -815,7 +1473,7 @@ export function HomeScreen() {
           accessibilityLabel="Subir imagen desde galería"
           accessibilityRole="button"
         >
-          <Ionicons name="images" size={32} color={COLORS.text} />
+          <Ionicons name="images" size={32} color={C.text} />
         </TouchableOpacity>
       </View>
     </View>
@@ -827,8 +1485,9 @@ export function HomeScreen() {
       {capturedImage && (
         <Image source={{ uri: capturedImage }} style={styles.previewImage} />
       )}
-      <ActivityIndicator size="large" color={COLORS.primary} style={styles.loader} />
+      <ActivityIndicator size="large" color={C.primary} style={styles.loader} />
       <Text style={styles.processingText}>Analizando imagen...</Text>
+      <VoiceWave color={C.primary} />
     </View>
   );
 
@@ -838,6 +1497,9 @@ export function HomeScreen() {
       {capturedImage && (
         <Image source={{ uri: capturedImage }} style={styles.resultImage} />
       )}
+
+      {/* Onda de voz */}
+      <VoiceWave color={C.primary} />
 
       <View style={styles.resultCard}>
         <Text style={styles.resultTitle}>
@@ -849,8 +1511,8 @@ export function HomeScreen() {
           <View>
             <Text style={styles.resultDescription}>{navResult.instruction}</Text>
             {navResult.path_clear && (
-              <View style={[styles.statusBadge, { backgroundColor: COLORS.success + '20' }]}>
-                <Text style={[styles.statusBadgeText, { color: COLORS.success }]}>
+              <View style={[styles.statusBadge, { backgroundColor: C.success + '20' }]}>
+                <Text style={[styles.statusBadgeText, { color: C.success }]}>
                   Camino libre
                 </Text>
               </View>
@@ -904,9 +1566,9 @@ export function HomeScreen() {
         {smartResult && (
           <View>
             {/* Badge de tipo de documento */}
-            <View style={[styles.statusBadge, { backgroundColor: COLORS.primary + '20' }]}>
-              <Ionicons name="document-text" size={16} color={COLORS.primary} />
-              <Text style={[styles.statusBadgeText, { color: COLORS.primary }]}>
+            <View style={[styles.statusBadge, { backgroundColor: C.primary + '20' }]}>
+              <Ionicons name="document-text" size={16} color={C.primary} />
+              <Text style={[styles.statusBadgeText, { color: C.primary }]}>
                 {smartResult.document_type_label}
               </Text>
             </View>
@@ -917,7 +1579,7 @@ export function HomeScreen() {
             {/* Totales destacados (si hay) */}
             {(smartResult.extracted_fields?.totals?.length ?? 0) > 0 && (
               <View style={styles.totalsHighlight}>
-                <Ionicons name="cash" size={16} color={COLORS.warning} />
+                <Ionicons name="cash" size={16} color={C.warning} />
                 <Text style={styles.totalsText}>
                   {smartResult.extracted_fields!.totals.join(' | ')}
                 </Text>
@@ -944,18 +1606,18 @@ export function HomeScreen() {
               <View style={[
                 styles.totalsHighlight,
                 {
-                  backgroundColor: COLORS.error + '20',
+                  backgroundColor: C.error + '20',
                   marginTop: 8,
                 },
               ]}>
                 <Ionicons
                   name="warning"
                   size={16}
-                  color={COLORS.error}
+                  color={C.error}
                 />
                 <Text style={[
                   styles.totalsText,
-                  { color: COLORS.error },
+                  { color: C.error },
                 ]}>
                   {smartResult.image_quality.feedback_text || 'No pude leer. Intenta tomar otra foto.'}
                 </Text>
@@ -1024,7 +1686,7 @@ export function HomeScreen() {
           }}
           variant="outline"
           size="large"
-          icon={<Ionicons name="refresh" size={20} color={COLORS.primary} />}
+          icon={<Ionicons name="refresh" size={20} color={C.primary} />}
           style={styles.resultActionButton}
         />
         <Button
@@ -1035,7 +1697,7 @@ export function HomeScreen() {
             <Ionicons
               name={isSpeakingState ? 'stop' : 'volume-high'}
               size={20}
-              color={COLORS.background}
+              color={C.background}
             />
           }
           style={styles.resultActionButton}
@@ -1047,9 +1709,10 @@ export function HomeScreen() {
   // Pantalla de error
   const renderError = () => (
     <View style={styles.errorContainer}>
-      <Ionicons name="alert-circle" size={64} color={COLORS.error} />
+      <Ionicons name="alert-circle" size={64} color={C.error} />
       <Text style={styles.errorTitle}>Error</Text>
       <Text style={styles.errorMessage}>{error}</Text>
+      <VoiceWave color={C.error} />
       <Button
         title="Intentar de nuevo"
         onPress={() => {
@@ -1073,10 +1736,10 @@ export function HomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (C: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: C.background,
   },
   // Home
   settingsBtn: {
@@ -1102,12 +1765,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 42,
     fontWeight: 'bold',
-    color: COLORS.text,
+    color: C.text,
     marginTop: 12,
   },
   subtitle: {
     fontSize: 18,
-    color: COLORS.textSecondary,
+    color: C.textSecondary,
     marginTop: 4,
   },
   connectionStatus: {
@@ -1123,14 +1786,14 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   connectionText: {
-    color: COLORS.textSecondary,
+    color: C.textSecondary,
     fontSize: 14,
   },
   modeSelector: {
     marginBottom: 32,
   },
   modeLabel: {
-    color: COLORS.textSecondary,
+    color: C.textSecondary,
     fontSize: 14,
     marginBottom: 12,
     textAlign: 'center',
@@ -1151,25 +1814,25 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: COLORS.primary,
+    borderColor: C.primary,
     gap: 6,
   },
   modeButtonActive: {
-    backgroundColor: COLORS.primary,
+    backgroundColor: C.primary,
   },
   modeButtonText: {
-    color: COLORS.primary,
+    color: C.primary,
     fontSize: 14,
     fontWeight: '500',
   },
   modeButtonTextActive: {
-    color: COLORS.background,
+    color: C.background,
   },
   readingModeSelector: {
     marginBottom: 16,
   },
   readingModeLabel: {
-    color: COLORS.textSecondary,
+    color: C.textSecondary,
     fontSize: 12,
     marginBottom: 8,
     textAlign: 'center',
@@ -1187,28 +1850,37 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: COLORS.primary,
+    borderColor: C.primary,
     gap: 4,
   },
   readingModeButtonActive: {
-    backgroundColor: COLORS.primary,
+    backgroundColor: C.primary,
   },
   readingModeButtonText: {
-    color: COLORS.primary,
+    color: C.primary,
     fontSize: 13,
     fontWeight: '500',
   },
   readingModeButtonTextActive: {
-    color: COLORS.background,
+    color: C.background,
   },
   mainButtons: {
-    gap: 16,
+    gap: 14,
   },
+  // Pill: bordes muy redondeados — el único cambio que se mantiene del rediseño
   mainButton: {
     width: '100%',
+    borderRadius: 32,
+    minHeight: 60,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    elevation: 5,
   },
   secondaryButton: {
     width: '100%',
+    borderRadius: 32,
+    minHeight: 56,
   },
   ttsToggle: {
     flexDirection: 'row',
@@ -1219,7 +1891,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   ttsToggleText: {
-    color: COLORS.textSecondary,
+    color: C.textSecondary,
     fontSize: 14,
   },
   // Camera
@@ -1236,7 +1908,7 @@ const styles = StyleSheet.create({
     gap: 20,
   },
   cameraTapHint: {
-    color: COLORS.text,
+    color: C.text,
     fontSize: 15,
     opacity: 0.7,
     backgroundColor: 'rgba(0,0,0,0.4)',
@@ -1248,7 +1920,7 @@ const styles = StyleSheet.create({
     width: SCREEN_WIDTH - 48,
     height: SCREEN_WIDTH - 48,
     borderWidth: 2,
-    borderColor: COLORS.primary,
+    borderColor: C.primary,
     borderRadius: 16,
     opacity: 0.5,
   },
@@ -1266,7 +1938,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: COLORS.surface,
+    backgroundColor: C.surface,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1274,7 +1946,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: COLORS.primary,
+    backgroundColor: C.primary,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1282,7 +1954,7 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: COLORS.text,
+    backgroundColor: C.text,
   },
   // Realtime
   realtimeOverlay: {
@@ -1304,7 +1976,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   realtimeStatusText: {
-    color: COLORS.text,
+    color: C.text,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -1336,7 +2008,7 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   realtimeSummaryText: {
-    color: COLORS.text,
+    color: C.text,
     fontSize: 18,
     fontWeight: '500',
     lineHeight: 26,
@@ -1365,12 +2037,12 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   realtimeObjectName: {
-    color: COLORS.text,
+    color: C.text,
     fontSize: 14,
     fontWeight: '500',
   },
   realtimeObjectDistance: {
-    color: COLORS.primary,
+    color: C.primary,
     fontSize: 12,
     fontWeight: '600',
   },
@@ -1385,7 +2057,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.error,
+    backgroundColor: C.error,
     paddingHorizontal: 40,
     paddingVertical: 16,
     borderRadius: 30,
@@ -1393,7 +2065,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   stopRealtimeText: {
-    color: COLORS.text,
+    color: C.text,
     fontSize: 16,
     fontWeight: '600',
   },
@@ -1414,7 +2086,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   processingText: {
-    color: COLORS.text,
+    color: C.text,
     fontSize: 18,
   },
   // Results
@@ -1431,7 +2103,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   resultCard: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: C.surface,
     borderRadius: 16,
     padding: 20,
     marginBottom: 16,
@@ -1439,12 +2111,12 @@ const styles = StyleSheet.create({
   resultTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: COLORS.text,
+    color: C.text,
     marginBottom: 12,
   },
   resultDescription: {
     fontSize: 16,
-    color: COLORS.text,
+    color: C.text,
     lineHeight: 24,
   },
   statusBadge: {
@@ -1465,29 +2137,29 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   textBox: {
-    backgroundColor: COLORS.secondary,
+    backgroundColor: C.secondary,
     borderRadius: 12,
     padding: 12,
     marginTop: 12,
   },
   textBoxLabel: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: C.textSecondary,
     marginBottom: 4,
   },
   textBoxContent: {
     fontSize: 14,
-    color: COLORS.text,
+    color: C.text,
   },
   objectCount: {
     fontSize: 14,
-    color: COLORS.textSecondary,
+    color: C.textSecondary,
     marginTop: 12,
   },
   totalsHighlight: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.warning + '15',
+    backgroundColor: C.warning + '15',
     borderRadius: 12,
     padding: 12,
     marginTop: 12,
@@ -1497,23 +2169,23 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     fontWeight: '600',
-    color: COLORS.warning,
+    color: C.warning,
   },
   confidence: {
     fontSize: 14,
-    color: COLORS.textSecondary,
+    color: C.textSecondary,
     marginTop: 8,
   },
   noResult: {
     fontSize: 16,
-    color: COLORS.textSecondary,
+    color: C.textSecondary,
     fontStyle: 'italic',
   },
   objectItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: COLORS.secondary,
+    backgroundColor: C.secondary,
     borderRadius: 8,
     padding: 12,
     marginTop: 8,
@@ -1524,11 +2196,11 @@ const styles = StyleSheet.create({
   },
   objectName: {
     fontSize: 14,
-    color: COLORS.text,
+    color: C.text,
   },
   objectDistance: {
     fontSize: 12,
-    color: COLORS.primary,
+    color: C.primary,
     marginTop: 2,
   },
   resultActions: {
@@ -1541,9 +2213,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 16,
     paddingBottom: 32,
-    backgroundColor: COLORS.background,
+    backgroundColor: C.background,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    borderTopColor: C.border,
   },
   resultActionButton: {
     flex: 1,
@@ -1560,14 +2232,14 @@ const styles = StyleSheet.create({
   },
   historyButtonText: {
     fontSize: 15,
-    color: COLORS.primary,
+    color: C.primary,
   },
   historyHeader: {
     marginBottom: 16,
   },
   historySubtitle: {
     fontSize: 14,
-    color: COLORS.textSecondary,
+    color: C.textSecondary,
     marginTop: 4,
   },
   historyEmpty: {
@@ -1577,18 +2249,18 @@ const styles = StyleSheet.create({
   },
   historyEmptyText: {
     fontSize: 16,
-    color: COLORS.textSecondary,
+    color: C.textSecondary,
     textAlign: 'center',
   },
   historyEmptyHint: {
     fontSize: 14,
-    color: COLORS.textSecondary,
+    color: C.textSecondary,
     textAlign: 'center',
     fontStyle: 'italic',
   },
   historyItem: {
     flexDirection: 'row',
-    backgroundColor: COLORS.surface,
+    backgroundColor: C.surface,
     borderRadius: 12,
     padding: 14,
     marginBottom: 10,
@@ -1598,7 +2270,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: COLORS.primary + '15',
+    backgroundColor: C.primary + '15',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1614,15 +2286,15 @@ const styles = StyleSheet.create({
   historyItemMode: {
     fontSize: 14,
     fontWeight: '600',
-    color: COLORS.primary,
+    color: C.primary,
   },
   historyItemDate: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: C.textSecondary,
   },
   historyItemSummary: {
     fontSize: 14,
-    color: COLORS.text,
+    color: C.text,
     lineHeight: 20,
   },
   // Error
@@ -1635,13 +2307,13 @@ const styles = StyleSheet.create({
   errorTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: COLORS.error,
+    color: C.error,
     marginTop: 16,
     marginBottom: 8,
   },
   errorMessage: {
     fontSize: 16,
-    color: COLORS.textSecondary,
+    color: C.textSecondary,
     textAlign: 'center',
     marginBottom: 24,
   },

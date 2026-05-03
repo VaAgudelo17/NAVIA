@@ -1,5 +1,8 @@
 /**
  * Componente de botón accesible para NAVIA
+ *
+ * Lee los colores del tema activo vía usePreferences, así cualquier botón
+ * de la app cambia de color cuando el usuario cambia de tema.
  */
 
 import React from 'react';
@@ -11,7 +14,7 @@ import {
   TextStyle,
   ActivityIndicator,
 } from 'react-native';
-import { COLORS } from '../constants/config';
+import { usePreferences } from '../context/PreferencesContext';
 
 interface ButtonProps {
   title: string;
@@ -38,9 +41,23 @@ export function Button({
   textStyle,
   accessibilityLabel,
 }: ButtonProps) {
+  const { theme } = usePreferences();
+
+  const variantStyle: ViewStyle =
+    variant === 'primary'
+      ? { backgroundColor: theme.primary }
+      : variant === 'secondary'
+      ? { backgroundColor: theme.secondary }
+      : { backgroundColor: 'transparent', borderWidth: 2, borderColor: theme.primary };
+
+  const variantTextColor =
+    variant === 'primary' ? theme.background
+    : variant === 'secondary' ? theme.text
+    : theme.primary;
+
   const buttonStyles = [
     styles.button,
-    styles[variant],
+    variantStyle,
     styles[size],
     disabled && styles.disabled,
     style,
@@ -48,9 +65,8 @@ export function Button({
 
   const textStyles = [
     styles.text,
-    styles[`${variant}Text`],
+    { color: disabled ? theme.textSecondary : variantTextColor },
     styles[`${size}Text`],
-    disabled && styles.disabledText,
     textStyle,
   ];
 
@@ -64,7 +80,7 @@ export function Button({
       accessibilityState={{ disabled: disabled || loading }}
     >
       {loading ? (
-        <ActivityIndicator color={variant === 'primary' ? COLORS.background : COLORS.primary} />
+        <ActivityIndicator color={variant === 'primary' ? theme.background : theme.primary} />
       ) : (
         <>
           {icon}
@@ -83,18 +99,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     gap: 8,
   },
-  // Variants
-  primary: {
-    backgroundColor: COLORS.primary,
-  },
-  secondary: {
-    backgroundColor: COLORS.secondary,
-  },
-  outline: {
-    backgroundColor: 'transparent',
-    borderWidth: 2,
-    borderColor: COLORS.primary,
-  },
   // Sizes
   small: {
     paddingHorizontal: 16,
@@ -112,18 +116,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
     paddingVertical: 20,
   },
-  // Text styles
   text: {
     fontWeight: '600',
-  },
-  primaryText: {
-    color: COLORS.background,
-  },
-  secondaryText: {
-    color: COLORS.text,
-  },
-  outlineText: {
-    color: COLORS.primary,
   },
   smallText: {
     fontSize: 14,
@@ -137,11 +131,7 @@ const styles = StyleSheet.create({
   xlText: {
     fontSize: 20,
   },
-  // States
   disabled: {
     opacity: 0.5,
-  },
-  disabledText: {
-    color: COLORS.textSecondary,
   },
 });

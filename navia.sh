@@ -1,8 +1,8 @@
 #!/bin/bash
 # ============================================================================
-# NAVIA - Iniciar Todo (Backend + Frontend + Mobile)
+# NAVIA - Iniciar Todo (Backend + Mobile)
 # ============================================================================
-# Ejecuta los 3 servicios simultaneamente con un solo comando:
+# Ejecuta los 2 servicios simultaneamente con un solo comando:
 #   ./navia.sh
 # ============================================================================
 
@@ -15,7 +15,6 @@ NC='\033[0m'
 
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$BASE_DIR/navia-backend"
-FRONTEND_DIR="$BASE_DIR/navia-fronted"
 MOBILE_DIR="$BASE_DIR/navia-mobile"
 
 # Obtener IP local (para la app movil)
@@ -34,13 +33,11 @@ echo ""
 
 # PIDs para cleanup
 BACKEND_PID=""
-FRONTEND_PID=""
 
 cleanup() {
     echo ""
     echo -e "${YELLOW}Deteniendo todos los servicios...${NC}"
     [ -n "$BACKEND_PID" ] && kill $BACKEND_PID 2>/dev/null
-    [ -n "$FRONTEND_PID" ] && kill $FRONTEND_PID 2>/dev/null
     # Expo se detiene solo al cerrar el script
     echo -e "${GREEN}Todos los servicios detenidos.${NC}"
     exit 0
@@ -51,7 +48,7 @@ trap cleanup SIGINT SIGTERM
 # ============================================================================
 # 1. BACKEND
 # ============================================================================
-echo -e "${GREEN}[1/3] Iniciando Backend (FastAPI)...${NC}"
+echo -e "${GREEN}[1/2] Iniciando Backend (FastAPI)...${NC}"
 cd "$BACKEND_DIR"
 if [ -d "venv" ]; then
     source venv/bin/activate
@@ -65,29 +62,16 @@ echo ""
 sleep 15
 
 # ============================================================================
-# 2. FRONTEND WEB
+# 2. APP MOVIL
 # ============================================================================
-echo -e "${GREEN}[2/3] Iniciando Frontend Web (Next.js)...${NC}"
-cd "$FRONTEND_DIR"
-npm run dev -- -p 3002 &
-FRONTEND_PID=$!
-echo -e "      PID: $FRONTEND_PID"
-echo ""
-
-sleep 2
-
-# ============================================================================
-# 3. APP MOVIL
-# ============================================================================
-echo -e "${GREEN}[3/3] Iniciando App Movil (Expo)...${NC}"
+echo -e "${GREEN}[2/2] Iniciando App Movil (Expo)...${NC}"
 echo ""
 echo -e "${BLUE}============================================${NC}"
-echo -e "${GREEN}  Los 3 servicios de NAVIA estan activos${NC}"
+echo -e "${GREEN}  Los servicios de NAVIA estan activos${NC}"
 echo -e "${BLUE}============================================${NC}"
 echo ""
 echo -e "  Backend:   ${YELLOW}http://localhost:8000${NC}"
 echo -e "  API Docs:  ${YELLOW}http://localhost:8000/docs${NC}"
-echo -e "  Frontend:  ${YELLOW}http://localhost:3002${NC}"
 echo -e "  IP Local:  ${YELLOW}$LOCAL_IP${NC} (para app movil)"
 echo ""
 echo -e "  ${CYAN}Historial:      GET  http://localhost:8000/api/v1/history${NC}"
@@ -97,7 +81,7 @@ echo -e "  Presiona ${YELLOW}Ctrl+C${NC} para detener todo"
 echo ""
 
 cd "$MOBILE_DIR"
-npx expo start
+npx expo start --clear
 
 # Si expo se cierra, limpiar todo
 cleanup

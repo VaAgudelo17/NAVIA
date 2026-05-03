@@ -25,6 +25,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { usePreferences } from '../context/PreferencesContext';
 import { THEMES, FONT_SIZES, ThemeId, FontSizeId } from '../constants/themes';
 import { ttsManager, TtsPriority } from '../services/ttsManager';
+import { VoiceWave } from '../components/VoiceWave';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -138,6 +139,9 @@ export function SettingsScreen({ visible, onClose }: SettingsScreenProps) {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
+          {/* Onda de voz */}
+          <VoiceWave color={theme.primary} />
+
           {/* ---- Sección Temas ---- */}
           <Text style={[styles.sectionTitle, { color: theme.textSecondary, fontSize: fs(12) }]}>
             TEMA DE COLOR
