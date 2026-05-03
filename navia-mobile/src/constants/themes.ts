@@ -154,3 +154,71 @@ export const FONT_SIZES: Record<FontSizeId, FontSizeDef> = {
 export function scaleFont(size: number, fontSizeId: FontSizeId): number {
   return Math.round(size * FONT_SIZES[fontSizeId].scale);
 }
+
+// ============================================================================
+// TIPOGRAFÍAS RECOMENDADAS PARA BAJA VISIÓN
+// ============================================================================
+// Atkinson Hyperlegible y Roboto se cargan vía @expo-google-fonts.
+// Verdana, Arial, Helvetica y Tahoma son fuentes de sistema en iOS/Android.
+// ============================================================================
+
+export type FontFamilyId =
+  | 'sistema'
+  | 'atkinson'
+  | 'verdana'
+  | 'arial'
+  | 'helvetica'
+  | 'tahoma'
+  | 'roboto';
+
+export interface FontFamilyDef {
+  name: string;
+  /** Nombre alternativo para TTS */
+  ttsName?: string;
+  description: string;
+  /** Familia tipográfica resuelta por React Native */
+  fontFamily: string | undefined;
+}
+
+export const FONT_FAMILIES: Record<FontFamilyId, FontFamilyDef> = {
+  sistema: {
+    name: 'Sistema',
+    description: 'Fuente predeterminada del dispositivo',
+    fontFamily: undefined,
+  },
+  atkinson: {
+    name: 'Atkinson Hyperlegible',
+    ttsName: 'Atkinson',
+    description: 'Diseñada para baja visión por el Braille Institute',
+    fontFamily: 'AtkinsonHyperlegible_400Regular',
+  },
+  verdana: {
+    name: 'Verdana',
+    description: 'Letras separadas y muy legibles',
+    fontFamily: 'Verdana',
+  },
+  arial: {
+    name: 'Arial',
+    description: 'Clásica, limpia, fácil de leer',
+    fontFamily: 'Arial',
+  },
+  helvetica: {
+    name: 'Helvetica',
+    description: 'Sans-serif estándar, alta claridad',
+    fontFamily: 'Helvetica',
+  },
+  tahoma: {
+    name: 'Tahoma',
+    description: 'Espaciado generoso entre caracteres',
+    fontFamily: 'Tahoma',
+  },
+  roboto: {
+    name: 'Roboto',
+    description: 'Sans-serif moderna y muy clara',
+    fontFamily: 'Roboto_400Regular',
+  },
+};
+
+export const FONT_FAMILY_ORDER: FontFamilyId[] = [
+  'sistema', 'atkinson', 'verdana', 'arial', 'helvetica', 'tahoma', 'roboto',
+];

@@ -10,14 +10,21 @@ import { SafeAreaView, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Audio } from 'expo-av';
 import { useFonts } from 'expo-font';
+import { AtkinsonHyperlegible_400Regular, AtkinsonHyperlegible_700Bold } from '@expo-google-fonts/atkinson-hyperlegible';
+import { Roboto_400Regular, Roboto_700Bold } from '@expo-google-fonts/roboto';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { PreferencesProvider } from './src/context/PreferencesContext';
 import { COLORS } from './src/constants/config';
 
 export default function App() {
-  // Cargar fuentes de íconos explícitamente para que funcionen en web
+  // Cargar fuentes de íconos explícitamente para que funcionen en web,
+  // junto con Atkinson Hyperlegible y Roboto para preferencias de accesibilidad
   const [fontsLoaded] = useFonts({
     Ionicons: require('@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf'),
+    AtkinsonHyperlegible_400Regular,
+    AtkinsonHyperlegible_700Bold,
+    Roboto_400Regular,
+    Roboto_700Bold,
   });
 
   useEffect(() => {
@@ -29,6 +36,9 @@ export default function App() {
       shouldDuckAndroid: true,
     });
   }, []);
+
+  // No renderizar hasta que las fuentes (incluida Atkinson y Roboto) estén listas
+  if (!fontsLoaded) return null;
 
   return (
     <PreferencesProvider>

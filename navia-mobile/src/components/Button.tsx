@@ -8,12 +8,12 @@
 import React from 'react';
 import {
   TouchableOpacity,
-  Text,
   StyleSheet,
   ViewStyle,
   TextStyle,
   ActivityIndicator,
 } from 'react-native';
+import { Text } from './AppText';
 import { usePreferences } from '../context/PreferencesContext';
 
 interface ButtonProps {

@@ -37,6 +37,9 @@ function normalizeForTts(text: string): string {
     .replace(/\babriendo\b/gi, 'iniciando')
     .replace(/\bcargando\b/gi, 'iniciando')
     .replace(/\briesgo\b/gi, 'peligro')
+    // "galería" se pronuncia como "gaderia" en el modelo Piper es_MX
+    .replace(/\bgalería\b/gi, 'fotos guardadas')
+    .replace(/\bgaleria\b/gi, 'fotos guardadas')
     // Abreviaturas técnicas
     .replace(/\bIA\b/g, 'inteligencia artificial')
     .replace(/\bOCR\b/g, 'reconocimiento óptico de texto')
@@ -217,26 +220,40 @@ class TtsManager {
   }
 
   private async playAudioFile(fileUri: string): Promise<void> {
+    // Crear el sonido SIN reproducir todavía. Así, si stop() se llama
+    // antes de que registremos currentSound, no hay un sonido huérfano
+    // sonando que stop() no podría detener.
     const { sound } = await Audio.Sound.createAsync(
       { uri: fileUri },
-      { shouldPlay: true, volume: 1.0 }
+      { shouldPlay: false, volume: 1.0 }
     );
     this.currentSound = sound;
 
-    await new Promise<void>((resolve) => {
+    // Registrar listener antes de reproducir para no perder eventos
+    let resolved = false;
+    const playbackEnded = new Promise<void>((resolve) => {
       sound.setOnPlaybackStatusUpdate((status) => {
-        // Si stop() descargó el sonido, también resolver para no dejar el await colgado.
+        if (resolved) return;
         if (!status.isLoaded) {
+          resolved = true;
           resolve();
           return;
         }
         if (status.didJustFinish) {
+          resolved = true;
           sound.unloadAsync().catch(() => {});
           if (this.currentSound === sound) this.currentSound = null;
           resolve();
         }
       });
     });
+
+    // Iniciar reproducción ahora que currentSound ya está registrado
+    try {
+      await sound.playAsync();
+    } catch { /* sound puede haber sido detenido en una stop() concurrente */ }
+
+    await playbackEnded;
   }
 
   private preprocessForReading(text: string): string {

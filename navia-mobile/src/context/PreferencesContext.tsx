@@ -20,7 +20,10 @@ import {
 } from '../services/storage';
 import { AnalysisMode } from '../constants/config';
 import { ReadingMode } from '../types/api';
-import { ThemeId, FontSizeId, THEMES, FONT_SIZES, ThemeColors } from '../constants/themes';
+import {
+  ThemeId, FontSizeId, FontFamilyId,
+  THEMES, FONT_SIZES, FONT_FAMILIES, ThemeColors,
+} from '../constants/themes';
 
 // ============================================================================
 // TIPOS DEL CONTEXTO
@@ -33,11 +36,14 @@ interface PreferencesContextType {
   ttsEnabled: boolean;
   themeId: ThemeId;
   fontSizeId: FontSizeId;
+  fontFamilyId: FontFamilyId;
   isLoaded: boolean;
 
   // Tema activo (colores resueltos)
   theme: ThemeColors;
   fontScale: number;
+  /** Familia tipográfica resuelta (string para style.fontFamily, o undefined = sistema) */
+  fontFamily: string | undefined;
 
   // Setters (guardan automaticamente)
   setAnalysisMode: (mode: AnalysisMode) => void;
@@ -45,6 +51,7 @@ interface PreferencesContextType {
   setTtsEnabled: (enabled: boolean) => void;
   setThemeId: (id: ThemeId) => void;
   setFontSizeId: (id: FontSizeId) => void;
+  setFontFamilyId: (id: FontFamilyId) => void;
 }
 
 const PreferencesContext = createContext<PreferencesContextType | undefined>(undefined);
@@ -63,6 +70,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
   const [ttsEnabled, setTtsEnabledState] = useState<boolean>(DEFAULT_PREFERENCES.ttsEnabled);
   const [themeId, setThemeIdState] = useState<ThemeId>(DEFAULT_PREFERENCES.themeId);
   const [fontSizeId, setFontSizeIdState] = useState<FontSizeId>(DEFAULT_PREFERENCES.fontSizeId);
+  const [fontFamilyId, setFontFamilyIdState] = useState<FontFamilyId>(DEFAULT_PREFERENCES.fontFamilyId);
   const [isLoaded, setIsLoaded] = useState(false);
 
   // Cargar preferencias al montar
@@ -75,6 +83,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         setTtsEnabledState(prefs.ttsEnabled);
         setThemeIdState(prefs.themeId);
         setFontSizeIdState(prefs.fontSizeId);
+        setFontFamilyIdState(prefs.fontFamilyId);
       } catch (error) {
         console.warn('Error cargando preferencias, usando defaults:', error);
       } finally {
@@ -109,20 +118,28 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
     savePreferences({ fontSizeId: id });
   }, []);
 
+  const setFontFamilyId = useCallback((id: FontFamilyId) => {
+    setFontFamilyIdState(id);
+    savePreferences({ fontFamilyId: id });
+  }, []);
+
   const value: PreferencesContextType = {
     analysisMode,
     readingMode,
     ttsEnabled,
     themeId,
     fontSizeId,
+    fontFamilyId,
     isLoaded,
     theme: THEMES[themeId].colors,
     fontScale: FONT_SIZES[fontSizeId].scale,
+    fontFamily: FONT_FAMILIES[fontFamilyId].fontFamily,
     setAnalysisMode,
     setReadingMode,
     setTtsEnabled,
     setThemeId,
     setFontSizeId,
+    setFontFamilyId,
   };
 
   return (

@@ -12,7 +12,6 @@
 import React, { useEffect, useRef } from 'react';
 import {
   View,
-  Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
@@ -21,9 +20,13 @@ import {
   Dimensions,
   StatusBar,
 } from 'react-native';
+import { Text } from '../components/AppText';
 import { Ionicons } from '@expo/vector-icons';
 import { usePreferences } from '../context/PreferencesContext';
-import { THEMES, FONT_SIZES, ThemeId, FontSizeId } from '../constants/themes';
+import {
+  THEMES, FONT_SIZES, FONT_FAMILIES, FONT_FAMILY_ORDER,
+  ThemeId, FontSizeId, FontFamilyId,
+} from '../constants/themes';
 import { ttsManager, TtsPriority } from '../services/ttsManager';
 import { VoiceWave } from '../components/VoiceWave';
 
@@ -45,7 +48,11 @@ const THEME_ORDER: ThemeId[] = [
 const FONT_ORDER: FontSizeId[] = ['pequeno', 'mediano', 'grande'];
 
 export function SettingsScreen({ visible, onClose }: SettingsScreenProps) {
-  const { theme, fontScale, themeId, fontSizeId, setThemeId, setFontSizeId } = usePreferences();
+  const {
+    theme, fontScale,
+    themeId, fontSizeId, fontFamilyId, fontFamily,
+    setThemeId, setFontSizeId, setFontFamilyId,
+  } = usePreferences();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
 
   useEffect(() => {
@@ -79,6 +86,14 @@ export function SettingsScreen({ visible, onClose }: SettingsScreenProps) {
     const f = FONT_SIZES[id];
     ttsManager.stop();
     ttsManager.speak(`Listo, cambiaste el tamaño de letra a ${f.name}. ${f.description}.`, TtsPriority.INTERRUPT);
+  };
+
+  const handleFontFamilySelect = (id: FontFamilyId) => {
+    setFontFamilyId(id);
+    const f = FONT_FAMILIES[id];
+    const nombre = f.ttsName ?? f.name;
+    ttsManager.stop();
+    ttsManager.speak(`Tipografía cambiada a ${nombre}. ${f.description}.`, TtsPriority.INTERRUPT);
   };
 
   const handleClose = () => {
@@ -246,8 +261,65 @@ export function SettingsScreen({ visible, onClose }: SettingsScreenProps) {
             })}
           </View>
 
+          {/* ---- Sección Tipografía ---- */}
+          <Text style={[styles.sectionTitle, { color: theme.textSecondary, fontSize: fs(12), marginTop: 28 }]}>
+            TIPOGRAFÍA
+          </Text>
+          <Text style={[styles.sectionDesc, { color: theme.textSecondary, fontSize: fs(13) }]}>
+            Recomendadas para baja visión
+          </Text>
+
+          {FONT_FAMILY_ORDER.map((id) => {
+            const f = FONT_FAMILIES[id];
+            const isActive = fontFamilyId === id;
+            return (
+              <TouchableOpacity
+                key={id}
+                style={[
+                  styles.themeCard,
+                  {
+                    backgroundColor: isActive ? theme.primary + '22' : theme.secondary,
+                    borderColor: isActive ? theme.primary : theme.border,
+                    borderWidth: isActive ? 2 : 1,
+                  },
+                ]}
+                onPress={() => handleFontFamilySelect(id)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: isActive }}
+                accessibilityLabel={`Tipografía ${f.name}. ${f.description}`}
+              >
+                <View style={styles.themeInfo}>
+                  <Text
+                    style={{
+                      color: theme.text,
+                      fontSize: fs(18),
+                      fontWeight: '600',
+                      fontFamily: f.fontFamily,
+                    }}
+                  >
+                    {f.name}
+                  </Text>
+                  <Text
+                    style={{
+                      color: theme.textSecondary,
+                      fontSize: fs(12),
+                      marginTop: 2,
+                    }}
+                  >
+                    {f.description}
+                  </Text>
+                </View>
+                {isActive && (
+                  <View style={[styles.activeCheck, { backgroundColor: theme.primary }]}>
+                    <Ionicons name="checkmark" size={16} color={theme.background} />
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+
           {/* Preview del texto actual */}
-          <View style={[styles.previewTextBox, { backgroundColor: theme.secondary, borderColor: theme.border }]}>
+          <View style={[styles.previewTextBox, { backgroundColor: theme.secondary, borderColor: theme.border, marginTop: 28 }]}>
             <Text style={[styles.previewLabel, { color: theme.textSecondary, fontSize: fs(11) }]}>
               VISTA PREVIA
             </Text>

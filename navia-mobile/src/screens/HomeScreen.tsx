@@ -14,7 +14,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
-  Text,
   StyleSheet,
   TouchableOpacity,
   Image,
@@ -23,6 +22,7 @@ import {
   ActivityIndicator,
   Dimensions,
 } from 'react-native';
+import { Text } from '../components/AppText';
 import { StatusBar } from 'expo-status-bar';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -442,6 +442,8 @@ export function HomeScreen() {
       setCapturedImage(result.assets[0].uri);
       setAppState('processing');
       await processImage(result.assets[0].uri);
+    } else {
+      ttsManager.speak('Cerrando galería.', TtsPriority.HIGH);
     }
   };
 
@@ -601,7 +603,7 @@ export function HomeScreen() {
       </TouchableOpacity>
 
       <View style={styles.header}>
-        <AnimatedEye size={48} color={C.primary} />
+        <AnimatedEye size={64} color={C.primary} />
         <Text style={[styles.title, { color: C.text, fontSize: fs(42) }]}>NAVIA</Text>
         <Text style={[styles.subtitle, { color: C.textSecondary, fontSize: fs(18) }]}>Asistente Visual con IA</Text>
       </View>
@@ -1459,9 +1461,9 @@ export function HomeScreen() {
           style={styles.cameraButton}
           onPress={() => {
             handleReset();
-            ttsManager.speak('Cancelado.', TtsPriority.HIGH);
+            ttsManager.speak('Cerrando cámara.', TtsPriority.HIGH);
           }}
-          accessibilityLabel="Cancelar y volver"
+          accessibilityLabel="Cerrar cámara"
           accessibilityRole="button"
         >
           <Ionicons name="close" size={32} color={C.text} />
