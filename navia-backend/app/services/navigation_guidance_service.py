@@ -42,6 +42,11 @@ logger = logging.getLogger(__name__)
 # Todo lo demás (comida, decoración, electrónica, ropa, etc.) se ignora.
 
 PEDESTRIAN_RELEVANT_CLASSES = {
+    # ── OBSTÁCULO DESCONOCIDO (depth-only) ────────────────────────────────────
+    # Inyectado cuando YOLO no clasifica nada pero el depth muestra masa cerca.
+    # Captura paredes, árboles, postes, obstáculos no entrenados.
+    "obstáculo",
+
     # ── PERSONAS ──────────────────────────────────────────────────────────────
     # Siempre relevantes: se mueven, son impredecibles
     "persona", "niño", "bebé", "persona en silla de ruedas",
@@ -121,6 +126,11 @@ PEDESTRIAN_RELEVANT_CLASSES = {
 # Escala 0.0 - 1.0 donde 1.0 = máximo peligro.
 
 DANGER_WEIGHT: Dict[str, float] = {
+    # ── OBSTÁCULO DESCONOCIDO (detectado por depth, no por YOLO) ────────────
+    # Peso alto: si depth dice que algo grande está cerca, hay que detenerse
+    # aunque no sepamos qué es.
+    "obstáculo": 0.85,
+
     # ── VEHÍCULOS: máximo peligro ─────────────────────────────────────────────
     "carro": 1.0, "autobús": 1.0, "camión": 1.0, "taxi": 1.0,
     "ambulancia": 1.0, "patrulla": 1.0,
@@ -209,6 +219,8 @@ _DEFAULT_DANGER_WEIGHT = 0.4
 # Objetos intrínsecamente peligrosos → alert_type = "peligro" sin importar distancia.
 # Incluye: vehículos, riesgos de caída, peligros térmicos, superficies invisibles.
 PELIGRO_CLASSES: set = {
+    # Obstáculo desconocido detectado por depth → se trata como peligro
+    "obstáculo",
     # Vehículos
     "carro", "autobús", "camión", "taxi", "ambulancia", "patrulla",
     "motocicleta", "bicicleta", "scooter eléctrico",
@@ -322,6 +334,7 @@ HIGH_CONFUSION_OBJECTS: Dict[str, float] = {
     # Objetos portátiles: se confunden entre sí y con otros objetos
     "mochila": 0.55,        # confundida con bolso/caja
     "caja de cartón": 0.60, # confundida con contenedor/maleta/cajón
+    "caja de pañuelos": 0.60, # confundida con cualquier objeto cúbico
     "maleta": 0.55,
     # Electrodomésticos similares entre sí
     "secadora": 0.58,       # muy similar a lavadora
@@ -331,6 +344,11 @@ HIGH_CONFUSION_OBJECTS: Dict[str, float] = {
     "balcón": 0.55,
     "cornisa": 0.60,
     "barandal de balcón": 0.55,
+    # Animales similares entre sí
+    "gato": 0.55,           # confundido con perro pequeño y peluches
+    "perro": 0.50,           # confundido con gato grande
+    "cachorro": 0.55,
+    "gatito": 0.55,
 }
 
 

@@ -183,38 +183,38 @@ export interface FontFamilyDef {
 export const FONT_FAMILIES: Record<FontFamilyId, FontFamilyDef> = {
   sistema: {
     name: 'Sistema',
-    description: 'Fuente predeterminada del dispositivo',
+    description: 'Esta es la letra que viene en tu celular',
     fontFamily: undefined,
   },
   atkinson: {
     name: 'Atkinson Hyperlegible',
     ttsName: 'Atkinson',
-    description: 'Diseñada para baja visión por el Braille Institute',
+    description: 'Esta letra está diseñada especialmente para personas con baja visión, es la más fácil de leer',
     fontFamily: 'AtkinsonHyperlegible_400Regular',
   },
   verdana: {
     name: 'Verdana',
-    description: 'Letras separadas y muy legibles',
+    description: 'Esta letra tiene buen espacio entre caracteres y es ideal para leer cómodamente',
     fontFamily: 'Verdana',
   },
   arial: {
     name: 'Arial',
-    description: 'Clásica, limpia, fácil de leer',
+    description: 'Esta es la letra clásica, sencilla y directa',
     fontFamily: 'Arial',
   },
   helvetica: {
     name: 'Helvetica',
-    description: 'Sans-serif estándar, alta claridad',
+    description: 'Esta letra es limpia y muy clara, sin adornos ni curvas extra',
     fontFamily: 'Helvetica',
   },
   tahoma: {
     name: 'Tahoma',
-    description: 'Espaciado generoso entre caracteres',
+    description: 'Esta letra es similar a Arial pero con más espacio entre letras',
     fontFamily: 'Tahoma',
   },
   roboto: {
     name: 'Roboto',
-    description: 'Sans-serif moderna y muy clara',
+    description: 'Esta letra es moderna y muy fácil de leer en pantallas',
     fontFamily: 'Roboto_400Regular',
   },
 };

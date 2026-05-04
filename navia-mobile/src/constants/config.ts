@@ -100,9 +100,12 @@ export const REALTIME_MODES: AnalysisMode[] = ['navegacion'];
 // URL WebSocket (convierte http → ws)
 export const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
 
-// Configuración de detección en tiempo real
+// Configuración de detección en tiempo real.
+// El backend debe poder procesar cada frame antes del siguiente, sino la
+// cola crece y la latencia explota. En HF Spaces (CPU compartida) procesar
+// YOLO + Depth tarda ~1.5s; localmente ~300ms.
 export const REALTIME_CONFIG = {
-  targetFps: 3,           // 3 frames por segundo (antes 2)
+  targetFps: 1.5,         // 1.5 fps: razonable para HF, sigue siendo útil
   ttsMinInterval: 2000,   // 2 segundos entre frases TTS
-  imageQuality: 0.3,      // Calidad JPEG baja para velocidad
+  imageQuality: 0.25,     // Calidad JPEG baja para acelerar transferencia
 };

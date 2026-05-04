@@ -33,16 +33,17 @@ interface GuidanceData {
 const SAFE_CONFIRMATION_DELAY = 3000;
 // Tiempo mínimo entre dos INTERRUPTs seguidos (evita cortar audio que acaba de empezar)
 const MIN_INTERRUPT_INTERVAL = 1500;
-// Cooldown por obstáculo único: no repetir advertencia del mismo obstáculo/posición
-const OBSTACLE_REPEAT_COOLDOWN = 6000;
-// Cooldown extendido cuando la escena está estable (usuario parado): 18s
-const STABLE_SCENE_COOLDOWN = 18000;
+// Cooldown por obstáculo único: no repetir advertencia del mismo obstáculo.
+// 8s da suficiente espacio para que se reproduzca el audio + procesamiento
+// del usuario, sin que la misma alerta de "escritorio al frente" se repita.
+const OBSTACLE_REPEAT_COOLDOWN = 8000;
+// Cooldown extendido cuando la escena está estable (usuario parado): 15s
+const STABLE_SCENE_COOLDOWN = 15000;
 // Cada cuánto reasegurar al usuario "camino libre" si todo está OK (ms)
 const REASSURANCE_INTERVAL = 12000;
-// Mínimo absoluto entre cualquier dos TTS no-críticos. Garantiza que el
-// usuario tenga tiempo de oír y procesar cada frase antes de que llegue otra.
-// Solo CRITICAL puede saltar este límite (peligro inmediato).
-const MIN_GLOBAL_TTS_INTERVAL = 4500;
+// Mínimo absoluto entre cualquier dos TTS no-críticos. CRITICAL y HIGH
+// danger lo saltan (peligro inmediato debe ser inmediato).
+const MIN_GLOBAL_TTS_INTERVAL = 2500;
 
 export class RealtimeTtsManager {
   private lastSpeakTime = 0;
@@ -56,6 +57,73 @@ export class RealtimeTtsManager {
                                    // posición (frente↔lateral) re-disparen el TTS
   private obstacleLastSpokenAt: Record<string, number> = {};  // guidance_key → timestamp
   private lastReassurance = 0;     // última vez que se reaseguró "camino libre"
+
+  // Cola de alerta pendiente — modelo Waze. Si llega una alerta mientras el
+  // ttsManager está hablando, NO se reproduce. Se guarda como pendiente, y
+  // cuando el audio actual termina, se reproduce la última pendiente (si
+  // sigue siendo relevante: <2s vieja, scene no cambió drásticamente).
+  private pendingAlert: {
+    summary: string;
+    guidanceKey: string;
+    priority: TtsPriority;
+    queuedAt: number;
+  } | null = null;
+  private speakingListenerCleanup: (() => void) | null = null;
+
+  constructor() {
+    // Suscribirse al evento de fin de habla del ttsManager.
+    // Cuando se vuelve false (terminó audio), se reproduce la pendiente.
+    this.speakingListenerCleanup = ttsManager.onSpeakingChange((speaking) => {
+      if (!speaking) this.flushPendingAlert();
+    });
+  }
+
+  /** Reproduce la alerta pendiente si todavía es relevante. */
+  private flushPendingAlert(): void {
+    if (!this.pendingAlert) return;
+    const alert = this.pendingAlert;
+    this.pendingAlert = null;
+
+    // Si la alerta es vieja (>2s), descartarla — la escena ya cambió
+    const age = Date.now() - alert.queuedAt;
+    if (age > 2000) return;
+
+    // Reproducir la alerta diferida
+    this.lastSummary = alert.summary;
+    this.lastGuidanceKey = alert.guidanceKey;
+    this.lastSpeakTime = Date.now();
+    if (alert.guidanceKey) {
+      this.obstacleLastSpokenAt[alert.guidanceKey] = Date.now();
+    }
+    ttsManager.speak(alert.summary, alert.priority);
+  }
+
+  /** Decide: hablar ya, encolar, o descartar. Modelo Waze. */
+  private speakOrQueue(
+    summary: string,
+    guidanceKey: string | undefined,
+    priority: TtsPriority,
+  ): void {
+    const now = Date.now();
+
+    // Si hay audio sonando, encolar (reemplaza pendiente anterior)
+    if (ttsManager.isSpeaking()) {
+      this.pendingAlert = {
+        summary,
+        guidanceKey: guidanceKey ?? '',
+        priority,
+        queuedAt: now,
+      };
+      return;
+    }
+
+    // No hay audio sonando: hablar directamente
+    this.lastSummary = summary;
+    this.lastGuidanceKey = guidanceKey ?? '';
+    this.lastSpeakTime = now;
+    if (guidanceKey) this.obstacleLastSpokenAt[guidanceKey] = now;
+    ttsManager.speak(summary, priority);
+  }
 
   setMode(mode: NaviaMode): void {
     this.mode = mode;
@@ -145,10 +213,12 @@ export class RealtimeTtsManager {
     );
     if (isObstacleCooldownActive) return;
 
-    // Cooldown GLOBAL: ningún TTS no-crítico dentro de los 4.5s del anterior.
-    // CRITICAL salta este límite (peligro inmediato).
+    // Cooldown GLOBAL: solo aplica a alertas no-peligrosas (informativas).
+    // CRITICAL y HIGH danger lo saltan — un peligro real no espera 2.5s.
     const isCritical = guidanceData?.has_danger && guidanceData.priority === 'critical';
-    if (!isCritical && (now - this.lastSpeakTime) < MIN_GLOBAL_TTS_INTERVAL) {
+    const isHighDanger = guidanceData?.has_danger && guidanceData.priority === 'high';
+    const isUrgent = isCritical || isHighDanger;
+    if (!isUrgent && (now - this.lastSpeakTime) < MIN_GLOBAL_TTS_INTERVAL) {
       return;
     }
 
@@ -185,18 +255,16 @@ export class RealtimeTtsManager {
       return;
     }
 
-    // Peligro high: prioridad alta
+    // Peligro HIGH: modelo Waze. Si hay audio sonando, NO interrumpe — se
+    // queda como alerta pendiente. Cuando el audio actual termina, la
+    // pendiente se reproduce (si sigue siendo relevante, <2s).
+    // Esto evita "escritorio escritorio escritorio" cortándose entre frames.
     if (guidanceData?.has_danger && guidanceData.priority === 'high') {
       if (now - this.lastHighDangerSpeak < REALTIME_CONFIG.ttsMinInterval) return;
-      if (now - this.lastSpeakTime < REALTIME_CONFIG.ttsMinInterval) return;
-      if (ttsManager.isSpeaking()) return;
       if (summary === this.lastSummary) return;
 
-      this.lastSummary = summary;
-      this.lastSpeakTime = now;
       this.lastHighDangerSpeak = now;
-      if (guidanceKey) this.obstacleLastSpokenAt[guidanceKey] = now;
-      ttsManager.speak(summary, TtsPriority.HIGH);
+      this.speakOrQueue(summary, guidanceKey, TtsPriority.HIGH);
       return;
     }
 
@@ -220,21 +288,30 @@ export class RealtimeTtsManager {
 
     const now = Date.now();
     if (now - this.lastSpeakTime < REALTIME_CONFIG.ttsMinInterval) return;
-    if (ttsManager.isSpeaking()) return;
 
-    this.lastSummary = summary;
-    this.lastGuidanceKey = guidanceKey ?? '';
-    this.lastSpeakTime = now;
-    if (guidanceKey) this.obstacleLastSpokenAt[guidanceKey] = now;
-    ttsManager.speak(summary, TtsPriority.LOW);
+    // Modelo Waze: si está hablando, encolar; si no, hablar
+    this.speakOrQueue(summary, guidanceKey, TtsPriority.LOW);
+  }
+
+  /** Limpieza al desmontar (importante para no fugar listeners). */
+  cleanup(): void {
+    if (this.speakingListenerCleanup) {
+      this.speakingListenerCleanup();
+      this.speakingListenerCleanup = null;
+    }
+    this.pendingAlert = null;
   }
 
   stop(): void {
     ttsManager.stop();
   }
 
+  /**
+   * Reinicia SOLO el estado interno (cooldowns, fingerprints…). NO detiene
+   * el ttsManager global: el caller decide si quiere callar la voz.
+   * Esto evita matar audio que el caller acaba de iniciar (ej. "Detenido.").
+   */
   reset(): void {
-    ttsManager.stop();
     this.lastSpeakTime = 0;
     this.lastSummary = '';
     this.lastGuidanceKey = '';
@@ -244,5 +321,6 @@ export class RealtimeTtsManager {
     this.lastHighDangerSpeak = 0;
     this.lastReassurance = 0;
     this.obstacleLastSpokenAt = {};
+    this.pendingAlert = null;
   }
 }

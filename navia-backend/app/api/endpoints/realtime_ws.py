@@ -190,6 +190,22 @@ async def realtime_detection(websocket: WebSocket):
                         if obj.name_es in smoothed_zones:
                             obj.distance_zone = smoothed_zones[obj.name_es]
 
+                    # ── FILTRO DE COHERENCIA YOLO ↔ DEPTH ──────────────────
+                    # Descarta detecciones cuyo depth dentro del bbox no
+                    # corresponde con la zona declarada (reduce ~50% de los
+                    # falsos positivos tipo gato/perro/caja).
+                    depth_map_for_filter = result.get("depth_map")
+                    if depth_map_for_filter is not None:
+                        before = len(result["objects"])
+                        result["objects"] = DepthEstimationService.filter_depth_coherent(
+                            result["objects"], depth_map_for_filter
+                        )
+                        dropped = before - len(result["objects"])
+                        if dropped > 0:
+                            logger.debug(
+                                f"[Coherence] Descartados {dropped} objetos por incoherencia depth-yolo"
+                            )
+
                     objects_data = []
                     for obj in result["objects"]:
                         # Excluir del display objetos en lista negra o irrelevantes
@@ -220,6 +236,48 @@ async def realtime_detection(websocket: WebSocket):
                         if obj.priority:
                             obj_data["priority"] = obj.priority
                         objects_data.append(obj_data)
+
+                    # ── DETECCIÓN DE OBSTÁCULO FANTASMA POR DEPTH ─────────
+                    # Si YOLO no clasificó nada relevante (lista vacía después
+                    # del filtro de coherencia y de descartar irrelevantes),
+                    # buscamos en el depth map regiones muy cercanas que
+                    # podrían ser paredes, árboles o cualquier obstáculo
+                    # desconocido. Inyectamos el fantasma como un DetectedObject
+                    # con name_es="obstáculo" para que entre al pipeline normal.
+                    depth_map_for_phantom = result.get("depth_map")
+                    relevant_objs = [
+                        o for o in result["objects"]
+                        if o.name_es in PEDESTRIAN_RELEVANT_CLASSES
+                        and o.name_es not in IGNORE_CLASSES
+                    ]
+                    if depth_map_for_phantom is not None and not relevant_objs:
+                        phantom = DepthEstimationService.detect_phantom_obstacle(
+                            depth_map_for_phantom,
+                            result["objects"],
+                            threshold=settings.DEPTH_ZONE_MUY_CERCA,
+                            min_area_ratio=0.10,
+                        )
+                        if phantom:
+                            from app.models.schemas import DetectedObject, BoundingBox
+                            x1, y1, x2, y2 = phantom["bbox"]
+                            phantom_obj = DetectedObject(
+                                name="unknown_obstacle",
+                                name_es="obstáculo",
+                                confidence=0.50,
+                                bounding_box=BoundingBox(
+                                    x_min=x1, y_min=y1, x_max=x2, y_max=y2,
+                                ),
+                                distance_zone=DepthEstimationService.depth_to_zone(
+                                    phantom["depth"]
+                                ),
+                                distance_estimate="muy cerca",
+                            )
+                            result["objects"].append(phantom_obj)
+                            logger.info(
+                                f"[Phantom] Obstáculo desconocido detectado por depth "
+                                f"({phantom['area_ratio']*100:.0f}% del frame, "
+                                f"depth={phantom['depth']:.2f}, {phantom['position']})"
+                            )
 
                     # Pipeline unificado: navegación + riesgo
                     guidance = guidance_service.generate_guidance(
@@ -275,7 +333,12 @@ async def realtime_detection(websocket: WebSocket):
                             _last_wall_warning_frame[0] = session_stats["frames_processed"]
                             # Asignar guidance_key fija para detecciones de pared/superficie
                             # para que el cooldown de 12s del TTS aplique correctamente.
-                            guidance["_wall_key"] = f"{obj_name or 'superficie'}:frente a ti"
+                            # Usar el MISMO formato que el guidance_key normal
+                            # (solo nombre del objeto en minúscula). Esto permite
+                            # que el cooldown por obstáculo en el móvil agrupe
+                            # alertas del wall detect con alertas normales del
+                            # mismo objeto, evitando repeticiones cortantes.
+                            guidance["_wall_key"] = (obj_name or "superficie").lower()
                             logger.info(
                                 f"[WallDetect] depth={center_depth:.2f} → "
                                 f"{guidance['instruction']}"

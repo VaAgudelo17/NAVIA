@@ -56,7 +56,9 @@ uploads/*
 !uploads/.gitkeep
 
 # --- Modelos descargados (muy grandes) ---
-models/
+# /models/ con slash inicial → solo el del root, NO app/models/ que tiene
+# los schemas Pydantic y debe estar en el repo.
+/models/
 *.pt
 *.onnx
 *.pth

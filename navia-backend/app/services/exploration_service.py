@@ -32,6 +32,11 @@ import cv2
 from app.models.schemas import DetectedObject, ExplorationResponse, BoundingBox
 from app.services.object_detection_service import get_object_detection_service, GENDER_MAP
 
+# Géneros para nombres genéricos que NAVIA usa internamente (no son clases de YOLO)
+GENDER_MAP.setdefault('mascota', 'f')
+GENDER_MAP.setdefault('obstáculo', 'm')
+GENDER_MAP.setdefault('animal', 'm')
+
 logger = logging.getLogger(__name__)
 
 
@@ -236,7 +241,34 @@ class ExplorationService:
         - NO deduplica por nombre: si hay 3 personas en posiciones distintas,
           las 3 deben pasar. La deduplicación real la hace _deduplicate_by_overlap
           usando IoU: solo elimina detecciones del mismo objeto físico.
+
+        Aplica umbrales por clase para reducir confusiones comunes de
+        YOLO-World (que matchea por similitud con embeddings CLIP):
+        - gato/perro suelen confundirse → exigir alta confianza
+        - cajas se confunden con cualquier objeto cúbico
         """
+        # Umbrales mínimos para clases con alta tasa de confusión.
+        # Si la confianza es menor, descartar (probablemente etiqueta errada).
+        PER_CLASS_MIN_CONFIDENCE = {
+            'gato': 0.55,
+            'perro': 0.55,
+            'gatito': 0.55,
+            'cachorro': 0.55,
+            'caja de cartón': 0.55,
+            'caja de pañuelos': 0.60,
+            'maleta': 0.50,
+            'mochila': 0.50,
+        }
+
+        # Si la confianza está entre el mínimo y este umbral, NO descartamos
+        # pero usamos nombre genérico "mascota". Razón: YOLO-World confunde
+        # gato/perro especialmente cuando el animal tiene ropa o accesorios
+        # (sesgo del entrenamiento — muchos perros vestidos, pocos gatos).
+        # Para un usuario ciego, "mascota frente a ti" es más útil que la
+        # etiqueta incorrecta.
+        GENERIC_ANIMAL_THRESHOLD = 0.70
+        GENERIC_ANIMAL_NAMES = {'gato', 'perro', 'gatito', 'cachorro'}
+
         result: List[DetectedObject] = []
 
         for obj in objects:
@@ -247,10 +279,32 @@ class ExplorationService:
             if name_en in IGNORED_CLASSES or name_es in IGNORED_CLASSES:
                 continue
 
+            # Filtrar por confianza específica de clase ambigua
+            min_conf = PER_CLASS_MIN_CONFIDENCE.get(name_es)
+            if min_conf is not None and obj.confidence < min_conf:
+                logger.debug(
+                    f"[Exploración/Class] Descartado '{name_es}' "
+                    f"({obj.confidence:.0%} < {min_conf:.0%} requerido para clase ambigua)"
+                )
+                continue
+
             # Normalizar nombre para mostrar (no afecta deduplicación)
             canonical = SYNONYM_MAP.get(name_es, name_es)
             if canonical != name_es:
                 obj.name_es = canonical
+                name_es = canonical
+
+            # Si es un animal pequeño con confianza dudosa, usar nombre genérico
+            # "mascota" en vez de arriesgar etiqueta incorrecta (gato↔perro)
+            if (
+                name_es in GENERIC_ANIMAL_NAMES
+                and obj.confidence < GENERIC_ANIMAL_THRESHOLD
+            ):
+                logger.info(
+                    f"[Exploración/Genérico] '{name_es}' ({obj.confidence:.0%}) "
+                    f"→ 'mascota' (confianza dudosa, evitando confusión gato/perro)"
+                )
+                obj.name_es = 'mascota'
 
             result.append(obj)
 
@@ -289,8 +343,18 @@ class ExplorationService:
         Objetos inanimados usan el umbral estándar (0.45).
         """
         PERSON_NAMES = {"persona", "niño", "bebé", "persona en silla de ruedas"}
+        # Clases que se confunden entre sí — usar umbral IoU MÁS BAJO para que
+        # aunque YOLO devuelva ambos con bboxes ligeramente distintos, solo
+        # quede el de mayor confianza.
+        AMBIGUOUS_GROUPS = [
+            {"gato", "perro", "gatito", "cachorro"},
+            {"caja de cartón", "caja de pañuelos", "maleta", "mochila"},
+        ]
         candidates = sorted(objects, key=lambda o: o.confidence, reverse=True)
         kept: List[DetectedObject] = []
+
+        def in_same_ambiguous_group(a: str, b: str) -> bool:
+            return any(a in g and b in g for g in AMBIGUOUS_GROUPS)
 
         for obj in candidates:
             duplicate = False
@@ -299,7 +363,15 @@ class ExplorationService:
             threshold = 0.75 if is_person else iou_threshold
 
             for accepted in kept:
-                if self._iou(obj.bounding_box, accepted.bounding_box) > threshold:
+                # Si son del mismo grupo ambiguo, ser MUY estricto: cualquier
+                # solapamiento >15% se considera duplicado. Esto cubre el caso
+                # donde YOLO-World devuelve dos bboxes ligeramente desplazados
+                # del mismo animal con etiquetas distintas (gato/perro).
+                effective_threshold = threshold
+                if in_same_ambiguous_group(obj.name_es, accepted.name_es):
+                    effective_threshold = 0.15
+
+                if self._iou(obj.bounding_box, accepted.bounding_box) > effective_threshold:
                     logger.debug(
                         f"[Exploración] Descartado '{obj.name_es}' ({obj.confidence:.0%}) "
                         f"por solapamiento con '{accepted.name_es}' ({accepted.confidence:.0%})"

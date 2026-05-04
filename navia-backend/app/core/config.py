@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # Umbral de confianza: balance entre detectar objetos y evitar falsos positivos
     YOLO_CONFIDENCE_THRESHOLD: float = 0.35
     # Umbral específico para exploración (bajo para capturar TVs apagados, espejos, etc.)
-    YOLO_EXPLORATION_CONFIDENCE: float = 0.28
+    YOLO_EXPLORATION_CONFIDENCE: float = 0.40  # subido de 0.28 — reduce confusión gato/perro y cajas
 
     # --- CONFIGURACIÓN WEBSOCKET TIEMPO REAL ---
     WS_MAX_FRAME_SIZE: int = 5 * 1024 * 1024  # 5 MB máximo por frame

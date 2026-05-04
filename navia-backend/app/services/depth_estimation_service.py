@@ -273,6 +273,158 @@ class DepthEstimationService:
         return "lejos"
 
     @staticmethod
+    def filter_depth_coherent(
+        objects: list,
+        depth_map: np.ndarray,
+    ) -> list:
+        """
+        Descarta detecciones de YOLO cuyo depth dentro de su bbox NO es
+        coherente con la zona declarada. Reduce falsos positivos del tipo
+        "perro muy cerca" cuando en realidad el depth dice que el bbox
+        está lejos (probablemente YOLO confundió un patrón).
+
+        Reglas:
+        - Si declara "muy_cerca" → depth medio del bbox debe ser > 0.40
+        - Si declara "cerca"     → depth medio debe ser > 0.20
+        - "lejos" no se filtra (no aporta seguridad descartar lejanos)
+
+        Es un FILTRO conservador: solo descarta cuando hay desacuerdo
+        FUERTE. Si la diferencia es marginal, mantiene la detección.
+        """
+        if depth_map is None or not objects:
+            return objects
+
+        h, w = depth_map.shape[:2]
+        kept = []
+        for obj in objects:
+            if obj.bounding_box is None or obj.distance_zone is None:
+                kept.append(obj)
+                continue
+
+            bbox = obj.bounding_box
+            x1 = max(0, int(bbox.x_min))
+            y1 = max(0, int(bbox.y_min))
+            x2 = min(w, int(bbox.x_max))
+            y2 = min(h, int(bbox.y_max))
+            if x2 <= x1 or y2 <= y1:
+                kept.append(obj)
+                continue
+
+            bbox_depth = float(np.mean(depth_map[y1:y2, x1:x2]))
+
+            zone = obj.distance_zone
+            keep = True
+            if zone == "muy_cerca" and bbox_depth < 0.40:
+                keep = False
+            elif zone == "cerca" and bbox_depth < 0.20:
+                keep = False
+
+            if keep:
+                kept.append(obj)
+        return kept
+
+    @staticmethod
+    def detect_phantom_obstacle(
+        depth_map: np.ndarray,
+        yolo_objects: list,
+        threshold: float = 0.55,
+        min_area_ratio: float = 0.10,
+    ) -> Optional[Dict]:
+        """
+        Encuentra UNA región muy cercana en el depth map que YOLO NO
+        clasificó (paredes, árboles, obstáculos desconocidos).
+
+        Devuelve un dict con bbox, depth promedio y posición horizontal,
+        o None si no encuentra nada significativo.
+
+        Algoritmo:
+        1. Crea máscara de zonas con depth > threshold
+        2. Borra de la máscara las zonas cubiertas por bboxes de YOLO
+        3. Encuentra la mayor componente conexa restante
+        4. Si su área >= min_area_ratio del frame, es un obstáculo fantasma
+        """
+        if depth_map is None:
+            return None
+
+        h, w = depth_map.shape[:2]
+        img_area = h * w
+        if img_area == 0:
+            return None
+
+        # 1. Máscara binaria de zonas muy cercanas
+        close_mask = (depth_map > threshold).astype(np.uint8)
+
+        # 2. Borrar zonas cubiertas por YOLO bboxes (con margen del 5% para
+        #    evitar detectar el "halo" del depth alrededor del objeto)
+        for obj in yolo_objects:
+            if obj.bounding_box is None:
+                continue
+            bbox = obj.bounding_box
+            margin_x = int((bbox.x_max - bbox.x_min) * 0.05)
+            margin_y = int((bbox.y_max - bbox.y_min) * 0.05)
+            x1 = max(0, int(bbox.x_min) - margin_x)
+            y1 = max(0, int(bbox.y_min) - margin_y)
+            x2 = min(w, int(bbox.x_max) + margin_x)
+            y2 = min(h, int(bbox.y_max) + margin_y)
+            close_mask[y1:y2, x1:x2] = 0
+
+        # 3. Encontrar componentes conexas
+        # Usamos cv2.connectedComponentsWithStats para no agregar dependencia
+        try:
+            import cv2
+            num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+                close_mask, connectivity=8
+            )
+        except Exception:
+            return None
+
+        if num_labels <= 1:
+            return None  # Solo background
+
+        # Buscar componente más grande (excluye label 0 = background)
+        largest_label = 0
+        largest_area = 0
+        for i in range(1, num_labels):
+            area = int(stats[i, cv2.CC_STAT_AREA])
+            if area > largest_area:
+                largest_area = area
+                largest_label = i
+
+        if largest_label == 0:
+            return None
+
+        # 4. Verificar que sea suficientemente grande
+        if largest_area / img_area < min_area_ratio:
+            return None
+
+        # Extraer bbox del componente
+        x = int(stats[largest_label, cv2.CC_STAT_LEFT])
+        y = int(stats[largest_label, cv2.CC_STAT_TOP])
+        bw = int(stats[largest_label, cv2.CC_STAT_WIDTH])
+        bh = int(stats[largest_label, cv2.CC_STAT_HEIGHT])
+
+        # Profundidad promedio dentro del componente
+        component_mask = (labels == largest_label)
+        component_depth = float(np.mean(depth_map[component_mask]))
+
+        # Posición horizontal del centro del componente
+        cx = x + bw / 2
+        ratio_x = cx / w
+        if ratio_x < 0.35:
+            position = "a tu izquierda"
+        elif ratio_x > 0.65:
+            position = "a tu derecha"
+        else:
+            position = "frente a ti"
+
+        return {
+            "bbox": (x, y, x + bw, y + bh),
+            "depth": component_depth,
+            "area_ratio": largest_area / img_area,
+            "position": position,
+        }
+
+    @staticmethod
     def compute_directional_depth(
         depth_map: np.ndarray,
     ) -> Dict[str, float]:

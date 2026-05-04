@@ -47,6 +47,7 @@ ENV DEBUG_MODE=False
 ENV HF_HOME=/app/.cache/huggingface
 ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
 
-EXPOSE 8000
+# Hugging Face Spaces usa 7860 por defecto. Railway/Render setean PORT.
+EXPOSE 7860
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-7860}"]

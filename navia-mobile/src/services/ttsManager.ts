@@ -63,17 +63,46 @@ function normalizeForTts(text: string): string {
     .replace(/(\d+(?:[.,]\d+)?)\s*hr?s?\b/gi, '$1 horas')
     // Porcentajes: "85%" → "85 por ciento"
     .replace(/(\d+(?:[.,]\d+)?)\s*%/g, '$1 por ciento')
+    // Precios: descartar decimales que sean .00 o .0 (suena raro: "veinte mil punto cero cero")
+    // 20000.00 → 20000  ;  5.0 → 5  ;  100.5 → se mantiene
+    .replace(/(\d+)[.,]0+(?=\D|$)/g, '$1')
+    // Decimales que SÍ tienen valor: "19.99" → "19 con 99"
+    .replace(/(\d+)[.,](\d+)/g, '$1 con $2')
+    // Símbolo de pesos pegado: "$5000" → "5000 pesos"
+    .replace(/\$\s*(\d+)/g, '$1 pesos')
     // Limpiar espacios múltiples
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 }
 
-// Frases de navegación que se pre-generan al arrancar la app
+// Frases que se pre-generan al arrancar la app para que se reproduzcan
+// instantáneamente sin esperar al backend (importante cuando el TTS está
+// en un servidor lento como HF Spaces).
 const PREWARM_PHRASES = [
+  // Navegación
   'Camino libre.',
   'Atención.',
   'Precaución.',
+  // Bienvenida
   'Bienvenido a NAVIA, tu asistente visual. Selecciona un modo y toca Iniciar Cámara.',
+  // Confirmaciones de modo (ya normalizadas por normalizeForTts: galería→fotos guardadas, etc.)
+  'Modo Navegación. Navegación asistida con peligro.',
+  'Modo Exploración. Describe el entorno.',
+  'Modo Lectura. Lee textos.',
+  // Acciones de UI
+  'Cámara lista. Toca la pantalla para capturar.',
+  'Cerrando cámara.',
+  'iniciando fotos guardadas.', // "Abriendo galería" después de normalizeForTts
+  'Cerrando fotos guardadas.',  // "Cerrando galería" después de normalizeForTts
+  'Detenido.',
+  'Volviendo al inicio.',
+  'Volviendo al historial.',
+  'Procesando imagen, por favor espera.',
+  'iniciando configuración visual.', // "Abriendo configuración..."
+  'Configuración guardada. De vuelta al inicio.',
+  'iniciando historial.',
+  'Voz activada.',
+  'Voz desactivada.',
 ];
 
 class TtsManager {
@@ -87,6 +116,11 @@ class TtsManager {
   // Promesa que resuelve cuando el sonido anterior termina de detenerse/descargarse.
   // speakNow la espera antes de reproducir uno nuevo para evitar doble voz.
   private stopPromise: Promise<void> | null = null;
+  // Contador de "época": se incrementa en cada stop(). Permite que un
+  // playAudioFile en vuelo detecte si hubo un stop mientras estaba cargando
+  // el sonido, y descartarlo en lugar de reproducirlo (evita voces mezcladas
+  // cuando el usuario interrumpe durante una carga lenta del backend).
+  private playEpoch = 0;
   // Listeners para que la UI pueda reaccionar a cambios del estado de habla
   // (ej. animación de onda de voz que solo se muestra mientras suena el TTS).
   private speakingListeners: Set<(speaking: boolean) => void> = new Set();
@@ -142,6 +176,9 @@ class TtsManager {
   }
 
   stop(): void {
+    // Invalidar cualquier playAudioFile en vuelo para que descarte su sonido
+    // si termina de cargar después de este stop.
+    this.playEpoch++;
     this.queue = [];
     this.currentFetchController?.abort();
     this.currentFetchController = null;
@@ -220,13 +257,23 @@ class TtsManager {
   }
 
   private async playAudioFile(fileUri: string): Promise<void> {
-    // Crear el sonido SIN reproducir todavía. Así, si stop() se llama
-    // antes de que registremos currentSound, no hay un sonido huérfano
-    // sonando que stop() no podría detener.
+    // Capturar la época ANTES de crear el sonido. Si stop() se llama mientras
+    // createAsync está cargando (puede tomar segundos), playEpoch cambia.
+    // Después comparamos: si la época cambió, descartamos el sonido sin
+    // reproducirlo. Cero riesgo de "voces mezcladas".
+    const myEpoch = this.playEpoch;
+
     const { sound } = await Audio.Sound.createAsync(
       { uri: fileUri },
       { shouldPlay: false, volume: 1.0 }
     );
+
+    // ¿Stop fue llamado durante la carga? Descartar este sonido.
+    if (myEpoch !== this.playEpoch) {
+      sound.unloadAsync().catch(() => {});
+      return;
+    }
+
     this.currentSound = sound;
 
     // Registrar listener antes de reproducir para no perder eventos

@@ -197,54 +197,14 @@ function buildAccuracySpeech(pct: number, mode: string): string {
   return `Exactitud: ${pct.toFixed(0)} por ciento. ${what}.`;
 }
 
-/** Narrativa completa que se reproduce al ABRIR el detalle.
- *  Lee todas las secciones de corrido y termina invitando al usuario a
- *  tocar cualquier sección para repetirla. */
+/** Narrativa CORTA que se reproduce al ABRIR el detalle.
+ *  Solo da un saludo + resumen breve + invita a tocar cards.
+ *  Las cards se tocan para escuchar cada sección por separado.
+ *  Esto evita esperas largas en backends lentos como HF Spaces. */
 function buildHistoryDetailNarrative(item: HistoryEntry): string {
   const mode = HISTORY_MODE_LABELS[item.mode] || item.mode;
-  const data = (item.resultData || {}) as any;
-  const objects = data.objects as any[] | undefined;
-
-  const parts: string[] = [];
-  parts.push(`Abriendo detalle de ${mode}.`);
-
-  // Resumen corto
-  parts.push(buildShortSummary(item));
-
-  // Exactitud (si aplica)
-  let accuracyPct: number | null = null;
-  if (item.mode === 'lectura' && data.confidence !== undefined) {
-    const c = typeof data.confidence === 'number' ? data.confidence : Number(data.confidence);
-    accuracyPct = c <= 1 ? c * 100 : c;
-  } else if (item.mode === 'exploracion' && objects && objects.length > 0) {
-    const avg = objects.reduce((s, o) => s + (o.confidence || 0), 0) / objects.length;
-    accuracyPct = avg * 100;
-  }
-  if (accuracyPct !== null) {
-    parts.push(buildAccuracySpeech(accuracyPct, item.mode));
-  }
-
-  // Sesión
-  parts.push(buildSessionSpeech(item));
-
-  // Estadísticas
-  const stats = buildStatsSpeech(item);
-  if (stats && stats !== 'Sin estadísticas.') parts.push(stats);
-
-  // Obstáculos (solo navegación) o objetos (solo exploración)
-  if (item.mode === 'navegacion') {
-    const obstacleCounts = (data.topObstacles ?? data.obstacle_counts) as Record<string, number> | undefined;
-    if (obstacleCounts && Object.keys(obstacleCounts).length > 0) {
-      parts.push(buildObstaclesSpeech(item));
-    }
-  } else if (item.mode === 'exploracion' && objects && objects.length > 0) {
-    parts.push(buildObjectsSpeech(item));
-  }
-
-  // Cierre — invitación a repetir
-  parts.push('Si quieres escuchar una sección de nuevo, tócala.');
-
-  return parts.join(' ');
+  const summary = buildShortSummary(item);
+  return `Abriendo detalle de ${mode}. ${summary} Toca cada sección para escuchar más.`;
 }
 
 // Configuración de cada modo
@@ -1220,8 +1180,23 @@ export function HomeScreen() {
           {/* Lista de items */}
           {historyItems.map((item) => {
             const date = new Date(item.createdAt);
+            // Visual: corto. Para hablar: completo y natural.
             const timeStr = date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
             const dateStr = date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+            const dateLong = date.toLocaleDateString('es-ES', { day: 'numeric', month: 'long' });
+            // Convertir hora 24h a 12h con momento del día (mañana/tarde/noche)
+            const h24 = date.getHours();
+            const minute = date.getMinutes();
+            const period =
+              h24 < 6 ? 'de la madrugada'
+              : h24 < 12 ? 'de la mañana'
+              : h24 < 19 ? 'de la tarde'
+              : 'de la noche';
+            const h12 = h24 === 0 ? 12 : h24 > 12 ? h24 - 12 : h24;
+            const hourSpoken = minute === 0
+              ? `${h12} en punto ${period}`
+              : `${h12} y ${minute < 10 ? '0' + minute : minute} ${period}`;
+            const modeLabel = modeLabels[item.mode] || item.mode;
 
             return (
               <TouchableOpacity
@@ -1229,7 +1204,8 @@ export function HomeScreen() {
                 style={styles.historyItem}
                 onPress={() => {
                   // Doble tap (≤400 ms entre dos toques en el MISMO item) abre el detalle.
-                  // Single tap solo anuncia el modo y la fecha — no lee todo el resumen.
+                  // Single tap anuncia: el modo (especificando que es un registro),
+                  // fecha completa y hora natural ("3 de mayo a las 8 y 30 de la noche").
                   const now = Date.now();
                   const isDoubleTap =
                     lastTapRef.current.id === item.id &&
@@ -1237,20 +1213,17 @@ export function HomeScreen() {
                   lastTapRef.current = { id: item.id, time: now };
 
                   if (isDoubleTap) {
-                    // Detener cualquier voz previa. La narrativa completa la
-                    // dispara el useEffect cuando selectedHistoryItem cambia,
-                    // con prioridad INTERRUPT para que suene seguro.
                     ttsManager.stop();
                     setSelectedHistoryItem(item);
                   } else {
                     ttsManager.stop();
                     ttsManager.speak(
-                      `${modeLabels[item.mode] || item.mode}, ${dateStr} a las ${timeStr}. Toca dos veces para ver detalles.`,
+                      `Este registro corresponde al modo ${modeLabel}. Sesión del ${dateLong} a las ${hourSpoken}. Toca dos veces para ver los detalles.`,
                       TtsPriority.INTERRUPT,
                     );
                   }
                 }}
-                accessibilityLabel={`${modeLabels[item.mode] || item.mode}, ${dateStr} ${timeStr}`}
+                accessibilityLabel={`Modo ${modeLabel}, ${dateLong} a las ${hourSpoken}`}
                 accessibilityHint="Toca dos veces para ver los detalles"
               >
                 <View style={styles.historyItemIcon}>
