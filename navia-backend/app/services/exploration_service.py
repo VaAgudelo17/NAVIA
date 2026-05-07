@@ -131,6 +131,8 @@ class ExplorationService:
         if not self._initialized:
             logger.info("Inicializando ExplorationService...")
             self.detection_service = get_object_detection_service()
+            # Usar lista curada sin clases que generan falsos positivos frecuentes
+            self.detection_service.configure_for_exploration()
             from app.services.ocr_service import get_ocr_service
             self.ocr_service = get_ocr_service()
             self._initialized = True
@@ -203,9 +205,9 @@ class ExplorationService:
                     enriched["accessories"] = person_accessories[obj_name]
                 enriched_objects.append(enriched)
             
-            # 6. Generar narrativa estructurada (sin OCR: la lectura de texto la
-            #    cubre el modo Lectura. Acá el OCR generaba ruido tipo "eel fio wie".)
-            description = self._generate_narrative(enriched_objects, None, all_objects)
+            # 6. Generar narrativa: primero intenta OpenAI (más preciso y empático),
+            #    si falla cae al generador local de plantillas.
+            description = self._generate_description(image, enriched_objects, all_objects)
 
             return ExplorationResponse(
                 success=True,
@@ -250,14 +252,23 @@ class ExplorationService:
         # Umbrales mínimos para clases con alta tasa de confusión.
         # Si la confianza es menor, descartar (probablemente etiqueta errada).
         PER_CLASS_MIN_CONFIDENCE = {
+            # Animales: YOLO-World confunde gato/perro fácilmente
             'gato': 0.55,
             'perro': 0.55,
             'gatito': 0.55,
             'cachorro': 0.55,
-            'caja de cartón': 0.55,
-            'caja de pañuelos': 0.60,
-            'maleta': 0.50,
-            'mochila': 0.50,
+            # Objetos rectangulares/cúbicos: YOLO-World etiqueta como "caja" cualquier
+            # superficie plana o rectángulo (libros, monitores, mesas, refrigeradores).
+            # Umbral muy alto para que solo pasen detecciones casi seguras.
+            'caja de cartón': 0.82,
+            'caja': 0.82,
+            'paquete': 0.80,
+            'envase': 0.78,
+            'caja de pañuelos': 0.78,
+            # Bolsos: también confundidos con otros objetos rectangulares
+            'maleta': 0.60,
+            'mochila': 0.60,
+            'bolso': 0.60,
         }
 
         # Si la confianza está entre el mínimo y este umbral, NO descartamos
@@ -348,7 +359,12 @@ class ExplorationService:
         # quede el de mayor confianza.
         AMBIGUOUS_GROUPS = [
             {"gato", "perro", "gatito", "cachorro"},
-            {"caja de cartón", "caja de pañuelos", "maleta", "mochila"},
+            # Objetos rectangulares que YOLO-World confunde entre sí:
+            # si dos de estos se solapan >15%, queda solo el de mayor confianza
+            {
+                "caja de cartón", "caja", "paquete", "envase",
+                "caja de pañuelos", "maleta", "mochila", "bolso",
+            },
         ]
         candidates = sorted(objects, key=lambda o: o.confidence, reverse=True)
         kept: List[DetectedObject] = []
@@ -951,7 +967,33 @@ class ExplorationService:
         return None
 
     # =========================================================================
-    # 7. GENERACIÓN DE NARRATIVA ESTRUCTURADA
+    # 7. GENERACIÓN DE DESCRIPCIÓN (OpenAI → fallback local)
+    # =========================================================================
+    def _generate_description(
+        self,
+        image: np.ndarray,
+        enriched_objects: List[Dict],
+        all_objects: Optional[List[DetectedObject]],
+    ) -> str:
+        """
+        Intenta generar la descripción con GPT-4o Vision (validación + narrativa empática).
+        Si OpenAI no está disponible o falla, usa el generador local de plantillas.
+        """
+        try:
+            from app.services.openai_service import get_openai_service
+            logger.info("[Exploración] Llamando a GPT-4o Vision...")
+            result = get_openai_service().validate_and_describe(image, enriched_objects)
+            if result:
+                logger.info(f"[Exploración] GPT-4o respondió: {result[:80]}")
+                return result
+            logger.warning("[Exploración] GPT-4o devolvió vacío, usando narrativa local")
+        except Exception as e:
+            logger.warning(f"[Exploración] OpenAI falló, usando narrativa local: {e}")
+
+        return self._generate_narrative(enriched_objects, None, all_objects)
+
+    # =========================================================================
+    # 7.5. NARRATIVA LOCAL (plantillas — fallback sin OpenAI)
     # =========================================================================
     def _generate_narrative(
         self,

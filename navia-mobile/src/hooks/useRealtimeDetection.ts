@@ -211,19 +211,17 @@ export function useRealtimeDetection({
     }
 
     return () => {
-      // Solo detener TTS si había una sesión activa (interval corriendo).
-      // Si el effect se re-ejecuta solo por cambio de modo (enabled=false),
-      // NO interrumpir el audio del botón que acaba de disparar ese cambio.
-      const hadActiveSession = intervalRef.current !== null;
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
       wsRef.current?.disconnect();
       wsRef.current = null;
-      if (hadActiveSession) {
-        ttsManagerRef.current.stop();
-      }
+      // Siempre detener y limpiar TTS al salir de navegación.
+      // Evita que una alerta pendiente (pendingAlert) o audio en curso
+      // del modo navegación se escuche después de volver al menú.
+      ttsManagerRef.current.stop();
+      ttsManagerRef.current.reset();
     };
   }, [enabled, mode]);
 

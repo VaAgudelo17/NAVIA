@@ -76,6 +76,7 @@ PEDESTRIAN_RELEVANT_CLASSES = {
     # Muebles principales (suficientes — no necesitamos cada variante)
     "silla", "mesa", "sofá", "cama", "escritorio",
     "banco", "mostrador", "mesa de comedor",
+    "armario",
     # Vehículos de paso lento
     "carrito de compras", "cochecito de bebé", "silla de ruedas",
     # Contenedores grandes en la calle
@@ -108,6 +109,7 @@ PEDESTRIAN_RELEVANT_CLASSES = {
     "reja", "ascensor",
     # ── VENTANAS Y SUPERFICIES ALTAS ─────────────────────────────────────────
     "ventana",                  # superficie de vidrio, peligro de colisión
+    "espejo",                   # superficie reflectante grande: colisión oculta
     "ventilador",               # peligro a altura de cabeza, riesgo de golpe
 
     # ── COCINA / LAVANDERÍA (interior) ───────────────────────────────────────
@@ -175,9 +177,11 @@ DANGER_WEIGHT: Dict[str, float] = {
     "contenedor de basura": 0.55,
 
     # ── PUERTAS: barrera o peligro de colisión ────────────────────────────────
+    "armario": 0.65,                 # mueble grande que bloquea el paso
+    "espejo": 0.65,                  # superficie reflectante: colisión oculta
     "puerta de vidrio": 0.75,       # invisible
     "puerta giratoria": 0.65,       # mecanismo en movimiento
-    "puerta cerrada": 0.55,         # obstáculo directo
+    "puerta cerrada": 0.65,         # obstáculo directo — subido de 0.55
     "puerta": 0.50, "puerta corrediza": 0.50,
     "puerta abierta": 0.35,         # menos peligro pero delimita el espacio
     "reja": 0.60, "ascensor": 0.40,
@@ -254,7 +258,9 @@ PELIGRO_CLASSES: set = {
 
 IGNORE_CLASSES: set = {
     # ── Elementos de pared / techo ────────────────────────────────────────────
-    "espejo", "espejo de baño", "espejo compacto",
+    # "espejo" movido a PEDESTRIAN_RELEVANT_CLASSES — superficie reflectante
+    # grande puede no identificarse como vidrio y causar colisión.
+    "espejo de baño", "espejo compacto",
     "cortina", "cortina de baño", "persiana",
     # NOTA: "ventana" se quitó de la lista negra. Es vidrio = peligro de colisión.
     "candelabro", "lámpara", "foco",
@@ -539,18 +545,18 @@ class NavigationGuidanceService:
         has_danger = priority in ("critical", "high")
 
         # --- PASO 5a: Detectar estabilidad de la escena (modelo Waze) ---
-        # Fingerprint: conjunto ordenado de (nombre, posición, proximidad) de
-        # los obstáculos mencionables. Si el fingerprint no cambia ≥3 frames,
-        # el usuario está parado y ya conoce la escena → suprimir TTS.
-        # En cuanto un obstáculo aparece, desaparece, o cambia de zona, el
-        # fingerprint cambia y la voz vuelve a hablar (con la nueva info).
+        # Fingerprint: nombre + posición horizontal + zona gruesa (cerca vs lejos).
+        # Se usa zona gruesa ("cerca" agrupa muy_cerca y cerca) porque el sensor
+        # de profundidad fluctúa entre esas dos zonas frame a frame aunque el
+        # usuario esté parado — con proximidad exacta el fingerprint nunca
+        # estabilizaba y el cooldown largo de 15s nunca aplicaba.
         mentionable_for_fingerprint = [
             a for a in analyzed
             if a["proximity"] in ("muy_cerca", "cerca")
             or a["movement"] == "acercandose"
         ]
         fingerprint_items = sorted(
-            f"{a['name_es']}|{a['position']}|{a['proximity']}"
+            f"{a['name_es']}|{a['position']}|{'cerca' if a['proximity'] in ('muy_cerca', 'cerca') else 'lejos'}"
             for a in mentionable_for_fingerprint
         )
         fingerprint = "::".join(fingerprint_items)
@@ -561,8 +567,8 @@ class NavigationGuidanceService:
             self._scene_unchanged_frames = 0
             self._last_scene_fingerprint = fingerprint
 
-        # 3 frames a ~3fps ≈ 1 segundo de inmovilidad
-        scene_stable = self._scene_unchanged_frames >= 3
+        # 5 frames a ~3fps ≈ ~1.7 segundos de inmovilidad para confirmar escena estable
+        scene_stable = self._scene_unchanged_frames >= 5
 
         # --- PASO 5b: Determinar tipo de alerta visual ---
         # "peligro"  → objeto intrínsecamente peligroso (vehículo, escalera, balcón,
@@ -950,7 +956,11 @@ class NavigationGuidanceService:
         ]
 
         if not mentionable:
-            return "Camino libre."
+            # Hay objetos pero todos están lejos y sin amenaza inmediata.
+            # Devolver vacío: la UI visual ya los muestra; decir "Camino libre."
+            # mientras el usuario ve objetos detectados confunde.
+            # La reaseguración periódica ("Camino libre.") la maneja el móvil.
+            return ""
 
         # Separar por posición
         front_obs = [a for a in mentionable if a["position"] == "frente a ti"]
@@ -976,33 +986,33 @@ class NavigationGuidanceService:
                 # Ningún lateral bloqueado: cualquiera sirve, prefiere derecha
                 free_side = "derecha"
 
+        PERSON_NAMES = {"persona", "niño", "bebé", "persona en silla de ruedas"}
+
         # --- Caso 1: hay obstáculo(s) al frente ---
         if front_obs:
-            # Hasta 2 nombres distintos al frente, evitando duplicados
-            seen = set()
-            front_names = []
-            for f in front_obs:
-                n = f["name_es"]
-                if n not in seen:
-                    front_names.append(n)
-                    seen.add(n)
-                if len(front_names) == 2:
-                    break
+            # Separar personas de obstáculos físicos
+            front_persons = [a for a in front_obs if a["name_es"] in PERSON_NAMES]
+            front_things  = [a for a in front_obs if a["name_es"] not in PERSON_NAMES]
+
+            # Si solo hay personas al frente: aviso informativo, sin dirección.
+            # Las personas se mueven solas — no tiene sentido decir "muévete a la derecha".
+            if front_persons and not front_things:
+                count = len(front_persons)
+                phrase = "Personas al frente." if count > 1 else "Hay una persona al frente."
+                return phrase
+
+            # Si hay obstáculos físicos (con o sin personas), usar el obstáculo top.
+            top_front = front_things[0] if front_things else front_obs[0]
+            obj_phrase = top_front["name_es"].capitalize()
 
             # ¿Hay clase intrínseca de peligro al frente?
-            has_danger = any(f["name_es"] in PELIGRO_CLASSES for f in front_obs[:2])
+            has_danger = top_front["name_es"] in PELIGRO_CLASSES
             prefix = "¡Cuidado! " if has_danger else ""
-
-            if len(front_names) == 1:
-                obj_phrase = front_names[0].capitalize()
-            else:
-                obj_phrase = f"{front_names[0].capitalize()} y {front_names[1]}"
 
             # Decidir acción
             if free_side:
                 action = f"Muévete a la {free_side}"
             else:
-                # Ambos lados bloqueados o sin info → detener
                 action = "Detente"
 
             return f"{prefix}{obj_phrase} al frente. {action}."

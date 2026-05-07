@@ -70,6 +70,10 @@ gtts>=2.5.0
 # Gemini Flash: gratis, rapido, excelente para documentos
 google-genai>=1.0.0
 
+# --- OPENAI ---
+# SDK oficial de OpenAI: GPT-4o Vision para validación y narrativa empática en modo exploración
+openai>=1.0.0
+
 # --- UTILIDADES ---
 # Pydantic: Validación de datos y configuración.
 pydantic>=2.9.0

@@ -30,20 +30,27 @@ interface GuidanceData {
 }
 
 // Tiempo mínimo sin peligro antes de decir "camino libre" (ms)
-const SAFE_CONFIRMATION_DELAY = 3000;
+const SAFE_CONFIRMATION_DELAY = 4000;
 // Tiempo mínimo entre dos INTERRUPTs seguidos (evita cortar audio que acaba de empezar)
-const MIN_INTERRUPT_INTERVAL = 1500;
-// Cooldown por obstáculo único: no repetir advertencia del mismo obstáculo.
-// 8s da suficiente espacio para que se reproduzca el audio + procesamiento
-// del usuario, sin que la misma alerta de "escritorio al frente" se repita.
-const OBSTACLE_REPEAT_COOLDOWN = 8000;
-// Cooldown extendido cuando la escena está estable (usuario parado): 15s
-const STABLE_SCENE_COOLDOWN = 15000;
+const MIN_INTERRUPT_INTERVAL = 2500;
+// Cooldown por obstáculo único: no repetir la misma alerta del mismo obstáculo.
+// 14s evita que un objeto estático (mesa, silla) se mencione repetidamente
+// mientras el usuario está parado o lo está evaluando.
+const OBSTACLE_REPEAT_COOLDOWN = 14000;
+// Cooldown extendido cuando la escena está estable (usuario parado): 25s
+const STABLE_SCENE_COOLDOWN = 25000;
 // Cada cuánto reasegurar al usuario "camino libre" si todo está OK (ms)
-const REASSURANCE_INTERVAL = 12000;
+const REASSURANCE_INTERVAL = 18000;
 // Mínimo absoluto entre cualquier dos TTS no-críticos. CRITICAL y HIGH
 // danger lo saltan (peligro inmediato debe ser inmediato).
-const MIN_GLOBAL_TTS_INTERVAL = 2500;
+const MIN_GLOBAL_TTS_INTERVAL = 3500;
+// Silencio después de una alerta CRITICAL: da tiempo al usuario para reaccionar
+// antes de oír la siguiente instrucción.
+const POST_CRITICAL_SILENCE = 5000;
+// Cooldown para repetir CRITICAL del MISMO obstáculo. Evita que un phantom
+// o un obstáculo fijo dispare CRITICAL cada 2.5s sin cesar. El usuario oye
+// la primera alerta, reacciona, y no la vuelve a oír hasta pasados 8s.
+const CRITICAL_SAME_KEY_COOLDOWN = 8000;
 
 export class RealtimeTtsManager {
   private lastSpeakTime = 0;
@@ -55,6 +62,7 @@ export class RealtimeTtsManager {
   private lastInterruptTime = 0;   // última vez que se lanzó INTERRUPT
   private lastHighDangerSpeak = 0; // cooldown global para HIGH: evita que cambios de
                                    // posición (frente↔lateral) re-disparen el TTS
+  private lastCriticalTime = 0;    // última vez que sonó una alerta CRITICAL
   private obstacleLastSpokenAt: Record<string, number> = {};  // guidance_key → timestamp
   private lastReassurance = 0;     // última vez que se reaseguró "camino libre"
 
@@ -84,9 +92,13 @@ export class RealtimeTtsManager {
     const alert = this.pendingAlert;
     this.pendingAlert = null;
 
-    // Si la alerta es vieja (>2s), descartarla — la escena ya cambió
+    // Si la alerta es vieja (>1s), descartarla — la escena ya cambió.
     const age = Date.now() - alert.queuedAt;
-    if (age > 2000) return;
+    if (age > 1000) return;
+
+    // Guardia contra doble voz: si entre el momento en que se encoló
+    // y ahora algo más ya empezó a hablar, descartar para no solapar.
+    if (ttsManager.isSpeaking()) return;
 
     // Reproducir la alerta diferida
     this.lastSummary = alert.summary;
@@ -222,26 +234,38 @@ export class RealtimeTtsManager {
       return;
     }
 
-    // ESCENA ESTABLE (modelo Waze): el backend marca scene_stable=true cuando
-    // el conjunto de obstáculos lleva varios frames idéntico (usuario parado
-    // o caminando muy lento sin que cambie nada). En ese caso suprimimos
-    // completamente el TTS — el usuario YA escuchó la advertencia y repetirla
-    // solo confunde. La voz vuelve cuando aparezca un nuevo obstáculo o
-    // alguno cambie de proximidad/zona, porque el fingerprint cambia y
-    // scene_stable vuelve a false.
+    // ESCENA ESTABLE (modelo Waze): suprimir repetición cuando la escena
+    // lleva varios frames idéntica. EXCEPCIÓN: si este guidanceKey nunca
+    // se ha hablado (primer aviso), hablar aunque la escena esté estable —
+    // puede ser un obstáculo nuevo que entró en campo mientras el usuario
+    // estaba quieto.
     if (!isCritical && guidanceData?.scene_stable) {
-      return;
+      const alreadySpoken = guidanceKey && !!this.obstacleLastSpokenAt[guidanceKey];
+      if (alreadySpoken) return;
     }
 
-    // Peligro critical: interrumpir speech actual (siempre, sin cooldown)
+    // Peligro critical: interrumpir speech actual.
+    // El mismo obstáculo no puede disparar CRITICAL más de una vez cada 8s —
+    // evita que un phantom fijo o una detección estable grite cada 2.5s.
     if (guidanceData?.has_danger && guidanceData.priority === 'critical') {
+      const lastSpokenAt = guidanceKey ? (this.obstacleLastSpokenAt[guidanceKey] ?? 0) : 0;
+      if (guidanceKey && (now - lastSpokenAt) < CRITICAL_SAME_KEY_COOLDOWN) return;
+
       if ((now - this.lastInterruptTime) >= MIN_INTERRUPT_INTERVAL) {
         this.lastSummary = summary;
         this.lastSpeakTime = now;
         this.lastInterruptTime = now;
+        this.lastCriticalTime = now;
         if (guidanceKey) this.obstacleLastSpokenAt[guidanceKey] = now;
         ttsManager.speak(summary, TtsPriority.INTERRUPT);
       }
+      return;
+    }
+
+    // Silencio post-CRITICAL: después de una alerta de peligro máximo, suprimir
+    // alertas no urgentes durante 5s para que el usuario pueda reaccionar sin
+    // que otra instrucción le interrumpa inmediatamente el pensamiento.
+    if (!isUrgent && (now - this.lastCriticalTime) < POST_CRITICAL_SILENCE) {
       return;
     }
 
@@ -319,6 +343,7 @@ export class RealtimeTtsManager {
     this.lastDangerTime = 0;
     this.lastInterruptTime = 0;
     this.lastHighDangerSpeak = 0;
+    this.lastCriticalTime = 0;
     this.lastReassurance = 0;
     this.obstacleLastSpokenAt = {};
     this.pendingAlert = null;

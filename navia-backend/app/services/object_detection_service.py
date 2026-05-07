@@ -549,7 +549,8 @@ NAVIGATION_WORLD_CLASSES_ES: dict = {
     "taxi cab": ("taxi", "m"),
     "ambulance vehicle": ("ambulancia", "f"),
     "police car": ("patrulla", "f"),
-    # Muebles obstáculo
+    # Muebles obstáculo (incluyendo armario — superficie plana grande que bloquea paso)
+    "wardrobe closet large furniture": ("armario", "m"),
     "sitting chair with backrest and four legs": ("silla", "f"),
     "large wooden dining table": ("mesa", "f"),
     "flat horizontal desk with keyboard and monitor": ("escritorio", "m"),
@@ -604,11 +605,8 @@ NAVIGATION_WORLD_CLASSES_ES: dict = {
     # Electrodomésticos peligrosos (solo fuente de calor — los otros causan demasiados falsos positivos)
     "kitchen stove with burners cooking": ("estufa", "f"),
     "kitchen oven appliance door": ("horno", "m"),
-    # Objetos portátiles obstáculo
-    "backpack bag on floor or back": ("mochila", "f"),
-    "travel suitcase": ("maleta", "f"),
-    "cardboard box": ("caja de cartón", "f"),
-    "skateboard": ("patineta", "f"),
+    # Superficie reflectante — peligro de colisión oculta
+    "wall mirror with visible frame": ("espejo", "m"),
     # Señales de peligro
     "wet floor sign": ("señal de piso mojado", "f"),
 }
@@ -617,6 +615,15 @@ NAVIGATION_WORLD_CLASSES_ES: dict = {
 # Necesario porque los prompts de navegación son distintos a los completos
 # (más específicos para reducir confusión), y el traductor busca por prompt inglés.
 ALL_CLASSES_LOOKUP: dict = {**WORLD_CLASSES_ES, **NAVIGATION_WORLD_CLASSES_ES}
+
+# Clases excluidas en modo exploración por generar demasiados falsos positivos.
+# YOLO-World compara regiones visuales contra embeddings de texto; estos nombres
+# son semánticamente tan genéricos que casi cualquier objeto rectangular/cúbico
+# activa su detección.
+EXPLORATION_EXCLUDED_CLASSES = {
+    "cardboard box",   # confundido con cualquier rectángulo (monitor, libro, silla...)
+    "tissue box",      # muy pequeño y ambiguo
+}
 
 
 class ObjectDetectionService:
@@ -655,6 +662,26 @@ class ObjectDetectionService:
         self.model.set_classes(nav_classes)
         self._current_class_mode = "navigation"
         logger.info(f"YOLO configurado para navegación: {len(nav_classes)} clases")
+
+    def configure_for_exploration(self) -> None:
+        """Configura YOLO con lista curada para exploración.
+
+        Igual que la lista completa pero sin las clases que generan
+        demasiados falsos positivos en escenas cotidianas (ej: cardboard box
+        se detecta en casi cualquier objeto rectangular).
+        """
+        if self._current_class_mode == "exploration" or self.model is None:
+            return
+        exploration_classes = [
+            c for c in WORLD_CLASSES_ES.keys()
+            if c not in EXPLORATION_EXCLUDED_CLASSES
+        ]
+        self.model.set_classes(exploration_classes)
+        self._current_class_mode = "exploration"
+        logger.info(
+            f"YOLO configurado para exploración: {len(exploration_classes)} clases "
+            f"({len(EXPLORATION_EXCLUDED_CLASSES)} clases ambiguas excluidas)"
+        )
 
     def configure_for_full(self) -> None:
         """Restaura YOLO a la lista completa de clases.

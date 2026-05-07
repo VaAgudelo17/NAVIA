@@ -77,8 +77,10 @@ async def realtime_detection(websocket: WebSocket):
     # Umbral de profundidad para detectar superficie plana grande al frente (pared/puerta).
     # 0.42: suficientemente alto para ignorar fluctuaciones normales del depth map,
     # pero detectable cuando hay una puerta/pared a ~1-1.5m.
-    _WALL_DEPTH_THRESHOLD = 0.42
-    _last_wall_warning_frame = [-15]  # cooldown de 15 frames (~5s a 3fps)
+    _WALL_DEPTH_THRESHOLD = 0.52           # subido: ignora fluctuaciones menores del depth
+    _last_wall_warning_frame = [-15]       # cooldown de 15 frames (~5s a 3fps)
+    _phantom_consecutive = [0]             # frames consecutivos con phantom detectado
+    _PHANTOM_MIN_FRAMES = 3                # confirmar phantom solo si persiste ≥3 frames
 
     # --- Estadísticas de sesión para historial ---
     session_stats = {
@@ -258,6 +260,14 @@ async def realtime_detection(websocket: WebSocket):
                             min_area_ratio=0.10,
                         )
                         if phantom:
+                            _phantom_consecutive[0] += 1
+                        else:
+                            _phantom_consecutive[0] = 0
+
+                        # Solo inyectar el phantom si persiste ≥3 frames consecutivos.
+                        # Un spike de un solo frame es casi siempre ruido del sensor
+                        # (reflejo, cambio de luz, superficie plana lejana).
+                        if phantom and _phantom_consecutive[0] >= _PHANTOM_MIN_FRAMES:
                             from app.models.schemas import DetectedObject, BoundingBox
                             x1, y1, x2, y2 = phantom["bbox"]
                             phantom_obj = DetectedObject(
@@ -274,16 +284,30 @@ async def realtime_detection(websocket: WebSocket):
                             )
                             result["objects"].append(phantom_obj)
                             logger.info(
-                                f"[Phantom] Obstáculo desconocido detectado por depth "
+                                f"[Phantom] Obstáculo confirmado tras {_phantom_consecutive[0]} frames "
                                 f"({phantom['area_ratio']*100:.0f}% del frame, "
                                 f"depth={phantom['depth']:.2f}, {phantom['position']})"
                             )
+                    else:
+                        _phantom_consecutive[0] = 0
+
+                    # Si hay frames de phantom acumulando (aún sin confirmar),
+                    # marcar como sospechoso — el depth ya detectó algo.
+                    depth_suspicious = _phantom_consecutive[0] > 0
 
                     # Pipeline unificado: navegación + riesgo
                     guidance = guidance_service.generate_guidance(
                         result["objects"], w, h,
                         track_movement=True,
                     )
+
+                    # Suprimir "camino libre" cuando el depth map acumula frames
+                    # de objeto cercano sin confirmar aún (phantom en progreso).
+                    # Evita que el usuario oiga "camino libre" mientras hay algo
+                    # bloqueando el camino que YOLO no ha clasificado todavía.
+                    if depth_suspicious and guidance.get("path_clear") and not guidance.get("has_danger"):
+                        guidance["path_clear"] = False
+                        guidance["instruction"] = ""
 
                     # --- Detección de obstáculo grande / pared por profundidad ---
                     # YOLO no detecta bien superficies planas (paredes, puertas grandes).
@@ -312,13 +336,13 @@ async def realtime_detection(websocket: WebSocket):
                             )
                             obj_name = front_obj.name_es.capitalize() if front_obj else None
 
-                            if center_depth > 0.72:
+                            if center_depth > 0.83:
                                 guidance["priority"] = "critical"
                                 if obj_name:
                                     guidance["instruction"] = f"¡Cuidado! {obj_name} muy cerca al frente, detente."
                                 else:
                                     guidance["instruction"] = "¡Cuidado! Superficie muy cerca al frente, detente."
-                            elif center_depth > 0.50:
+                            elif center_depth > 0.65:
                                 guidance["priority"] = "high"
                                 if obj_name:
                                     guidance["instruction"] = f"Atención: {obj_name} bloqueando el camino al frente."
