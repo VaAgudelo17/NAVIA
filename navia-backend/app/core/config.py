@@ -3,10 +3,27 @@
 import os
 from pathlib import Path
 from pydantic_settings import BaseSettings
+from pydantic import model_validator
 from typing import List
 
 
 class Settings(BaseSettings):
+
+    @model_validator(mode="before")
+    @classmethod
+    def strip_env_values(cls, data: dict) -> dict:
+        """Limpia espacios y \r de los valores del .env antes de validar.
+
+        Necesario cuando el .env se editó en Windows (line endings \r\n):
+        Pydantic v2 recibe 'True\r' y falla al parsear booleans.
+        """
+        if isinstance(data, dict):
+            return {
+                k: v.strip() if isinstance(v, str) else v
+                for k, v in data.items()
+            }
+        return data
+
 
     # --- INFORMACIÓN DEL PROYECTO ---
     PROJECT_NAME: str = "NAVIA - Backend de Asistencia Visual"
