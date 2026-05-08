@@ -19,6 +19,7 @@ procesadas por la aplicación móvil cliente.
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query, status, BackgroundTasks
 from fastapi.responses import JSONResponse
 from typing import Optional
+import asyncio
 import numpy as np
 import time
 import logging
@@ -564,9 +565,20 @@ async def analyze_exploration(
         cv2_image = bytes_to_cv2_image(content)
         cv2_image = resize_image_if_needed(cv2_image)
 
-        # Usar el nuevo servicio de exploración mejorado
+        # Correr en thread pool para no bloquear el event loop
+        # Timeout de 25s: si tarda más, el modelo está sobrecargado
         exploration_service = get_exploration_service()
-        response = exploration_service.analyze(cv2_image)
+        loop = asyncio.get_event_loop()
+        try:
+            response = await asyncio.wait_for(
+                loop.run_in_executor(None, exploration_service.analyze, cv2_image),
+                timeout=25.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=408,
+                detail="El análisis tardó demasiado. Inténtalo de nuevo.",
+            )
 
         processing_time = (time.time() - start_time) * 1000
 

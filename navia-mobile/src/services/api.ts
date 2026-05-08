@@ -57,11 +57,15 @@ function createImageFormData(imageUri: string): FormData {
  * Helper genérico para enviar imagen a un endpoint
  */
 async function postImage<T>(endpoint: string, imageUri: string, errorMsg: string): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s máximo
+
   try {
     const formData = createImageFormData(imageUri);
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'POST',
       body: formData,
+      signal: controller.signal,
       // NO establecer Content-Type manualmente - fetch auto-genera el boundary correcto
     });
 
@@ -71,9 +75,14 @@ async function postImage<T>(endpoint: string, imageUri: string, errorMsg: string
     }
 
     return await response.json();
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new Error('El servidor tardó demasiado. Inténtalo de nuevo.');
+    }
     console.error(`Error: ${errorMsg}:`, error);
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

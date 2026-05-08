@@ -59,26 +59,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"No se pudo precargar YOLO: {e}")
 
-    # Precargar modelo Depth Anything V2 en background.
-    # Se lanza como tarea asyncio para no bloquear el arranque del servidor.
-    # El modelo pesa ~300MB y puede tardar 20-30s en cargarse en CPU.
-    # Con esta estrategia el servidor queda listo de inmediato y Depth
-    # se calienta en paralelo; cuando el primer usuario abre navegación
-    # el modelo ya está listo (o casi listo).
-    async def _warmup_depth():
-        try:
-            import numpy as np
-            from app.services.depth_estimation_service import get_depth_estimation_service
-            depth_svc = get_depth_estimation_service()
-            loop = asyncio.get_event_loop()
-            dummy = np.zeros((240, 320, 3), dtype=np.uint8)
-            # estimate_depth_map fuerza la carga real del modelo en el thread pool
-            await loop.run_in_executor(None, depth_svc.estimate_depth_map, dummy)
-            logger.info("Modelo Depth Anything V2 cargado en background")
-        except Exception as e:
-            logger.warning(f"Depth pre-warm en background falló: {e}")
-
-    asyncio.create_task(_warmup_depth())
+    # Depth Anything V2 se carga lazy al primer uso en WebSocket (navegación).
+    # No se pre-carga al inicio para evitar presión de RAM en servidores pequeños.
+    # (YOLO + Depth juntos superan 800MB, lo que causa OOM en tier gratuito)
 
     logger.info(f"Servidor listo en http://{settings.API_HOST}:{settings.API_PORT}")
     logger.info("Documentación disponible en /docs")
