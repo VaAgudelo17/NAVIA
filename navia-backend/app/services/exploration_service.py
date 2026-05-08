@@ -1002,21 +1002,16 @@ class ExplorationService:
         Así se mantiene la calidad cuando la API responde rápido y siempre hay
         un resultado rápido como fallback.
         """
-        import concurrent.futures
-        from app.core.config import settings
-        openai_timeout = settings.OPENAI_TIMEOUT
         try:
             from app.services.openai_service import get_openai_service
-            openai_svc = get_openai_service()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(openai_svc.validate_and_describe, image, enriched_objects)
-                result = future.result(timeout=openai_timeout)
+            logger.info("[Exploración] Llamando a GPT-4o Vision...")
+            result = get_openai_service().validate_and_describe(image, enriched_objects)
             if result:
+                logger.info(f"[Exploración] GPT-4o respondió: {result[:80]}")
                 return result
-        except concurrent.futures.TimeoutError:
-            logger.warning(f"[Exploración] OpenAI superó {openai_timeout}s — usando narrativa local")
+            logger.warning("[Exploración] GPT-4o devolvió vacío, usando narrativa local")
         except Exception as e:
-            logger.warning(f"[Exploración] OpenAI falló — usando narrativa local: {e}")
+            logger.warning(f"[Exploración] OpenAI falló, usando narrativa local: {e}")
 
         return self._generate_narrative(enriched_objects, None, all_objects)
 
