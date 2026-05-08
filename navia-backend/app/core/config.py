@@ -108,14 +108,14 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_MODEL: str = "gemini-2.5-flash"  # Tier gratuito activo, excelente OCR
     GEMINI_ENABLED: bool = True  # Desactivar para usar solo Tesseract
-    GEMINI_TIMEOUT: int = 15  # Timeout en segundos para la API
+    GEMINI_TIMEOUT: int = 10  # Timeout en segundos para la API
 
     # --- CONFIGURACIÓN DE OPENAI ---
     # GPT-4o Vision para validación de detecciones y narrativa empática en modo exploración
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    OPENAI_MODEL: str = "gpt-4o"
+    OPENAI_MODEL: str = "gpt-4o-mini"
     OPENAI_ENABLED: bool = True
-    OPENAI_TIMEOUT: int = 20  # Timeout en segundos para la API
+    OPENAI_TIMEOUT: int = 10  # Timeout en segundos para la API
 
     # --- CONFIGURACIÓN DE LECTURA INTELIGENTE ---
     SMART_READING_ENABLED: bool = True
