@@ -26,6 +26,7 @@ Pipeline:
 
 import numpy as np
 from typing import Dict, List, Optional, Tuple
+import hashlib
 import logging
 import cv2
 
@@ -38,6 +39,10 @@ GENDER_MAP.setdefault('obstáculo', 'm')
 GENDER_MAP.setdefault('animal', 'm')
 
 logger = logging.getLogger(__name__)
+
+# Cache en memoria: hash de imagen → ExplorationResponse (máx 30 entradas)
+_exploration_cache: Dict[str, ExplorationResponse] = {}
+_CACHE_MAX = 30
 
 
 # ============================================================================
@@ -157,7 +162,13 @@ class ExplorationService:
             ExplorationResponse con descripción estructurada
         """
         self._ensure_initialized()
-        
+
+        # Cache hit: misma imagen ya analizada → respuesta instantánea
+        img_hash = hashlib.md5(image.tobytes()).hexdigest()
+        if img_hash in _exploration_cache:
+            logger.info(f"[Exploración] Cache hit {img_hash[:8]}")
+            return _exploration_cache[img_hash]
+
         try:
             img_height, img_width = image.shape[:2]
             img_area = img_width * img_height
@@ -209,7 +220,7 @@ class ExplorationService:
             #    si falla cae al generador local de plantillas.
             description = self._generate_description(image, enriched_objects, all_objects)
 
-            return ExplorationResponse(
+            response = ExplorationResponse(
                 success=True,
                 message="Entorno explorado correctamente",
                 description=description,
@@ -218,6 +229,13 @@ class ExplorationService:
                 objects=[obj["detected_object"] for obj in enriched_objects],
                 object_count=len(enriched_objects),
             )
+
+            # Guardar en cache (LRU simple: si llega al límite, borrar el más antiguo)
+            if len(_exploration_cache) >= _CACHE_MAX:
+                oldest = next(iter(_exploration_cache))
+                del _exploration_cache[oldest]
+            _exploration_cache[img_hash] = response
+            return response
             
         except Exception as e:
             logger.error(f"Error en exploración: {e}")
@@ -976,19 +994,23 @@ class ExplorationService:
         all_objects: Optional[List[DetectedObject]],
     ) -> str:
         """
-        Intenta generar la descripción con GPT-4o Vision (validación + narrativa empática).
-        Si OpenAI no está disponible o falla, usa el generador local de plantillas.
+        Intenta OpenAI con timeout de 4s; si tarda más o falla, usa narrativa local.
+        Así se mantiene la calidad cuando la API responde rápido y siempre hay
+        un resultado rápido como fallback.
         """
+        import concurrent.futures
         try:
             from app.services.openai_service import get_openai_service
-            logger.info("[Exploración] Llamando a GPT-4o Vision...")
-            result = get_openai_service().validate_and_describe(image, enriched_objects)
+            openai_svc = get_openai_service()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(openai_svc.validate_and_describe, image, enriched_objects)
+                result = future.result(timeout=4)
             if result:
-                logger.info(f"[Exploración] GPT-4o respondió: {result[:80]}")
                 return result
-            logger.warning("[Exploración] GPT-4o devolvió vacío, usando narrativa local")
+        except concurrent.futures.TimeoutError:
+            logger.warning("[Exploración] OpenAI superó 4s — usando narrativa local")
         except Exception as e:
-            logger.warning(f"[Exploración] OpenAI falló, usando narrativa local: {e}")
+            logger.warning(f"[Exploración] OpenAI falló — usando narrativa local: {e}")
 
         return self._generate_narrative(enriched_objects, None, all_objects)
 

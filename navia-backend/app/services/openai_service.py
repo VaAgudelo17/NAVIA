@@ -66,6 +66,7 @@ class OpenAIService:
         self,
         image: np.ndarray,
         enriched_objects: List[Dict],
+        pre_encoded_image: Optional[str] = None,
     ) -> Optional[str]:
         """
         Valida las detecciones de YOLO y genera una descripción empática.
@@ -82,7 +83,7 @@ class OpenAIService:
             return None
 
         try:
-            image_b64 = self._encode_image(image)
+            image_b64 = pre_encoded_image or self._encode_image(image)
             if not image_b64:
                 return None
 
