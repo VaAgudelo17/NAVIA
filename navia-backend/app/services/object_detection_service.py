@@ -767,14 +767,18 @@ class ObjectDetectionService:
             img_area = img_width * img_height
             img_shape = (img_height, img_width)
 
-            # Obtener mapa de profundidad si no fue proporcionado
+            # Obtener mapa de profundidad solo si ya está cargado en memoria.
+            # Si el modelo no está inicializado, cargarlo aquí bloquearía el
+            # thread 20-30s (modelo de 300MB). El WebSocket de navegación lo
+            # carga en su primer frame; exploración y lectura lo usan si ya existe.
             if depth_map is None:
                 try:
                     from app.services.depth_estimation_service import (
                         get_depth_estimation_service,
                     )
                     depth_service = get_depth_estimation_service()
-                    depth_map = depth_service.estimate_depth_map(image)
+                    if depth_service._initialized and depth_service.is_available:
+                        depth_map = depth_service.estimate_depth_map(image)
                 except Exception as e:
                     logger.debug(f"Depth estimation no disponible: {e}")
 
