@@ -299,11 +299,14 @@ export function HomeScreen() {
   // Verificar conexión con el backend + bienvenida al iniciar
   useEffect(() => {
     checkBackendConnection();
-    // Bienvenida: el usuario ciego necesita saber que la app abrió
-    ttsManager.speak(
-      'Bienvenido a NAVIA, tu asistente visual. Selecciona un modo y toca Iniciar Cámara.',
-      TtsPriority.HIGH,
-    );
+    // Delay para que Audio.setAudioModeAsync termine antes de reproducir
+    const t = setTimeout(() => {
+      ttsManager.speak(
+        'Bienvenido a NAVIA, tu asistente visual. Selecciona un modo y toca Iniciar Cámara.',
+        TtsPriority.INTERRUPT,
+      );
+    }, 600);
+    return () => clearTimeout(t);
   }, []);
 
   // Al abrir el detalle de un item del historial, leer el resumen completo.
@@ -1312,32 +1315,24 @@ export function HomeScreen() {
                 - CAMINO LIBRE (verde) = sin obstáculos relevantes al frente */}
             {latestResult && (
               <View style={styles.riskIndicatorContainer}>
-                <View
-                  style={[
-                    styles.riskIndicator,
-                    {
-                      backgroundColor:
-                        latestResult.alert_type === 'peligro' ? '#EF4444' :
-                        latestResult.alert_type === 'atencion' ? '#F97316' :
-                        '#22C55E',
-                    },
-                  ]}
-                >
-                  <Ionicons
-                    name={
-                      latestResult.alert_type === 'peligro' ? 'warning' :
-                      latestResult.alert_type === 'atencion' ? 'alert-circle' :
-                      'checkmark-circle'
-                    }
-                    size={48}
-                    color="white"
-                  />
-                  <Text style={styles.riskIndicatorText}>
-                    {latestResult.alert_type === 'peligro' ? '¡PELIGRO!' :
-                     latestResult.alert_type === 'atencion' ? 'ATENCIÓN' :
-                     'CAMINO LIBRE'}
-                  </Text>
-                </View>
+                {(() => {
+                  const isCritical =
+                    latestResult.alert_type === 'peligro' ||
+                    (latestResult.has_danger && latestResult.priority === 'critical');
+                  const isWarning =
+                    latestResult.alert_type === 'atencion' ||
+                    latestResult.has_danger ||
+                    latestResult.path_clear === false;
+                  const bg = isCritical ? '#EF4444' : isWarning ? '#F97316' : '#22C55E';
+                  const icon = isCritical ? 'warning' : isWarning ? 'alert-circle' : 'checkmark-circle';
+                  const label = isCritical ? '¡PELIGRO!' : isWarning ? 'ATENCIÓN' : 'CAMINO LIBRE';
+                  return (
+                    <View style={[styles.riskIndicator, { backgroundColor: bg }]}>
+                      <Ionicons name={icon} size={48} color="white" />
+                      <Text style={styles.riskIndicatorText}>{label}</Text>
+                    </View>
+                  );
+                })()}
               </View>
             )}
 
