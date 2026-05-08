@@ -222,6 +222,7 @@ export function useRealtimeDetection({
       // del modo navegación se escuche después de volver al menú.
       ttsManagerRef.current.stop();
       ttsManagerRef.current.reset();
+      ttsManagerRef.current.cleanup();
     };
   }, [enabled, mode]);
 

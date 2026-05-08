@@ -1304,12 +1304,23 @@ export function HomeScreen() {
                 <View
                   style={[
                     styles.connectionDot,
-                    { backgroundColor: wsStatus === 'connected' ? C.success : C.warning },
+                    {
+                      backgroundColor:
+                        wsStatus === 'connected'
+                          ? C.success
+                          : wsStatus === 'error'
+                          ? C.error
+                          : C.warning,
+                    },
                   ]}
                 />
                 <Text style={styles.realtimeStatusText}>
                   {MODE_CONFIG[analysisMode].label}
-                  {wsStatus === 'connected' ? '' : ' - Conectando...'}
+                  {wsStatus === 'connected'
+                    ? ''
+                    : wsStatus === 'error'
+                    ? ' - Error de conexión'
+                    : ' - Conectando...'}
                 </Text>
               </View>
               {latestResult && (

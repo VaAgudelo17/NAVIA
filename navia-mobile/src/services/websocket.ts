@@ -39,10 +39,14 @@ export class RealtimeWebSocket {
       this.reconnectAttempts = 0;
       this.onStatus('connected');
       // Enviar configuración de modo al conectar
-      this.ws?.send(JSON.stringify({
-        type: 'config',
-        mode: this.mode,
-      }));
+      try {
+        this.ws?.send(JSON.stringify({
+          type: 'config',
+          mode: this.mode,
+        }));
+      } catch (e) {
+        console.warn('WS send config error:', e);
+      }
     };
 
     this.ws.onmessage = (event: MessageEvent) => {
@@ -70,7 +74,11 @@ export class RealtimeWebSocket {
   setMode(mode: NaviaMode): void {
     this.mode = mode;
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'config', mode }));
+      try {
+        this.ws.send(JSON.stringify({ type: 'config', mode }));
+      } catch (e) {
+        console.warn('WS setMode send error:', e);
+      }
     }
   }
 
@@ -84,7 +92,11 @@ export class RealtimeWebSocket {
       frame_id: this.frameId,
       timestamp: Date.now(),
     });
-    this.ws.send(message);
+    try {
+      this.ws.send(message);
+    } catch (e) {
+      console.warn('WS sendFrame error:', e);
+    }
   }
 
   disconnect(): void {
@@ -100,9 +112,11 @@ export class RealtimeWebSocket {
   private attemptReconnect(): void {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) return;
     this.reconnectAttempts++;
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s (más agresivo en el primer intento)
+    const delayMs = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 16000);
     this.reconnectTimer = setTimeout(
       () => this.connect(),
-      2000 * this.reconnectAttempts,
+      delayMs,
     );
   }
 }

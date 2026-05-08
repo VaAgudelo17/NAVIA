@@ -58,6 +58,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"No se pudo precargar YOLO: {e}")
 
+    # Precargar modelo Depth Anything V2 (evita 3-4s de latencia en primer frame)
+    logger.info("Precargando modelo Depth Anything V2...")
+    try:
+        from app.services.depth_estimation_service import get_depth_estimation_service
+        get_depth_estimation_service()
+        logger.info("Modelo Depth Anything V2 cargado exitosamente")
+    except Exception as e:
+        logger.warning(f"No se pudo precargar Depth: {e}")
+
     logger.info(f"Servidor listo en http://{settings.API_HOST}:{settings.API_PORT}")
     logger.info("Documentación disponible en /docs")
 

@@ -97,7 +97,15 @@ async def realtime_detection(websocket: WebSocket):
         nonlocal connection_alive
         try:
             while connection_alive:
-                raw = await websocket.receive_text()
+                try:
+                    raw = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
+                except asyncio.TimeoutError:
+                    # Sin frames en 10s: el cliente probablemente se desconectó sin
+                    # cerrar el socket correctamente (red móvil caída, app en fondo).
+                    logger.warning("WebSocket sin actividad 10s, cerrando conexión")
+                    connection_alive = False
+                    frame_event.set()
+                    break
                 msg = json.loads(raw)
 
                 if msg.get("type") == "frame":
