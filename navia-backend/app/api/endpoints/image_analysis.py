@@ -23,6 +23,8 @@ import numpy as np
 import time
 import logging
 
+from app.core.config import settings
+
 from app.models.schemas import (
     ImageUploadResponse,
     OCRResponse,
