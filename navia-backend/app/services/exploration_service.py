@@ -174,9 +174,13 @@ class ExplorationService:
             img_area = img_width * img_height
             
             # 1. Detectar objetos con umbral más alto para exploración (40%)
+            # Restaurar vocabulario de exploración: puede haberse cambiado si
+            # el usuario usó navegación antes (configure_for_navigation/full).
+            # configure_for_exploration() retorna inmediato si ya está en ese modo.
+            self.detection_service.configure_for_exploration()
             from app.core.config import settings
             detection_result = self.detection_service.detect_objects(
-                image, 
+                image,
                 confidence_threshold=settings.YOLO_EXPLORATION_CONFIDENCE
             )
             all_objects = detection_result.get("objects", [])
