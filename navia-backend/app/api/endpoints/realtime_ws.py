@@ -74,6 +74,9 @@ async def realtime_detection(websocket: WebSocket):
     }
     guidance_service = get_navigation_guidance_service()
 
+    # Flag para disparar la clasificación de entorno solo en el primer frame
+    scene_intro_done = [False]
+
     # Umbral de profundidad para detectar superficie plana grande al frente (pared/puerta).
     # 0.42: suficientemente alto para ignorar fluctuaciones normales del depth map,
     # pero detectable cuando hay una puerta/pared a ~1-1.5m.
@@ -91,6 +94,37 @@ async def realtime_detection(websocket: WebSocket):
         "max_risk_score": 0.0,
         "total_processing_ms": 0,
     }
+
+    async def _classify_scene_task(image_copy) -> None:
+        """
+        Fire-and-forget: clasifica el entorno del primer frame con Gemini
+        y envía un mensaje 'scene_intro' al cliente. No bloquea la navegación.
+        """
+        try:
+            from app.services.gemini_service import get_gemini_service
+            gemini = get_gemini_service()
+            if not gemini.is_available:
+                return
+
+            _loop = asyncio.get_event_loop()
+            description = await asyncio.wait_for(
+                _loop.run_in_executor(None, gemini.classify_scene, image_copy),
+                timeout=6.0,
+            )
+
+            if description and connection_alive:
+                try:
+                    await websocket.send_json({
+                        "type": "scene_intro",
+                        "description": description,
+                    })
+                except Exception:
+                    pass  # Cliente desconectado antes de que Gemini respondiera
+
+        except asyncio.TimeoutError:
+            logger.warning("[SceneIntro] Timeout (>6s), sin clasificación de entorno")
+        except Exception as e:
+            logger.warning(f"[SceneIntro] Error: {e}")
 
     async def receive_loop():
         """Recibe frames y configuración del cliente."""
@@ -172,6 +206,11 @@ async def realtime_detection(websocket: WebSocket):
                         cv2_image,
                         max_dimension=settings.WS_REALTIME_MAX_DIMENSION
                     )
+
+                    # Primer frame: clasificar entorno en paralelo (fire-and-forget)
+                    if not scene_intro_done[0]:
+                        scene_intro_done[0] = True
+                        asyncio.create_task(_classify_scene_task(cv2_image.copy()))
 
                     # Detección + profundidad en thread pool (CPU-bound)
                     result = await loop.run_in_executor(

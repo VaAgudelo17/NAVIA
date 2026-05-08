@@ -13,6 +13,7 @@ import { CameraView } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { RealtimeWebSocket } from '../services/websocket';
 import { RealtimeTtsManager } from '../services/realtimeTts';
+import { ttsManager, TtsPriority } from '../services/ttsManager';
 import { RealtimeDetectionResult, NaviaMode } from '../types/api';
 import { REALTIME_CONFIG } from '../constants/config';
 
@@ -134,7 +135,17 @@ export function useRealtimeDetection({
       obstacleCountsRef.current = {};
 
       // Conectar WebSocket con modo
-      wsRef.current = new RealtimeWebSocket(handleDetection, setWsStatus, mode);
+      wsRef.current = new RealtimeWebSocket(
+        handleDetection,
+        setWsStatus,
+        mode,
+        (description: string) => {
+          // Descripción del entorno al inicio: solo si TTS está activo
+          if (ttsEnabled) {
+            ttsManager.speak(description, TtsPriority.HIGH);
+          }
+        },
+      );
       wsRef.current.connect();
 
       // Capturar frames periódicamente

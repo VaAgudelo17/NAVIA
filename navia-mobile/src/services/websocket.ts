@@ -8,11 +8,13 @@ import { RealtimeDetectionResult, NaviaMode } from '../types/api';
 
 type DetectionHandler = (data: RealtimeDetectionResult) => void;
 type StatusHandler = (status: 'connecting' | 'connected' | 'disconnected' | 'error') => void;
+type SceneIntroHandler = (description: string) => void;
 
 export class RealtimeWebSocket {
   private ws: WebSocket | null = null;
   private onDetection: DetectionHandler;
   private onStatus: StatusHandler;
+  private onSceneIntro?: SceneIntroHandler;
   private mode: NaviaMode;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
@@ -23,10 +25,12 @@ export class RealtimeWebSocket {
     onDetection: DetectionHandler,
     onStatus: StatusHandler,
     mode: NaviaMode = 'navegacion',
+    onSceneIntro?: SceneIntroHandler,
   ) {
     this.onDetection = onDetection;
     this.onStatus = onStatus;
     this.mode = mode;
+    this.onSceneIntro = onSceneIntro;
   }
 
   connect(): void {
@@ -54,6 +58,8 @@ export class RealtimeWebSocket {
         const msg = JSON.parse(event.data);
         if (msg.type === 'detection') {
           this.onDetection(msg as RealtimeDetectionResult);
+        } else if (msg.type === 'scene_intro' && msg.description) {
+          this.onSceneIntro?.(msg.description as string);
         }
       } catch (e) {
         console.error('WS parse error:', e);

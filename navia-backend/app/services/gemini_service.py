@@ -234,6 +234,69 @@ class GeminiService:
                 logger.warning(f"[Gemini] Error: {e}")
             return None
 
+    def classify_scene(self, image: np.ndarray) -> Optional[str]:
+        """
+        Clasifica el entorno visible en una frase corta para el inicio de navegación.
+        Llamada síncrona — ejecutar desde run_in_executor para no bloquear el event loop.
+
+        Returns:
+            Frase como "Estás en la calle." o None si falla.
+        """
+        if not self.is_available:
+            return None
+
+        try:
+            from google import genai
+            from google.genai import types
+
+            success, jpeg_bytes = cv2.imencode(
+                '.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 75]
+            )
+            if not success:
+                return None
+
+            prompt = (
+                "Eres un asistente para personas ciegas. "
+                "Mira la imagen y di en una sola frase corta en qué tipo de lugar está la persona, "
+                "empezando siempre con 'Estás en'. "
+                "Ejemplos: 'Estás en la calle.', 'Estás en un parque.', "
+                "'Estás en una habitación.', 'Estás en un supermercado.', "
+                "'Estás en una oficina.', 'Estás en un transporte público.', "
+                "'Estás en un pasillo.', 'Estás en un restaurante.'. "
+                "Responde ÚNICAMENTE con esa frase, sin explicaciones."
+            )
+
+            gen_config_kwargs: Dict[str, Any] = {
+                "temperature": 0.1,
+                "max_output_tokens": 60,
+            }
+            try:
+                gen_config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+            except AttributeError:
+                pass
+
+            response = self._client.models.generate_content(
+                model=settings.GEMINI_MODEL,
+                contents=[
+                    types.Part.from_bytes(
+                        data=jpeg_bytes.tobytes(), mime_type="image/jpeg"
+                    ),
+                    prompt,
+                ],
+                config=types.GenerateContentConfig(**gen_config_kwargs),
+            )
+
+            text = response.text.strip() if response.text else None
+            if text:
+                if not text.endswith('.'):
+                    text += '.'
+                logger.info(f"[SceneIntro] {text}")
+            return text
+
+        except Exception as e:
+            logger.warning(f"[SceneIntro] Gemini error: {e}")
+            return None
+
     def _parse_response(self, response_text: str) -> Optional[Dict[str, Any]]:
         """
         Parsea la respuesta JSON de Gemini.
