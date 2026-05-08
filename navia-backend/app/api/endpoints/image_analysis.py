@@ -572,7 +572,7 @@ async def analyze_exploration(
         try:
             response = await asyncio.wait_for(
                 loop.run_in_executor(None, exploration_service.analyze, cv2_image),
-                timeout=25.0,
+                timeout=40.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(

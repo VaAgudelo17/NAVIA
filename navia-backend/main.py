@@ -59,6 +59,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"No se pudo precargar YOLO: {e}")
 
+    # Pre-calentar ExplorationService: configure_for_exploration() hace CLIP encoding
+    # de ~100 clases con YOLO-World, lo que tarda 15-30s en CPU la primera vez.
+    # Hacerlo al inicio evita que el primer usuario espere ese tiempo.
+    logger.info("Precargando ExplorationService (CLIP encoding de clases)...")
+    try:
+        from app.services.exploration_service import get_exploration_service
+        get_exploration_service()._ensure_initialized()
+        logger.info("ExplorationService listo")
+    except Exception as e:
+        logger.warning(f"No se pudo precargar ExplorationService: {e}")
+
     # Depth Anything V2 se carga lazy al primer uso en WebSocket (navegación).
     # No se pre-carga al inicio para evitar presión de RAM en servidores pequeños.
     # (YOLO + Depth juntos superan 800MB, lo que causa OOM en tier gratuito)
