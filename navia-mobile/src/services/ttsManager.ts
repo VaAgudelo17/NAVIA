@@ -241,7 +241,9 @@ class TtsManager {
         await this.playAudioFile(cached);
         return;
       }
-    } catch { /**/ }
+    } catch (err: any) {
+      console.warn('[TTS] Error en caché:', err?.message ?? err);
+    }
 
     // 2. Cache miss: esperar a Piper y reproducir (queda cacheado para futuras llamadas)
     try {
@@ -252,7 +254,9 @@ class TtsManager {
       await this.playAudioFile(uri);
     } catch (err: any) {
       this.currentFetchController = null;
-      // AbortError: el usuario detuvo el TTS, no es un error
+      if (err?.name !== 'AbortError') {
+        console.warn('[TTS] Error reproduciendo audio:', err?.message ?? err);
+      }
     }
   }
 

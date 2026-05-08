@@ -157,8 +157,6 @@ export class RealtimeTtsManager {
     guidanceData?: GuidanceData,
     guidanceKey?: string,
   ): void {
-    if (!summary) return;
-
     const now = Date.now();
 
     // Registrar cuándo hubo peligro real
@@ -166,36 +164,29 @@ export class RealtimeTtsManager {
       this.lastDangerTime = now;
     }
 
-    const pathJustBlocked = this.lastPathClear && guidanceData?.path_clear === false;
+    // Capturar estado previo ANTES de actualizar, para que pathJustBlocked sea correcto.
+    const prevPathClear = this.lastPathClear;
 
-    // Actualizar estado de camino.
-    // IMPORTANTE: solo volver a "libre" si han pasado los 5s de seguridad.
-    // Si el depth fluctúa y path_clear va false→true→false, sin este control
-    // se dispararía INTERRUPT en cada transición, cortando el audio constantemente.
+    // Actualizar estado de camino ANTES del guard de summary vacío,
+    // para que la reassurance y lastPathClear sean siempre correctos.
     if (guidanceData !== undefined) {
       if (guidanceData.path_clear === false) {
         this.lastPathClear = false;
       } else if ((now - this.lastDangerTime) >= SAFE_CONFIRMATION_DELAY) {
         this.lastPathClear = true;
       }
-      // Dentro del periodo de peligro: mantener lastPathClear=false
-      // para que pathJustBlocked no vuelva a dispararse por fluctuación
     }
 
-    // "Camino libre" solo se dice si pasaron 5s desde el último peligro.
-    // Evita que salte "camino libre" inmediatamente después de una advertencia
-    // solo porque el depth map fluctuó un frame.
     const isCaminoLibre = guidanceData?.path_clear === true && !guidanceData?.has_danger;
-    if (isCaminoLibre && (now - this.lastDangerTime) < SAFE_CONFIRMATION_DELAY) {
-      return;
-    }
 
-    // Reassurance periódica: cada 12s sin nada relevante, decir "Camino libre"
-    // para que el usuario sepa que la app sigue activa. Sin esto, si camina por
-    // un pasillo abierto durante 30s sin obstáculos, no oye nada y duda si el
-    // sistema funciona.
+    // Reassurance periódica: se evalúa aunque summary sea "" (backend silencioso).
+    // Cada REASSURANCE_INTERVAL sin actividad, decir "Camino libre." para confirmar
+    // al usuario que la app sigue activa. La voz del backend puede estar vacía porque
+    // hay objetos lejos pero sin amenaza — la reassurance cubre ese silencio.
     if (
       isCaminoLibre &&
+      !guidanceData?.has_danger &&
+      (now - this.lastDangerTime) >= SAFE_CONFIRMATION_DELAY &&
       !ttsManager.isSpeaking() &&
       (now - this.lastSpeakTime) >= REASSURANCE_INTERVAL &&
       (now - this.lastReassurance) >= REASSURANCE_INTERVAL
@@ -203,6 +194,16 @@ export class RealtimeTtsManager {
       this.lastReassurance = now;
       this.lastSpeakTime = now;
       ttsManager.speak('Camino libre.', TtsPriority.LOW);
+      return;
+    }
+
+    // A partir de aquí, si no hay instrucción del backend, no hay nada que decir.
+    if (!summary) return;
+
+    const pathJustBlocked = prevPathClear && guidanceData?.path_clear === false;
+
+    // "Camino libre" explícito en summary: solo si pasaron 5s desde el último peligro.
+    if (isCaminoLibre && (now - this.lastDangerTime) < SAFE_CONFIRMATION_DELAY) {
       return;
     }
 

@@ -20,6 +20,12 @@ function simpleHash(text: string): string {
   return Math.abs(h).toString(36);
 }
 
+function extFromContentType(contentType: string | null): 'mp3' | 'wav' {
+  if (!contentType) return 'wav';
+  if (contentType.includes('mpeg') || contentType.includes('mp3')) return 'mp3';
+  return 'wav';
+}
+
 class TtsPhraseCache {
   private mem = new Map<string, string>(); // text → fileUri
   private ready = false;
@@ -35,8 +41,8 @@ class TtsPhraseCache {
     } catch { /* seguir sin caché persistente si falla */ }
   }
 
-  private uriFor(text: string): string {
-    return `${CACHE_DIR}${simpleHash(text)}.wav`;
+  private uriFor(text: string, ext: 'mp3' | 'wav' = 'wav'): string {
+    return `${CACHE_DIR}${simpleHash(text)}.${ext}`;
   }
 
   /** Devuelve la URI del archivo si está en caché (disco o memoria). */
@@ -51,16 +57,19 @@ class TtsPhraseCache {
       this.mem.delete(text);
     }
 
-    // Disco
     if (!this.ready) return null;
-    const uri = this.uriFor(text);
-    try {
-      const info = await FileSystem.getInfoAsync(uri);
-      if (info.exists) {
-        this.mem.set(text, uri);
-        return uri;
-      }
-    } catch { /**/ }
+
+    // Comprobar ambas extensiones (.mp3 para gTTS, .wav para Piper)
+    for (const ext of ['mp3', 'wav'] as const) {
+      const uri = this.uriFor(text, ext);
+      try {
+        const info = await FileSystem.getInfoAsync(uri);
+        if (info.exists) {
+          this.mem.set(text, uri);
+          return uri;
+        }
+      } catch { /**/ }
+    }
 
     return null;
   }
@@ -70,8 +79,6 @@ class TtsPhraseCache {
    * Opcionalmente acepta una AbortSignal para cancelar si el usuario para la app.
    */
   async fetchAndStore(text: string, signal?: AbortSignal): Promise<string> {
-    const uri = this.uriFor(text);
-
     const res = await fetch(`${API_BASE_URL}${API_ENDPOINTS.TTS}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -79,6 +86,10 @@ class TtsPhraseCache {
       signal,
     });
     if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
+
+    // Usar extensión correcta según lo que devuelve el backend (MP3 para gTTS, WAV para Piper)
+    const ext = extFromContentType(res.headers.get('Content-Type'));
+    const uri = this.uriFor(text, ext);
 
     const buf = await res.arrayBuffer();
     const bytes = new Uint8Array(buf);
@@ -95,8 +106,8 @@ class TtsPhraseCache {
       return uri;
     }
 
-    // Sin caché en disco: guardar en temp (mismo mecanismo que antes)
-    const tmp = `${FileSystem.cacheDirectory}navia_tts_${Date.now()}.wav`;
+    // Sin caché en disco: guardar en temp con extensión correcta
+    const tmp = `${FileSystem.cacheDirectory}navia_tts_${Date.now()}.${ext}`;
     await FileSystem.writeAsStringAsync(tmp, btoa(binary), {
       encoding: FileSystem.EncodingType.Base64,
     });
