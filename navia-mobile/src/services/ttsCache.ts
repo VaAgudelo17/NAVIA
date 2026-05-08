@@ -114,6 +114,18 @@ class TtsPhraseCache {
     return tmp;
   }
 
+  /** Guarda audio pre-generado (base64) en caché para que speak() lo encuentre al instante. */
+  async storeBase64(text: string, base64: string, ext: 'mp3' | 'wav'): Promise<void> {
+    if (!this.ready) return;
+    const uri = this.uriFor(text, ext);
+    try {
+      await FileSystem.writeAsStringAsync(uri, base64, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      this.mem.set(text, uri);
+    } catch { /**/ }
+  }
+
   /** Pre-genera frases comunes en segundo plano al arrancar la app. */
   prewarm(phrases: string[]): void {
     this.init().then(() => {

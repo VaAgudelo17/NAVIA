@@ -187,6 +187,8 @@ export interface SmartReadingResponse {
   extracted_fields: ExtractedFields | null;
   visual_caption: string | null;
   image_quality: ImageQuality | null;
+  audio_base64?: string | null;
+  audio_format?: string | null;
 }
 
 // Error de la API

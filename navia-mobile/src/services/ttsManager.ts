@@ -160,6 +160,12 @@ class TtsManager {
     this.enqueue(this.preprocessForReading(normalizeForTts(text.trim())), priority, true);
   }
 
+  /** Pre-guarda audio base64 del backend en caché con la misma clave que usaría speakReading. */
+  async preCacheReadingAudio(text: string, audioBase64: string, ext: 'mp3' | 'wav'): Promise<void> {
+    const key = this.preprocessForReading(normalizeForTts(text.trim()));
+    await ttsCache.storeBase64(key, audioBase64, ext);
+  }
+
   stop(): void {
     this.playEpoch++;
     this.queue = [];

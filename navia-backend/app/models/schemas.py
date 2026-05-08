@@ -168,6 +168,8 @@ class SmartReadingResponse(BaseResponse):
     visual_caption: Optional[str] = None
     image_quality: Optional[Any] = None
     classification: Optional[Dict[str, Any]] = None
+    audio_base64: Optional[str] = None   # Audio TTS pre-generado (wav o mp3)
+    audio_format: Optional[str] = None   # "wav" o "mp3"
 
 
 # ============================================================================

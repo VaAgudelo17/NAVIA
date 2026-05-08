@@ -18,6 +18,7 @@ procesadas por la aplicación móvil cliente.
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query, status, BackgroundTasks
 from fastapi.responses import JSONResponse
+from typing import Optional
 import numpy as np
 import time
 import logging
@@ -630,10 +631,25 @@ async def analyze_reading(
 
         processing_time = (time.time() - start_time) * 1000
 
+        # Generar audio TTS inline para eliminar el segundo round-trip en la app
+        audio_b64: Optional[str] = None
+        audio_fmt: Optional[str] = None
+        narrative_text = result["narrative"]
+        if narrative_text and settings.TTS_ENABLED:
+            try:
+                import base64
+                from app.services.tts_service import get_tts_service
+                tts = get_tts_service()
+                audio_bytes = tts.synthesize(narrative_text)
+                audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                audio_fmt = "mp3" if settings.TTS_BACKEND == "gtts" else "wav"
+            except Exception as tts_err:
+                logger.warning(f"[Lectura] TTS inline falló, la app usará endpoint TTS: {tts_err}")
+
         response = SmartReadingResponse(
             success=True,
             message="Lectura inteligente completada",
-            narrative=result["narrative"],
+            narrative=narrative_text,
             document_type=result["document_type"],
             document_type_label=result["document_type_label"],
             reading_mode="auto",
@@ -645,6 +661,8 @@ async def analyze_reading(
             visual_caption=result.get("visual_caption"),
             image_quality=result.get("image_quality"),
             classification=result.get("classification"),
+            audio_base64=audio_b64,
+            audio_format=audio_fmt,
         )
 
         # Guardar en historial

@@ -458,6 +458,17 @@ export function HomeScreen() {
 
           // Narrative o mensaje por defecto
           const message = result.narrative || 'No se detectó texto claro en la imagen.';
+
+          // Si el backend incluyó el audio pre-generado, cachearlo antes de speak
+          // para que se reproduzca al instante sin segundo round-trip
+          if (result.audio_base64 && result.audio_format) {
+            await ttsManager.preCacheReadingAudio(
+              message,
+              result.audio_base64,
+              result.audio_format as 'mp3' | 'wav',
+            );
+          }
+
           ttsManager.speakReading(message, TtsPriority.HIGH);
           
           saveToHistory({
