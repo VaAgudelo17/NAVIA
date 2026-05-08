@@ -81,7 +81,8 @@ async def realtime_detection(websocket: WebSocket):
     # 0.42: suficientemente alto para ignorar fluctuaciones normales del depth map,
     # pero detectable cuando hay una puerta/pared a ~1-1.5m.
     _WALL_DEPTH_THRESHOLD = 0.52           # subido: ignora fluctuaciones menores del depth
-    _last_wall_warning_frame = [-15]       # cooldown de 15 frames (~5s a 3fps)
+    # El cooldown de voz lo maneja el TTS del móvil (14s por obstáculo).
+    # En el backend solo necesitamos saber cuándo actualizar el log.
     _phantom_consecutive = [0]             # frames consecutivos con phantom detectado
     _PHANTOM_MIN_FRAMES = 3                # confirmar phantom solo si persiste ≥3 frames
 
@@ -360,11 +361,13 @@ async def realtime_detection(websocket: WebSocket):
                     # YOLO no detecta bien superficies planas (paredes, puertas grandes).
                     # Si el mapa de profundidad muestra el centro MUY cercano y guidance
                     # dice "camino libre", anulamos ese resultado.
+                    # SIN cooldown de frames: el cooldown de voz lo maneja el TTS
+                    # del móvil (14s por obstáculo). Así nunca se dice "camino libre"
+                    # mientras el obstáculo sigue al frente.
                     depth_map = result.get("depth_map")
                     if (
                         depth_map is not None
                         and guidance["path_clear"]
-                        and (session_stats["frames_processed"] - _last_wall_warning_frame[0]) >= 15
                     ):
                         directional = DepthEstimationService.compute_directional_depth(depth_map)
                         center_depth = directional["centro"]
@@ -401,16 +404,10 @@ async def realtime_detection(websocket: WebSocket):
                                     guidance["instruction"] = f"Atención: {obj_name} al frente, reduce la velocidad."
                                 else:
                                     guidance["instruction"] = "Atención: obstáculo al frente, reduce la velocidad."
-                            _last_wall_warning_frame[0] = session_stats["frames_processed"]
-                            # Asignar guidance_key fija para detecciones de pared/superficie
-                            # para que el cooldown de 12s del TTS aplique correctamente.
-                            # Usar el MISMO formato que el guidance_key normal
-                            # (solo nombre del objeto en minúscula). Esto permite
-                            # que el cooldown por obstáculo en el móvil agrupe
-                            # alertas del wall detect con alertas normales del
-                            # mismo objeto, evitando repeticiones cortantes.
+                            # guidance_key fija para que el cooldown de TTS del móvil
+                            # agrupe alertas de pared con alertas normales del mismo objeto.
                             guidance["_wall_key"] = (obj_name or "superficie").lower()
-                            logger.info(
+                            logger.debug(
                                 f"[WallDetect] depth={center_depth:.2f} → "
                                 f"{guidance['instruction']}"
                             )

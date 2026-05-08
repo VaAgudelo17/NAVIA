@@ -102,10 +102,10 @@ class PiperTtsService:
         try:
             audio_buffer = io.BytesIO()
 
-            # length_scale > 1 = más lento → más natural y menos robótico
+            # length_scale=1.0 → velocidad natural del modelo
             # noise_scale controla variación de tono (más variado = menos monótono)
             syn_config = SynthesisConfig(
-                length_scale=1.15,   # 15% más lento que el default
+                length_scale=1.0,    # velocidad natural
                 noise_scale=0.667,   # variación de tono natural (default Piper)
                 noise_w_scale=0.8,   # variación de duración de fonemas
             )
