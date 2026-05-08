@@ -1003,16 +1003,18 @@ class ExplorationService:
         un resultado rápido como fallback.
         """
         import concurrent.futures
+        from app.core.config import settings
+        openai_timeout = settings.OPENAI_TIMEOUT
         try:
             from app.services.openai_service import get_openai_service
             openai_svc = get_openai_service()
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(openai_svc.validate_and_describe, image, enriched_objects)
-                result = future.result(timeout=4)
+                result = future.result(timeout=openai_timeout)
             if result:
                 return result
         except concurrent.futures.TimeoutError:
-            logger.warning("[Exploración] OpenAI superó 4s — usando narrativa local")
+            logger.warning(f"[Exploración] OpenAI superó {openai_timeout}s — usando narrativa local")
         except Exception as e:
             logger.warning(f"[Exploración] OpenAI falló — usando narrativa local: {e}")
 

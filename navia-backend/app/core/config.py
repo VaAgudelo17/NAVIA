@@ -115,7 +115,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL: str = "gpt-4o-mini"
     OPENAI_ENABLED: bool = True
-    OPENAI_TIMEOUT: int = 4   # Timeout en segundos para la API
+    OPENAI_TIMEOUT: int = 10  # Timeout en segundos para la API
 
     # --- CONFIGURACIÓN DE LECTURA INTELIGENTE ---
     SMART_READING_ENABLED: bool = True

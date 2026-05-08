@@ -70,6 +70,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"No se pudo precargar ExplorationService: {e}")
 
+    # Verificar disponibilidad de OpenAI (crítico para calidad de exploración)
+    logger.info("Verificando OpenAI...")
+    try:
+        from app.services.openai_service import get_openai_service
+        available = get_openai_service()._ensure_initialized()
+        if available:
+            logger.info("OpenAI disponible — modo exploración usará GPT-4o-mini")
+        else:
+            logger.warning(
+                "OpenAI NO disponible — exploración usará narrativa local (menos precisa). "
+                "Verifica que OPENAI_API_KEY esté configurada en las variables de entorno."
+            )
+    except Exception as e:
+        logger.warning(f"No se pudo verificar OpenAI: {e}")
+
     # Depth Anything V2 se carga lazy al primer uso en WebSocket (navegación).
     # No se pre-carga al inicio para evitar presión de RAM en servidores pequeños.
     # (YOLO + Depth juntos superan 800MB, lo que causa OOM en tier gratuito)
