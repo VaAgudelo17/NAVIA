@@ -725,6 +725,27 @@ export function HomeScreen() {
     const items = await getHistory(20);
     setHistoryItems(items);
     setAppState('history');
+
+    // Pre-calentar TTS de cada item en segundo plano para que el single-tap sea instantáneo.
+    // El texto del tap incluye fecha+hora únicas por item → siempre cache miss sin esto.
+    if (items.length > 0) {
+      const MODE_LBL: Record<string, string> = { navegacion: 'Navegación', exploracion: 'Exploración', lectura: 'Lectura' };
+      const texts = items.flatMap((item) => {
+        const date = new Date(item.createdAt);
+        const dateLong = date.toLocaleDateString('es-ES', { day: 'numeric', month: 'long' });
+        const h24 = date.getHours();
+        const min = date.getMinutes();
+        const period = h24 < 6 ? 'de la madrugada' : h24 < 12 ? 'de la mañana' : h24 < 19 ? 'de la tarde' : 'de la noche';
+        const h12 = h24 === 0 ? 12 : h24 > 12 ? h24 - 12 : h24;
+        const hourSpoken = min === 0 ? `${h12} en punto ${period}` : `${h12} y ${min < 10 ? '0' + min : min} ${period}`;
+        const modeLabel = MODE_LBL[item.mode] || item.mode;
+        return [
+          `Este registro corresponde al modo ${modeLabel}. Sesión del ${dateLong} a las ${hourSpoken}. Toca dos veces para ver los detalles.`,
+          buildHistoryDetailNarrative(item),
+        ];
+      });
+      ttsManager.prewarmTexts(texts);
+    }
   };
 
   // Limpiar historial

@@ -186,6 +186,17 @@ class TtsManager {
   setEnabled(v: boolean): void { this.enabled = v; if (!v) this.stop(); }
   isEnabled(): boolean { return this.enabled; }
 
+  /** Pre-genera audio de frases dinámicas en segundo plano para que el primer tap sea instantáneo. */
+  prewarmTexts(texts: string[]): void {
+    for (const raw of texts) {
+      if (!raw?.trim()) continue;
+      const normalized = normalizeForTts(raw.trim());
+      ttsCache.get(normalized).then((cached) => {
+        if (!cached) ttsCache.fetchAndStore(normalized).catch(() => {});
+      });
+    }
+  }
+
   private enqueue(text: string, priority: TtsPriority, reading: boolean): void {
     if (priority === TtsPriority.INTERRUPT) {
       this.stop();
