@@ -54,7 +54,7 @@ class Settings(BaseSettings):
 
     # --- CONFIGURACIÓN WEBSOCKET TIEMPO REAL ---
     WS_MAX_FRAME_SIZE: int = 5 * 1024 * 1024  # 5 MB máximo por frame
-    WS_REALTIME_MAX_DIMENSION: int = 640       # Redimensionar frames para velocidad
+    WS_REALTIME_MAX_DIMENSION: int = 480       # Reducido 640→480 para menor latencia
     WS_REALTIME_CONFIDENCE_THRESHOLD: float = 0.25  # Umbral para tiempo real (más alto para evitar parpadeo)
 
     # --- CONFIGURACIÓN DE PROFUNDIDAD (DEPTH ANYTHING V2) ---

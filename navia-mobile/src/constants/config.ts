@@ -105,7 +105,7 @@ export const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
 // cola crece y la latencia explota. En HF Spaces (CPU compartida) procesar
 // YOLO + Depth tarda ~1.5s; localmente ~300ms.
 export const REALTIME_CONFIG = {
-  targetFps: 3,            // 3 fps local; bajar a 1.5 para HF Spaces/prod
+  targetFps: 2,            // Bajado 3→2: Railway CPU tarda ~500ms/frame, 3fps saturaba la cola
   ttsMinInterval: 2000,    // 2 segundos entre frases TTS
-  imageQuality: 0.4,       // Mejor calidad → mejor detección; subir si backend lo aguanta
+  imageQuality: 0.35,      // Bajado 0.4→0.35: menos bytes por frame, misma precisión YOLO
 };

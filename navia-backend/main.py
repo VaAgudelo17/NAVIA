@@ -59,16 +59,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"No se pudo precargar YOLO: {e}")
 
-    # Pre-calentar ExplorationService: configure_for_exploration() hace CLIP encoding
-    # de ~100 clases con YOLO-World, lo que tarda 15-30s en CPU la primera vez.
-    # Hacerlo al inicio evita que el primer usuario espere ese tiempo.
-    logger.info("Precargando ExplorationService (CLIP encoding de clases)...")
+    # Pre-calentar YOLO en modo NAVEGACIÓN: hace CLIP encoding de las clases de nav
+    # (~70 clases), lo que tarda 15-30s en CPU la primera vez.
+    # Navegación es tiempo real — si el encoding ocurre al abrir el WebSocket,
+    # el usuario espera 15-30s antes de recibir el primer frame. Hacerlo aquí
+    # elimina ese delay. Exploración es un análisis único (timeout 40s) y puede
+    # tolerar el encoding en su primera llamada.
+    logger.info("Pre-calentando YOLO para navegación (CLIP encoding)...")
     try:
-        from app.services.exploration_service import get_exploration_service
-        get_exploration_service()._ensure_initialized()
-        logger.info("ExplorationService listo")
+        from app.services.object_detection_service import get_object_detection_service
+        get_object_detection_service().configure_for_navigation()
+        logger.info("YOLO en modo navegación listo")
     except Exception as e:
-        logger.warning(f"No se pudo precargar ExplorationService: {e}")
+        logger.warning(f"No se pudo pre-calentar navegación: {e}")
 
     # Verificar disponibilidad de OpenAI (crítico para calidad de exploración)
     logger.info("Verificando OpenAI...")
