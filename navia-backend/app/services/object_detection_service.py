@@ -645,55 +645,55 @@ class ObjectDetectionService:
         El modelo se descarga automáticamente la primera vez (~30MB).
         Después de cargar, se configuran las clases a detectar.
         """
+        import threading
         self.model = None
         self.confidence_threshold = settings.YOLO_CONFIDENCE_THRESHOLD
         self._current_class_mode: str = "full"
+        # Protege set_classes() + detect_objects() de llamadas concurrentes
+        # desde distintos threads del executor (exploración HTTP ↔ WebSocket).
+        self._model_lock = threading.Lock()
         self._load_model()
 
     def configure_for_navigation(self) -> None:
-        """Cambia YOLO a clases compactas de navegación (~70 clases).
-
-        Llamar al inicio de una sesión WebSocket de navegación.
-        Menos clases → menos confusión → menos falsos positivos.
-        """
+        """Cambia YOLO a clases compactas de navegación (~70 clases)."""
         if self._current_class_mode == "navigation" or self.model is None:
             return
-        nav_classes = list(NAVIGATION_WORLD_CLASSES_ES.keys())
-        self.model.set_classes(nav_classes)
-        self._current_class_mode = "navigation"
+        with self._model_lock:
+            if self._current_class_mode == "navigation":
+                return
+            nav_classes = list(NAVIGATION_WORLD_CLASSES_ES.keys())
+            self.model.set_classes(nav_classes)
+            self._current_class_mode = "navigation"
         logger.info(f"YOLO configurado para navegación: {len(nav_classes)} clases")
 
     def configure_for_exploration(self) -> None:
-        """Configura YOLO con lista curada para exploración.
-
-        Igual que la lista completa pero sin las clases que generan
-        demasiados falsos positivos en escenas cotidianas (ej: cardboard box
-        se detecta en casi cualquier objeto rectangular).
-        """
+        """Configura YOLO con lista curada para exploración."""
         if self._current_class_mode == "exploration" or self.model is None:
             return
-        exploration_classes = [
-            c for c in WORLD_CLASSES_ES.keys()
-            if c not in EXPLORATION_EXCLUDED_CLASSES
-        ]
-        self.model.set_classes(exploration_classes)
-        self._current_class_mode = "exploration"
+        with self._model_lock:
+            if self._current_class_mode == "exploration":
+                return
+            exploration_classes = [
+                c for c in WORLD_CLASSES_ES.keys()
+                if c not in EXPLORATION_EXCLUDED_CLASSES
+            ]
+            self.model.set_classes(exploration_classes)
+            self._current_class_mode = "exploration"
         logger.info(
             f"YOLO configurado para exploración: {len(exploration_classes)} clases "
             f"({len(EXPLORATION_EXCLUDED_CLASSES)} clases ambiguas excluidas)"
         )
 
     def configure_for_full(self) -> None:
-        """Restaura YOLO a la lista completa de clases.
-
-        Llamar al finalizar la sesión WebSocket para que
-        exploración/lectura sigan con el vocabulario completo.
-        """
+        """Restaura YOLO a la lista completa de clases."""
         if self._current_class_mode == "full" or self.model is None:
             return
-        full_classes = list(WORLD_CLASSES_ES.keys())
-        self.model.set_classes(full_classes)
-        self._current_class_mode = "full"
+        with self._model_lock:
+            if self._current_class_mode == "full":
+                return
+            full_classes = list(WORLD_CLASSES_ES.keys())
+            self.model.set_classes(full_classes)
+            self._current_class_mode = "full"
         logger.info(f"YOLO restaurado a clases completas: {len(full_classes)} clases")
 
     def _load_model(self) -> None:
@@ -782,8 +782,9 @@ class ObjectDetectionService:
                 except Exception as e:
                     logger.debug(f"Depth estimation no disponible: {e}")
 
-            # Ejecutar inferencia YOLO-World
-            results = self.model(image, verbose=False)
+            # Ejecutar inferencia YOLO-World (lock compartido con configure_for_*)
+            with self._model_lock:
+                results = self.model(image, verbose=False)
 
             # Procesar resultados con depth map
             detected_objects, raw_depths = self._process_results(

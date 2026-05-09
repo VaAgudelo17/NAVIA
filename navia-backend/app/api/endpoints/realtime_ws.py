@@ -495,7 +495,10 @@ async def realtime_detection(websocket: WebSocket):
     except Exception as e:
         logger.error(f"Error en sesión WebSocket: {e}")
     finally:
-        detector.configure_for_full()
+        # No restaurar a "full" (391 clases → re-encoding CLIP 15-30s en el event loop).
+        # El startup deja YOLO en nav mode; la próxima sesión de navegación usa
+        # el guard _current_class_mode y arranca inmediato. Exploración llama
+        # configure_for_exploration() dentro de run_in_executor cuando la necesita.
         guidance_service.reset_movement_state()
 
         # --- Guardar resumen de sesión en historial ---

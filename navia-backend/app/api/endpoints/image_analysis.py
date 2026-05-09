@@ -639,26 +639,41 @@ async def analyze_reading(
         
         # NO redimensionar aquí: el OCR service normaliza internamente
 
-        # Ejecutar lectura inteligente (modo automático basado en tipo de documento)
+        # Ejecutar en thread pool: OCR + clasificación + TTS son CPU-bound y bloquean
+        # el event loop si se llaman directamente en un endpoint async.
         smart_service = get_smart_reading_service()
-        result = smart_service.analyze(cv2_image)
+        loop = asyncio.get_event_loop()
+
+        def _run_reading():
+            r = smart_service.analyze(cv2_image)
+            # Síntesis TTS también en el mismo thread para no bloquear el loop
+            a_b64 = None
+            a_fmt = None
+            if r.get("narrative") and settings.TTS_ENABLED:
+                try:
+                    import base64 as _b64
+                    from app.services.tts_service import get_tts_service
+                    tts = get_tts_service()
+                    audio_bytes = tts.synthesize(r["narrative"])
+                    a_b64 = _b64.b64encode(audio_bytes).decode("utf-8")
+                    a_fmt = "mp3" if settings.TTS_BACKEND == "gtts" else "wav"
+                except Exception as tts_err:
+                    logger.warning(f"[Lectura] TTS inline falló: {tts_err}")
+            return r, a_b64, a_fmt
+
+        try:
+            result, audio_b64, audio_fmt = await asyncio.wait_for(
+                loop.run_in_executor(None, _run_reading),
+                timeout=40.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=408,
+                detail="La lectura tardó demasiado. Inténtalo de nuevo.",
+            )
 
         processing_time = (time.time() - start_time) * 1000
-
-        # Generar audio TTS inline para eliminar el segundo round-trip en la app
-        audio_b64: Optional[str] = None
-        audio_fmt: Optional[str] = None
         narrative_text = result["narrative"]
-        if narrative_text and settings.TTS_ENABLED:
-            try:
-                import base64
-                from app.services.tts_service import get_tts_service
-                tts = get_tts_service()
-                audio_bytes = tts.synthesize(narrative_text)
-                audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-                audio_fmt = "mp3" if settings.TTS_BACKEND == "gtts" else "wav"
-            except Exception as tts_err:
-                logger.warning(f"[Lectura] TTS inline falló, la app usará endpoint TTS: {tts_err}")
 
         response = SmartReadingResponse(
             success=True,
