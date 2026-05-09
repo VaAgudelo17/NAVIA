@@ -136,8 +136,10 @@ class ExplorationService:
         if not self._initialized:
             logger.info("Inicializando ExplorationService...")
             self.detection_service = get_object_detection_service()
-            # Usar lista curada sin clases que generan falsos positivos frecuentes
-            self.detection_service.configure_for_exploration()
+            # NO llamamos configure_for_exploration() aquí: haría CLIP re-encoding
+            # de ~385 clases (15-30s) bloqueando el executor. OpenAI genera la
+            # descripción mirando la imagen directamente, sin usar los nombres de YOLO.
+            # YOLO solo provee hints de posición → el vocabulario activo (nav) es suficiente.
             from app.services.ocr_service import get_ocr_service
             self.ocr_service = get_ocr_service()
             self._initialized = True
@@ -173,11 +175,9 @@ class ExplorationService:
             img_height, img_width = image.shape[:2]
             img_area = img_width * img_height
             
-            # 1. Detectar objetos con umbral más alto para exploración (40%)
-            # Restaurar vocabulario de exploración: puede haberse cambiado si
-            # el usuario usó navegación antes (configure_for_navigation/full).
-            # configure_for_exploration() retorna inmediato si ya está en ese modo.
-            self.detection_service.configure_for_exploration()
+            # 1. Detectar objetos con el vocabulario activo (normalmente navegación).
+            # No cambiamos el vocabulario YOLO: evita CLIP re-encoding de 15-30s.
+            # OpenAI describe la imagen directamente; YOLO solo provee zonas espaciales.
             from app.core.config import settings
             detection_result = self.detection_service.detect_objects(
                 image,
