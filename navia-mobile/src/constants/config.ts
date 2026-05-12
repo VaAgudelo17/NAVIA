@@ -45,12 +45,6 @@ export const API_ENDPOINTS = {
   // Historial y preferencias
   HISTORY: '/api/v1/history',
   PREFERENCES: '/api/v1/preferences',
-  // Legacy (compatibilidad)
-  OCR: '/api/v1/analyze/ocr',
-  OBJECTS: '/api/v1/analyze/objects',
-  SCENE: '/api/v1/analyze/scene',
-  QUICK: '/api/v1/analyze/quick',
-  UPLOAD: '/api/v1/analyze/upload',
 };
 
 // Colores de la aplicación (tema oscuro accesible)

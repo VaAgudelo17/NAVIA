@@ -138,15 +138,6 @@ class PiperTtsService:
             logger.error(f"Error sintetizando con gTTS: {e}")
             raise RuntimeError(f"Error en síntesis TTS: {e}")
 
-    def get_info(self) -> dict:
-        """Información del servicio TTS."""
-        return {
-            "status": "loaded" if self._loaded else "not_loaded",
-            "backend": "gTTS" if self._use_gtts else "piper",
-            "model": settings.TTS_MODEL_NAME,
-            "sample_rate": settings.TTS_SAMPLE_RATE,
-            "enabled": settings.TTS_ENABLED,
-        }
 
 
 _tts_service: Optional[PiperTtsService] = None

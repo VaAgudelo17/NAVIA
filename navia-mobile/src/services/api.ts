@@ -5,15 +5,9 @@
 import { API_BASE_URL, API_ENDPOINTS } from '../constants/config';
 import {
   HealthResponse,
-  OCRResponse,
-  ObjectDetectionResponse,
-  SceneDescriptionResponse,
-  QuickAnalysisResponse,
   NavigationResponse,
   ExplorationResponse,
-  RiskResponse,
   SmartReadingResponse,
-  ReadingMode,
 } from '../types/api';
 
 /**
@@ -105,31 +99,6 @@ export async function analyzeReading(
   imageUri: string,
 ): Promise<SmartReadingResponse> {
   return postImage<SmartReadingResponse>(API_ENDPOINTS.LECTURA, imageUri, 'Error en lectura');
-}
-
-/** Modo Riesgo: redirige al pipeline unificado de navegación */
-export async function analyzeRisk(imageUri: string): Promise<RiskResponse> {
-  return postImage<RiskResponse>(API_ENDPOINTS.NAVEGACION, imageUri, 'Error en evaluación de riesgo');
-}
-
-// ============================================================================
-// LEGACY (compatibilidad)
-// ============================================================================
-
-export async function extractText(imageUri: string): Promise<OCRResponse> {
-  return postImage<OCRResponse>(API_ENDPOINTS.OCR, imageUri, 'Error en OCR');
-}
-
-export async function detectObjects(imageUri: string): Promise<ObjectDetectionResponse> {
-  return postImage<ObjectDetectionResponse>(API_ENDPOINTS.OBJECTS, imageUri, 'Error en detección');
-}
-
-export async function analyzeScene(imageUri: string): Promise<SceneDescriptionResponse> {
-  return postImage<SceneDescriptionResponse>(API_ENDPOINTS.SCENE, imageUri, 'Error en análisis de escena');
-}
-
-export async function quickAnalysis(imageUri: string): Promise<QuickAnalysisResponse> {
-  return postImage<QuickAnalysisResponse>(API_ENDPOINTS.QUICK, imageUri, 'Error en análisis rápido');
 }
 
 // ============================================================================

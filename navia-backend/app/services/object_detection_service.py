@@ -684,17 +684,6 @@ class ObjectDetectionService:
             f"({len(EXPLORATION_EXCLUDED_CLASSES)} clases ambiguas excluidas)"
         )
 
-    def configure_for_full(self) -> None:
-        """Restaura YOLO a la lista completa de clases."""
-        if self._current_class_mode == "full" or self.model is None:
-            return
-        with self._model_lock:
-            if self._current_class_mode == "full":
-                return
-            full_classes = list(WORLD_CLASSES_ES.keys())
-            self.model.set_classes(full_classes)
-            self._current_class_mode = "full"
-        logger.info(f"YOLO restaurado a clases completas: {len(full_classes)} clases")
 
     def _load_model(self) -> None:
         """

@@ -45,7 +45,6 @@ import {
   NavigationResponse,
   ExplorationResponse,
   SmartReadingResponse,
-  ReadingMode,
 } from '../types/api';
 import { useRealtimeDetection, RealtimeSessionSummary } from '../hooks/useRealtimeDetection';
 import { usePreferences } from '../context/PreferencesContext';

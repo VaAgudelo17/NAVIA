@@ -30,6 +30,7 @@ import hashlib
 import logging
 import cv2
 
+from app.core.config import settings
 from app.models.schemas import DetectedObject, ExplorationResponse, BoundingBox
 from app.services.object_detection_service import get_object_detection_service, GENDER_MAP
 
@@ -96,7 +97,6 @@ SYNONYM_MAP: dict[str, str] = {
     'peluche': 'oso de peluche',
     'mochila': 'bolso',
     'cartera': 'bolso',
-    'computadora portátil': 'computadora portátil',  # evita duplicados por variantes
 }
 
 # Accesorios que pertenecen a una persona
@@ -175,10 +175,8 @@ class ExplorationService:
             img_height, img_width = image.shape[:2]
             img_area = img_width * img_height
             
-            # 1. Detectar objetos con el vocabulario activo (normalmente navegación).
-            # No cambiamos el vocabulario YOLO: evita CLIP re-encoding de 15-30s.
-            # OpenAI describe la imagen directamente; YOLO solo provee zonas espaciales.
-            from app.core.config import settings
+            # 1. Detectar con vocabulario activo (navegación). Sin cambio de modo
+            # → sin CLIP re-encoding. OpenAI describe la imagen; YOLO da zonas.
             detection_result = self.detection_service.detect_objects(
                 image,
                 confidence_threshold=settings.YOLO_EXPLORATION_CONFIDENCE

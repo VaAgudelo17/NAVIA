@@ -76,18 +76,6 @@ export class RealtimeWebSocket {
     };
   }
 
-  /** Cambia el modo en caliente (sin reconectar) */
-  setMode(mode: NaviaMode): void {
-    this.mode = mode;
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      try {
-        this.ws.send(JSON.stringify({ type: 'config', mode }));
-      } catch (e) {
-        console.warn('WS setMode send error:', e);
-      }
-    }
-  }
-
   sendFrame(base64Data: string): void {
     if (this.ws?.readyState !== WebSocket.OPEN) return;
 
