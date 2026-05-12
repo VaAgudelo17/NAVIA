@@ -258,6 +258,9 @@ export class RealtimeTtsManager {
         this.lastInterruptTime = now;
         this.lastCriticalTime = now;
         if (guidanceKey) this.obstacleLastSpokenAt[guidanceKey] = now;
+        // Limpiar pendingAlert ANTES de INTERRUPT: stop() dispara onSpeakingChange(false)
+        // que llamaría flushPendingAlert() concurrentemente con speakNow(INTERRUPT).
+        this.pendingAlert = null;
         ttsManager.speak(summary, TtsPriority.INTERRUPT);
       }
       return;
@@ -276,6 +279,7 @@ export class RealtimeTtsManager {
       this.lastSpeakTime = now;
       this.lastInterruptTime = now;
       if (guidanceKey) this.obstacleLastSpokenAt[guidanceKey] = now;
+      this.pendingAlert = null;
       ttsManager.speak(summary, TtsPriority.INTERRUPT);
       return;
     }
