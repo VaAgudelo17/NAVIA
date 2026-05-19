@@ -22,13 +22,8 @@ function getApiBaseUrl(): string {
     return `http://${host}:${BACKEND_PORT}`;
   }
 
-  // 3. En web (navegador) usar el backend de producción en Railway
-  if (typeof document !== 'undefined') {
-    return 'https://patient-charisma-production.up.railway.app';
-  }
-
-  // 4. Fallback local
-  return `http://localhost:${BACKEND_PORT}`;
+  // 3. Fallback: backend de producción
+  return 'https://navia.shipyard.delapava.dev';
 }
 
 export const API_BASE_URL = getApiBaseUrl();
