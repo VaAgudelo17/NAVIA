@@ -140,9 +140,12 @@ export function useRealtimeDetection({
         setWsStatus,
         mode,
         (description: string) => {
-          // Descripción del entorno al inicio: solo si TTS está activo
+          // Descripción del entorno al inicio: interrumpe cualquier audio
+          // en curso y limpia alertas pendientes para que el intro suene
+          // completo antes de que empiecen las instrucciones de obstáculos.
           if (ttsEnabled) {
-            ttsManager.speak(description, TtsPriority.HIGH);
+            ttsManagerRef.current.reset();
+            ttsManager.speak(description, TtsPriority.INTERRUPT);
           }
         },
       );
