@@ -47,6 +47,10 @@ export function useRealtimeDetection({
   const ttsManagerRef = useRef<RealtimeTtsManager>(new RealtimeTtsManager());
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isCapturing = useRef(false);
+  // Bloquea TTS de obstáculos hasta que el intro de escena haya terminado.
+  // Se libera cuando llega scene_intro o tras 8s de fallback (si Gemini falla).
+  const sceneIntroReadyRef = useRef(true);
+  const sceneIntroFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Ref para handleDetection: evita que el cambio de ttsEnabled/mode
   // provoque re-ejecución del efecto principal y abort de fetches activos.
   const handleDetectionRef = useRef<(data: RealtimeDetectionResult) => void>(() => {});
@@ -94,7 +98,7 @@ export function useRealtimeDetection({
         }
       }
 
-      if (ttsEnabled) {
+      if (ttsEnabled && sceneIntroReadyRef.current) {
         ttsManagerRef.current.speakResult(
           data.summary,
           data.changes as any,
@@ -134,17 +138,29 @@ export function useRealtimeDetection({
       dangerCountRef.current = 0;
       obstacleCountsRef.current = {};
 
+      // Bloquear TTS de obstáculos hasta recibir el intro de escena.
+      // Fallback: si Gemini no responde en 8s, liberar de todas formas.
+      sceneIntroReadyRef.current = false;
+      sceneIntroFallbackRef.current = setTimeout(() => {
+        sceneIntroReadyRef.current = true;
+        ttsManagerRef.current.reset();
+      }, 8000);
+
       // Conectar WebSocket con modo
       wsRef.current = new RealtimeWebSocket(
         handleDetection,
         setWsStatus,
         mode,
         (description: string) => {
-          // Descripción del entorno al inicio: interrumpe cualquier audio
-          // en curso y limpia alertas pendientes para que el intro suene
-          // completo antes de que empiecen las instrucciones de obstáculos.
+          // Intro de escena: limpiar fallback, liberar TTS de obstáculos
+          // y reproducir descripción sin interferencias.
+          if (sceneIntroFallbackRef.current) {
+            clearTimeout(sceneIntroFallbackRef.current);
+            sceneIntroFallbackRef.current = null;
+          }
+          ttsManagerRef.current.reset();
+          sceneIntroReadyRef.current = true;
           if (ttsEnabled) {
-            ttsManagerRef.current.reset();
             ttsManager.speak(description, TtsPriority.INTERRUPT);
           }
         },
@@ -207,6 +223,11 @@ export function useRealtimeDetection({
       }
 
       // Limpieza
+      if (sceneIntroFallbackRef.current) {
+        clearTimeout(sceneIntroFallbackRef.current);
+        sceneIntroFallbackRef.current = null;
+      }
+      sceneIntroReadyRef.current = true;
       const hadWs = wsRef.current !== null;
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -225,6 +246,11 @@ export function useRealtimeDetection({
     }
 
     return () => {
+      if (sceneIntroFallbackRef.current) {
+        clearTimeout(sceneIntroFallbackRef.current);
+        sceneIntroFallbackRef.current = null;
+      }
+      sceneIntroReadyRef.current = true;
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
