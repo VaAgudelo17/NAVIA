@@ -47,10 +47,11 @@ export function useRealtimeDetection({
   const ttsManagerRef = useRef<RealtimeTtsManager>(new RealtimeTtsManager());
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isCapturing = useRef(false);
-  // Bloquea TTS de obstáculos hasta que el intro de escena haya terminado.
-  // Se libera cuando llega scene_intro o tras 8s de fallback (si Gemini falla).
+  // Bloquea TTS de obstáculos hasta que el audio del intro haya terminado.
+  // Se libera cuando onSpeakingChange detecta el fin del audio, o tras fallback.
   const sceneIntroReadyRef = useRef(true);
   const sceneIntroFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sceneIntroUnsubRef = useRef<(() => void) | null>(null);
   // Ref para handleDetection: evita que el cambio de ttsEnabled/mode
   // provoque re-ejecución del efecto principal y abort de fetches activos.
   const handleDetectionRef = useRef<(data: RealtimeDetectionResult) => void>(() => {});
@@ -152,17 +153,48 @@ export function useRealtimeDetection({
         setWsStatus,
         mode,
         (description: string) => {
-          // Intro de escena: limpiar fallback, liberar TTS de obstáculos
-          // y reproducir descripción sin interferencias.
+          // Intro de escena: limpiar el fallback de espera de backend.
           if (sceneIntroFallbackRef.current) {
             clearTimeout(sceneIntroFallbackRef.current);
             sceneIntroFallbackRef.current = null;
           }
           ttsManagerRef.current.reset();
-          sceneIntroReadyRef.current = true;
-          if (ttsEnabled) {
-            ttsManager.speak(description, TtsPriority.INTERRUPT);
+
+          if (!ttsEnabled) {
+            // Sin audio — liberar obstáculos de inmediato.
+            sceneIntroReadyRef.current = true;
+            return;
           }
+
+          // Mantener obstáculos bloqueados MIENTRAS el audio del intro suena.
+          // onSpeakingChange detecta: primero speaking=true (audio arrancó),
+          // luego speaking=false (audio terminó) → liberar obstáculos.
+          let introStarted = false;
+          const unlockOnFinish = () => {
+            sceneIntroReadyRef.current = true;
+            ttsManagerRef.current.reset();
+            if (sceneIntroUnsubRef.current) {
+              sceneIntroUnsubRef.current();
+              sceneIntroUnsubRef.current = null;
+            }
+            if (sceneIntroFallbackRef.current) {
+              clearTimeout(sceneIntroFallbackRef.current);
+              sceneIntroFallbackRef.current = null;
+            }
+          };
+
+          sceneIntroUnsubRef.current = ttsManager.onSpeakingChange((speaking) => {
+            if (speaking) {
+              introStarted = true;
+            } else if (introStarted) {
+              unlockOnFinish();
+            }
+          });
+
+          // Fallback: si el audio nunca termina (error de red, etc.), liberar en 15s.
+          sceneIntroFallbackRef.current = setTimeout(unlockOnFinish, 15000);
+
+          ttsManager.speak(description, TtsPriority.INTERRUPT);
         },
       );
       wsRef.current.connect();
@@ -227,6 +259,8 @@ export function useRealtimeDetection({
         clearTimeout(sceneIntroFallbackRef.current);
         sceneIntroFallbackRef.current = null;
       }
+      sceneIntroUnsubRef.current?.();
+      sceneIntroUnsubRef.current = null;
       sceneIntroReadyRef.current = true;
       const hadWs = wsRef.current !== null;
       if (intervalRef.current) {
@@ -250,6 +284,8 @@ export function useRealtimeDetection({
         clearTimeout(sceneIntroFallbackRef.current);
         sceneIntroFallbackRef.current = null;
       }
+      sceneIntroUnsubRef.current?.();
+      sceneIntroUnsubRef.current = null;
       sceneIntroReadyRef.current = true;
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
