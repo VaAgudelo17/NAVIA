@@ -118,6 +118,10 @@ PEDESTRIAN_RELEVANT_CLASSES = {
 
     # ── BAÑO (navegación interior) ────────────────────────────────────────────
     "inodoro", "lavamanos", "bañera",
+
+    # ── EQUIPAMIENTO MÉDICO / GYM ─────────────────────────────────────────────
+    "camilla",      # camilla hospitalaria con ruedas, bloquea el paso
+    "caminadora",   # cinta de correr de gym, grande y puede estar en movimiento
 }
 
 
@@ -215,6 +219,10 @@ DANGER_WEIGHT: Dict[str, float] = {
     # ── BAÑO (navegación interior) ────────────────────────────────────────────
     "bañera": 0.55,
     "inodoro": 0.45, "lavamanos": 0.40,
+
+    # ── EQUIPAMIENTO MÉDICO / GYM ────────────────────────────────────────────
+    "camilla": 0.62,      # objeto grande con ruedas, bloquea el paso
+    "caminadora": 0.65,   # máquina grande, puede estar en movimiento
 }
 
 # Peso por defecto para objetos relevantes sin peso específico
@@ -277,8 +285,8 @@ IGNORE_CLASSES: set = {
     "botella", "lata",
     # ── Electrónica ──────────────────────────────────────────────────────────
     "teléfono", "computadora portátil", "teclado", "mouse",
-    "televisión", "control remoto", "tablet",
-    "cámara",
+    "televisión", "televisor",   # ambas formas; "televisor" viene de prompts de navegación
+    "control remoto", "tablet", "cámara",
     # ── Decoración y arte ─────────────────────────────────────────────────────
     "cuadro", "planta", "florero", "jarrón",
     "almohada", "cojín",
@@ -355,6 +363,8 @@ HIGH_CONFUSION_OBJECTS: Dict[str, float] = {
     "perro": 0.50,           # confundido con gato grande
     "cachorro": 0.55,
     "gatito": 0.55,
+    # Superficies reflectantes: confundidas con TV apagado o pared oscura
+    "espejo": 0.70,          # requiere alta confianza para no confundir con televisor
 }
 
 
@@ -998,7 +1008,14 @@ class NavigationGuidanceService:
             # Las personas se mueven solas — no tiene sentido decir "muévete a la derecha".
             if front_persons and not front_things:
                 count = len(front_persons)
-                phrase = "Personas al frente." if count > 1 else "Hay una persona al frente."
+                if count == 1:
+                    phrase = "Hay una persona al frente."
+                elif count == 2:
+                    phrase = "Hay dos personas al frente."
+                elif count == 3:
+                    phrase = "Hay tres personas al frente."
+                else:
+                    phrase = f"Hay {count} personas al frente."
                 return phrase
 
             # Si hay obstáculos físicos (con o sin personas), usar el obstáculo top.

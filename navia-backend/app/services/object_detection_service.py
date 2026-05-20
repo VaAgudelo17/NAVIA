@@ -605,10 +605,19 @@ NAVIGATION_WORLD_CLASSES_ES: dict = {
     # Electrodomésticos peligrosos (solo fuente de calor — los otros causan demasiados falsos positivos)
     "kitchen stove with burners cooking": ("estufa", "f"),
     "kitchen oven appliance door": ("horno", "m"),
-    # Superficie reflectante — peligro de colisión oculta
-    "wall mirror with visible frame": ("espejo", "m"),
+    # Superficies de pared: reflectante vs. pantalla (prompts TV compiten para evitar confusión)
+    # Los televisores se inyectan aquí para que YOLO no confunda TV apagado con espejo.
+    # Son filtrados por IGNORE_CLASSES: el usuario nunca oye "televisor".
+    "flat screen television mounted on wall dark screen": ("televisor", "m"),
+    "dark flat TV screen black rectangle wall mounted": ("televisor", "m"),
+    # Espejo: prompt refuerza la reflexión visible (distingue de TV apagado)
+    "large wall mirror glass reflecting room image with frame": ("espejo", "m"),
     # Señales de peligro
     "wet floor sign": ("señal de piso mojado", "f"),
+    # Equipamiento médico / de rehabilitación
+    "hospital stretcher gurney medical bed on wheels": ("camilla", "f"),
+    # Equipamiento de gimnasio
+    "gym treadmill running machine belt exercise": ("caminadora", "f"),
 }
 
 # Lookup combinado: cubre tanto WORLD_CLASSES_ES como NAVIGATION_WORLD_CLASSES_ES.
