@@ -293,10 +293,10 @@ export function useRealtimeDetection({
       }
       wsRef.current?.disconnect();
       wsRef.current = null;
-      // Siempre detener y limpiar TTS al salir de navegación.
-      // Evita que una alerta pendiente (pendingAlert) o audio en curso
-      // del modo navegación se escuche después de volver al menú.
-      ttsManagerRef.current.stop();
+      // NO llamar ttsManagerRef.current.stop() aquí: handleReset() ya llamó
+      // ttsManager.stop() antes de hablar "Detenido.", y este cleanup corre
+      // después de ese speak — mataría "Detenido." antes de que suene.
+      // pendingAlert ya fue limpiado por RealtimeTtsManager.stop() en handleReset.
       ttsManagerRef.current.reset();
       ttsManagerRef.current.cleanup();
     };

@@ -332,6 +332,11 @@ export class RealtimeTtsManager {
   }
 
   stop(): void {
+    // Limpiar pendingAlert ANTES de llamar ttsManager.stop().
+    // stop() dispara setSpeakingState(false) → flushPendingAlert(), y si
+    // hay una alerta pendiente de navegación se reproduciría brevemente
+    // antes de que "Detenido." la interrumpa → doble voz.
+    this.pendingAlert = null;
     ttsManager.stop();
   }
 
