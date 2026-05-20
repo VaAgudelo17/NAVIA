@@ -20,6 +20,7 @@ SDK: google-genai (Google Generative AI SDK v1)
 import json
 import base64
 import logging
+import time
 from typing import Optional, Dict, Any
 
 import numpy as np
@@ -105,10 +106,17 @@ class GeminiService:
     y obtiene OCR + clasificación + narrativa en una sola llamada.
     """
 
+    # Segundos que se espera antes de volver a intentar Gemini tras un 429
+    _RATE_LIMIT_COOLDOWN = 60
+    # Reintentos para errores transitorios (timeout, error de red) — NO para 429
+    _TRANSIENT_RETRIES = 1
+    _TRANSIENT_RETRY_DELAY = 3  # segundos entre reintentos
+
     def __init__(self):
         self._client = None
         self._available = False
         self._init_error: Optional[str] = None
+        self._rate_limited_until: float = 0  # circuit breaker timestamp
         self._initialize()
 
     def _initialize(self):
@@ -137,8 +145,14 @@ class GeminiService:
 
     @property
     def is_available(self) -> bool:
-        """Indica si Gemini está listo para usar."""
-        return self._available and self._client is not None
+        """Indica si Gemini está listo para usar (respeta el cooldown de rate limit)."""
+        if not self._available or self._client is None:
+            return False
+        if time.time() < self._rate_limited_until:
+            remaining = int(self._rate_limited_until - time.time())
+            logger.debug(f"[Gemini] En cooldown por rate limit, {remaining}s restantes")
+            return False
+        return True
 
     def analyze_document(self, image: np.ndarray) -> Optional[Dict[str, Any]]:
         """
@@ -158,81 +172,98 @@ class GeminiService:
         try:
             from google import genai
             from google.genai import types
-
-            # Convertir imagen OpenCV (BGR) a JPEG bytes
-            # Usar calidad alta para preservar texto
-            success, jpeg_bytes = cv2.imencode(
-                '.jpg', image,
-                [cv2.IMWRITE_JPEG_QUALITY, 90]
-            )
-            if not success:
-                logger.error("[Gemini] Error codificando imagen a JPEG")
-                return None
-
-            image_bytes = jpeg_bytes.tobytes()
-            logger.info(f"[Gemini] Enviando imagen ({len(image_bytes) // 1024} KB)")
-
-            # Llamar a Gemini con imagen + prompt
-            # - thinking_budget=0: Gemini 2.5 Flash usa "thinking tokens" por defecto
-            #   que consumen el budget de salida y truncan la respuesta a ~180 chars.
-            # - response_mime_type=application/json: fuerza JSON estricto sin
-            #   envoltura markdown, evita parsing frágil.
-            gen_config_kwargs = {
-                "temperature": 0.1,
-                "max_output_tokens": 4096,
-                "response_mime_type": "application/json",
-            }
-            try:
-                gen_config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
-            except AttributeError:
-                # SDK viejo sin ThinkingConfig — el modelo usará thinking por defecto.
-                pass
-
-            response = self._client.models.generate_content(
-                model=settings.GEMINI_MODEL,
-                contents=[
-                    types.Part.from_bytes(
-                        data=image_bytes,
-                        mime_type="image/jpeg",
-                    ),
-                    _GEMINI_PROMPT,
-                ],
-                config=types.GenerateContentConfig(**gen_config_kwargs),
-            )
-
-            # Extraer texto de la respuesta
-            response_text = response.text
-            if not response_text:
-                logger.warning("[Gemini] Respuesta vacía")
-                return None
-
-            logger.info(f"[Gemini] Respuesta recibida ({len(response_text)} chars)")
-
-            # Parsear JSON de la respuesta
-            result = self._parse_response(response_text)
-            if result is None:
-                return None
-
-            logger.info(
-                f"[Gemini] Documento: {result.get('document_type', '?')}, "
-                f"{result.get('word_count', 0)} palabras, "
-                f"confianza: {result.get('confidence', 0)}%"
-            )
-
-            return result
-
-        except Exception as e:
-            error_str = str(e)
-            # Clasificar el error para logging apropiado
-            if "429" in error_str or "quota" in error_str.lower():
-                logger.warning("[Gemini] Rate limit alcanzado, usando Tesseract")
-            elif "403" in error_str or "api_key" in error_str.lower():
-                logger.error("[Gemini] API key inválida o sin permisos")
-            elif "timeout" in error_str.lower() or "deadline" in error_str.lower():
-                logger.warning("[Gemini] Timeout, usando Tesseract")
-            else:
-                logger.warning(f"[Gemini] Error: {e}")
+        except ImportError:
             return None
+
+        # Codificar imagen una sola vez (se reutiliza en reintentos)
+        success, jpeg_bytes = cv2.imencode(
+            '.jpg', image,
+            [cv2.IMWRITE_JPEG_QUALITY, 90]
+        )
+        if not success:
+            logger.error("[Gemini] Error codificando imagen a JPEG")
+            return None
+        image_bytes = jpeg_bytes.tobytes()
+        logger.info(f"[Gemini] Enviando imagen ({len(image_bytes) // 1024} KB)")
+
+        gen_config_kwargs: dict = {
+            "temperature": 0.1,
+            "max_output_tokens": 4096,
+            "response_mime_type": "application/json",
+        }
+        try:
+            gen_config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+        except AttributeError:
+            pass
+
+        last_error: Optional[Exception] = None
+        attempts = 1 + self._TRANSIENT_RETRIES
+
+        for attempt in range(attempts):
+            try:
+                response = self._client.models.generate_content(
+                    model=settings.GEMINI_MODEL,
+                    contents=[
+                        types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                        _GEMINI_PROMPT,
+                    ],
+                    config=types.GenerateContentConfig(**gen_config_kwargs),
+                )
+
+                response_text = response.text
+                if not response_text:
+                    logger.warning("[Gemini] Respuesta vacía")
+                    return None
+
+                logger.info(f"[Gemini] Respuesta recibida ({len(response_text)} chars)")
+                result = self._parse_response(response_text)
+                if result is None:
+                    return None
+
+                logger.info(
+                    f"[Gemini] Documento: {result.get('document_type', '?')}, "
+                    f"{result.get('word_count', 0)} palabras, "
+                    f"confianza: {result.get('confidence', 0)}%"
+                )
+                return result
+
+            except Exception as e:
+                error_str = str(e)
+                last_error = e
+
+                if "429" in error_str or "quota" in error_str.lower() or "resource_exhausted" in error_str.lower():
+                    # Rate limit: activar circuit breaker, no reintentar
+                    self._rate_limited_until = time.time() + self._RATE_LIMIT_COOLDOWN
+                    logger.warning(
+                        f"[Gemini] Rate limit alcanzado. "
+                        f"Cooldown de {self._RATE_LIMIT_COOLDOWN}s activado."
+                    )
+                    return None
+
+                if "403" in error_str or "api_key" in error_str.lower():
+                    logger.error("[Gemini] API key inválida o sin permisos")
+                    return None
+
+                is_transient = (
+                    "timeout" in error_str.lower()
+                    or "deadline" in error_str.lower()
+                    or "503" in error_str
+                    or "500" in error_str
+                    or "connection" in error_str.lower()
+                )
+                if is_transient and attempt < attempts - 1:
+                    logger.warning(
+                        f"[Gemini] Error transitorio (intento {attempt + 1}/{attempts}): {e}. "
+                        f"Reintentando en {self._TRANSIENT_RETRY_DELAY}s…"
+                    )
+                    time.sleep(self._TRANSIENT_RETRY_DELAY)
+                    continue
+
+                logger.warning(f"[Gemini] Error: {e}")
+                return None
+
+        logger.warning(f"[Gemini] Falló tras {attempts} intentos: {last_error}")
+        return None
 
     def classify_scene(self, image: np.ndarray) -> Optional[str]:
         """
