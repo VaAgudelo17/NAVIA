@@ -95,6 +95,6 @@ export const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
 // YOLO + Depth tarda ~1.5s; localmente ~300ms.
 export const REALTIME_CONFIG = {
   targetFps: 2,            // Bajado 3→2: Railway CPU tarda ~500ms/frame, 3fps saturaba la cola
-  ttsMinInterval: 2000,    // 2 segundos entre frases TTS
+  ttsMinInterval: 4000,    // 4 segundos entre frases TTS (subido de 2s: evita spam cuando hay muchos objetos)
   imageQuality: 0.35,      // Bajado 0.4→0.35: menos bytes por frame, misma precisión YOLO
 };

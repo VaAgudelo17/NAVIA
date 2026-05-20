@@ -40,6 +40,23 @@ function normalizeForTts(text: string): string {
     // "galería" se pronuncia como "gaderia" en el modelo Piper es_MX
     .replace(/\bgalería\b/gi, 'fotos guardadas')
     .replace(/\bgaleria\b/gi, 'fotos guardadas')
+    // ── Siglas y marcas colombianas ──────────────────────────────────────────
+    // WOM: operador móvil. Piper es_MX pronuncia W como "doble ve" (suena raro).
+    // Forzar pronunciación natural deletreando en español.
+    .replace(/\bWOM\b/g, 'Guom')
+    // Siglas que Piper deletrea mal → forzar pronunciación natural española
+    .replace(/\bSOAT\b/g, 'soat')
+    .replace(/\bDIAN\b/g, 'Dian')
+    .replace(/\bSIAP\b/g, 'siap')
+    // Siglas que deben deletrearse en español
+    .replace(/\bEPS\b/g, 'e pe ese')
+    .replace(/\bARL\b/g, 'a erre ele')
+    .replace(/\bNIT\b/g, 'nit')
+    .replace(/\bRUT\b/g, 'rut')
+    .replace(/\bIVA\b/g, 'iva')
+    .replace(/\bCUFE\b/g, 'cu fe')
+    .replace(/\bIBC\b/g, 'i be ce')
+    .replace(/\bCOP\b/g, 'pesos colombianos')
     // Abreviaturas técnicas
     .replace(/\bIA\b/g, 'inteligencia artificial')
     .replace(/\bOCR\b/g, 'reconocimiento óptico de texto')

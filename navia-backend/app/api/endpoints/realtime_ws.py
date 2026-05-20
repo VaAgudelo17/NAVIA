@@ -412,14 +412,21 @@ async def realtime_detection(websocket: WebSocket):
                                 f"{guidance['instruction']}"
                             )
 
-                    # Clave estable: solo nombre del objeto top, sin posición ni
-                    # proximidad. Si entre frames el ranking cambia (silla→mesa
-                    # →escritorio en una habitación llena), antes la guidance_key
-                    # cambiaba y el cooldown se reseteaba, generando spam de TTS.
-                    # Ahora el cooldown aplica por "objeto principal de la escena".
-                    top_obs = (guidance.get("obstacle_details") or [{}])[0]
+                    # Clave estable para cooldown TTS:
+                    # - Con 1 obstáculo: nombre del objeto top.
+                    # - Con varios obstáculos al frente: "multi_front".
+                    #   Evita que el ranking cambiante (silla→mesa→escritorio)
+                    #   resetee el cooldown de 14s en cada frame → spam de voz.
+                    # - Pared detectada: clave de la pared.
+                    obs_details = guidance.get("obstacle_details") or []
+                    top_obs = obs_details[0] if obs_details else {}
+                    front_obs_count = sum(
+                        1 for o in obs_details if o.get("position") == "frente a ti"
+                    )
                     if guidance.get("_wall_key"):
                         guidance_key = guidance["_wall_key"]
+                    elif front_obs_count > 1 and not guidance.get("path_clear", True):
+                        guidance_key = "multi_front"
                     elif top_obs.get("name"):
                         guidance_key = top_obs["name"]
                     else:

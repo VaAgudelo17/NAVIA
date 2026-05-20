@@ -4807,13 +4807,23 @@ class SmartReadingService:
 
         logger.info(f"[SmartReading/Gemini] {doc_type}, {word_count} palabras, narrativa: {narrative[:150]}...")
 
-        # Feedback de calidad solo si imagen ilegible (critical)
+        # Feedback de calidad: solo anteponer si Gemini/OCR NO extrajo texto útil.
+        # Si narrative tiene contenido real, la imagen era legible a pesar del
+        # quality check — el análisis de imagen tiene falsos positivos con
+        # etiquetas de productos, texto pequeño embossed, etc.
+        narrative_has_content = bool(narrative and len(narrative.strip()) > 25)
         if quality_report.feedback_text and not quality_report.is_acceptable:
-            narrative = quality_report.feedback_text + " " + narrative
+            if not narrative_has_content:
+                narrative = quality_report.feedback_text
+            # else: Gemini leyó con éxito → no anteponer error de calidad
+
+        # Si Gemini extrajo texto útil, marcar la imagen como aceptable
+        # para que el móvil no interrumpa la narrativa con el error de calidad.
+        effective_acceptable = quality_report.is_acceptable or narrative_has_content
 
         quality_data = {
             "overall_score": quality_report.overall_score,
-            "is_acceptable": quality_report.is_acceptable,
+            "is_acceptable": effective_acceptable,
             "issues": [
                 {"code": i.code, "severity": i.severity, "message": i.message_es}
                 for i in quality_report.issues

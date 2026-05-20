@@ -450,8 +450,11 @@ export function HomeScreen() {
           setSmartResult(result);
           ttsManager.stop();
 
-          // Feedback de calidad
-          if (result.image_quality?.feedback_text && !result.image_quality.is_acceptable) {
+          // Feedback de calidad solo si no hay narrativa útil del backend.
+          // Si el backend ya marcó is_acceptable=true (porque Gemini leyó bien),
+          // no interrumpir con el error de calidad de imagen.
+          const hasUsefulNarrative = !!(result.narrative && result.narrative.trim().length > 20);
+          if (result.image_quality?.feedback_text && !result.image_quality.is_acceptable && !hasUsefulNarrative) {
             ttsManager.speak(result.image_quality.feedback_text, TtsPriority.INTERRUPT);
           }
 
