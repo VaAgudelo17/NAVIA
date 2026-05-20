@@ -4834,6 +4834,7 @@ class SmartReadingService:
         return {
             "success": True,
             "message": "Documento analizado con Gemini Vision",
+            "reading_engine": "gemini",
             "narrative": narrative,
             "document_type": doc_type,
             "document_type_label": self._get_classifier().get_label(doc_type),
@@ -5156,6 +5157,7 @@ class SmartReadingService:
         return {
             "success": True,
             "message": "Documento analizado con Tesseract (offline)",
+            "reading_engine": "tesseract",
             "narrative": narrative,
             "document_type": doc_type,
             "document_type_label": cls_result.label,

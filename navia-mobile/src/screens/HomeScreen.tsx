@@ -1614,6 +1614,7 @@ export function HomeScreen() {
               {smartResult.word_count} palabras
               {smartResult.ocr_confidence ? ` • ${smartResult.ocr_confidence.toFixed(0)}% confianza` : ''}
               {` • ${smartResult.reading_mode}`}
+              {smartResult.reading_engine === 'gemini' ? ' • Gemini' : smartResult.reading_engine === 'tesseract' ? ' • Tesseract' : ''}
             </Text>
 
             {/* Indicador de calidad de imagen — solo si es ilegible */}

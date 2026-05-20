@@ -189,6 +189,7 @@ export interface SmartReadingResponse {
   image_quality: ImageQuality | null;
   audio_base64?: string | null;
   audio_format?: string | null;
+  reading_engine?: 'gemini' | 'tesseract';
 }
 
 // Error de la API

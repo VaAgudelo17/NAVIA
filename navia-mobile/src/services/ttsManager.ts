@@ -40,23 +40,30 @@ function normalizeForTts(text: string): string {
     // "galería" se pronuncia como "gaderia" en el modelo Piper es_MX
     .replace(/\bgalería\b/gi, 'fotos guardadas')
     .replace(/\bgaleria\b/gi, 'fotos guardadas')
-    // ── Siglas y marcas colombianas ──────────────────────────────────────────
-    // WOM: operador móvil. Piper es_MX pronuncia W como "doble ve" (suena raro).
-    // Forzar pronunciación natural deletreando en español.
-    .replace(/\bWOM\b/g, 'Guom')
-    // Siglas que Piper deletrea mal → forzar pronunciación natural española
-    .replace(/\bSOAT\b/g, 'soat')
-    .replace(/\bDIAN\b/g, 'Dian')
-    .replace(/\bSIAP\b/g, 'siap')
+    // ── Siglas y marcas colombianas (case-insensitive) ───────────────────────
+    // WOM: Piper no tiene /w/ nativo. "doble uve o eme" es como se deletrea en
+    // Colombia. Se aplica antes de las demás reglas.
+    .replace(/\bWOM\b/gi, 'doble uve o eme')
+    // Siglas que suenan como palabras en español → minúsculas para que Piper
+    // las lea como palabras (no las deletree letra por letra)
+    .replace(/\bSOAT\b/gi, 'soat')
+    .replace(/\bDIAN\b/gi, 'Dian')
+    .replace(/\bSISBEN\b/gi, 'sisben')
+    .replace(/\bSENA\b/gi, 'sena')
     // Siglas que deben deletrearse en español
-    .replace(/\bEPS\b/g, 'e pe ese')
-    .replace(/\bARL\b/g, 'a erre ele')
-    .replace(/\bNIT\b/g, 'nit')
-    .replace(/\bRUT\b/g, 'rut')
-    .replace(/\bIVA\b/g, 'iva')
-    .replace(/\bCUFE\b/g, 'cu fe')
-    .replace(/\bIBC\b/g, 'i be ce')
-    .replace(/\bCOP\b/g, 'pesos colombianos')
+    .replace(/\bEPS\b/gi, 'e pe ese')
+    .replace(/\bARL\b/gi, 'a erre ele')
+    .replace(/\bEPS-S\b/gi, 'e pe ese ese')
+    .replace(/\bIBC\b/gi, 'i be ce')
+    .replace(/\bCUFE\b/gi, 'cu fe')
+    // Siglas que Piper ya lee bien como palabras → solo normalizar mayúsculas
+    .replace(/\bNIT\b/gi, 'nit')
+    .replace(/\bRUT\b/gi, 'rut')
+    .replace(/\bIVA\b/gi, 'iva')
+    // Moneda colombiana
+    .replace(/\bCOP\b/gi, 'pesos colombianos')
+    // "W" suelta (como en "W Radio") → "doble uve"
+    .replace(/\bW\b/g, 'doble uve')
     // Abreviaturas técnicas
     .replace(/\bIA\b/g, 'inteligencia artificial')
     .replace(/\bOCR\b/g, 'reconocimiento óptico de texto')
