@@ -107,16 +107,20 @@ class GeminiService:
     """
 
     # Segundos que se espera antes de volver a intentar Gemini tras un 429
-    _RATE_LIMIT_COOLDOWN = 60
+    _RATE_LIMIT_COOLDOWN = 90
     # Reintentos para errores transitorios (timeout, error de red) — NO para 429
     _TRANSIENT_RETRIES = 1
     _TRANSIENT_RETRY_DELAY = 3  # segundos entre reintentos
+    # Throttle: mínimo N segundos entre llamadas a Gemini para no agotar cuota
+    # 8s → máx ~7 RPM, margen seguro bajo el límite de 10 RPM del free tier
+    _MIN_INTERVAL = 8
 
     def __init__(self):
         self._client = None
         self._available = False
         self._init_error: Optional[str] = None
         self._rate_limited_until: float = 0  # circuit breaker timestamp
+        self._last_call_at: float = 0        # throttle timestamp
         self._initialize()
 
     def _initialize(self):
@@ -196,11 +200,19 @@ class GeminiService:
         except AttributeError:
             pass
 
+        # Throttle: esperar si la última llamada fue hace menos de _MIN_INTERVAL segundos
+        elapsed = time.time() - self._last_call_at
+        if elapsed < self._MIN_INTERVAL:
+            wait = self._MIN_INTERVAL - elapsed
+            logger.debug(f"[Gemini] Throttle: esperando {wait:.1f}s antes de llamar")
+            time.sleep(wait)
+
         last_error: Optional[Exception] = None
         attempts = 1 + self._TRANSIENT_RETRIES
 
         for attempt in range(attempts):
             try:
+                self._last_call_at = time.time()
                 response = self._client.models.generate_content(
                     model=settings.GEMINI_MODEL,
                     contents=[
