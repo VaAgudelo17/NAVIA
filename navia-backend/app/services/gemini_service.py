@@ -111,16 +111,12 @@ class GeminiService:
     # Reintentos para errores transitorios (timeout, error de red) — NO para 429
     _TRANSIENT_RETRIES = 1
     _TRANSIENT_RETRY_DELAY = 3  # segundos entre reintentos
-    # Throttle: mínimo N segundos entre llamadas a Gemini para no agotar cuota
-    # 8s → máx ~7 RPM, margen seguro bajo el límite de 10 RPM del free tier
-    _MIN_INTERVAL = 8
 
     def __init__(self):
         self._client = None
         self._available = False
         self._init_error: Optional[str] = None
         self._rate_limited_until: float = 0  # circuit breaker timestamp
-        self._last_call_at: float = 0        # throttle timestamp
         self._initialize()
 
     def _initialize(self):
@@ -195,24 +191,21 @@ class GeminiService:
             "max_output_tokens": 4096,
             "response_mime_type": "application/json",
         }
+        # Deshabilitar thinking tokens — consumen cuota TPM masivamente en el free tier.
+        # Intentar primero con ThinkingConfig (SDK nuevo), luego con dict (SDK viejo).
         try:
             gen_config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
         except AttributeError:
-            pass
-
-        # Throttle: esperar si la última llamada fue hace menos de _MIN_INTERVAL segundos
-        elapsed = time.time() - self._last_call_at
-        if elapsed < self._MIN_INTERVAL:
-            wait = self._MIN_INTERVAL - elapsed
-            logger.debug(f"[Gemini] Throttle: esperando {wait:.1f}s antes de llamar")
-            time.sleep(wait)
+            try:
+                gen_config_kwargs["thinking_config"] = {"thinking_budget": 0}
+            except Exception:
+                pass
 
         last_error: Optional[Exception] = None
         attempts = 1 + self._TRANSIENT_RETRIES
 
         for attempt in range(attempts):
             try:
-                self._last_call_at = time.time()
                 response = self._client.models.generate_content(
                     model=settings.GEMINI_MODEL,
                     contents=[
