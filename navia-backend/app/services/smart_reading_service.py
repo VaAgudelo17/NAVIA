@@ -4587,6 +4587,11 @@ class SmartReadingService:
       + estabilización temporal + detección de ambigüedad
     """
 
+    # Cache en memoria: hash_imagen → resultado de Gemini
+    # TTL de 5 minutos — suficiente para re-intentos del mismo documento
+    _GEMINI_CACHE_TTL = 300
+    _MAX_CACHE_SIZE = 20
+
     def __init__(self):
         self._ocr_service = None
         self._gemini_service = None
@@ -4597,6 +4602,7 @@ class SmartReadingService:
         self._enhancer = ProsodyEnhancer()
         self._optimizer = None
         self._captioning = None
+        self._gemini_cache: dict = {}  # {img_hash: (timestamp, result)}
 
         if settings.GEMINI_ENABLED and not settings.GEMINI_API_KEY:
             logger.warning(
@@ -4743,11 +4749,34 @@ class SmartReadingService:
         logger.info("[SmartReading] Usando Tesseract + Clasificador v3")
         return self._analyze_with_tesseract(image, quality_report, reading_mode)
 
+    def _image_hash(self, image: np.ndarray) -> str:
+        """Hash rápido de la imagen para detectar re-fotografías del mismo documento."""
+        import hashlib
+        import cv2 as _cv2
+        small = _cv2.resize(image, (64, 64))
+        return hashlib.md5(small.tobytes()).hexdigest()
+
     def _try_gemini(self, image: np.ndarray) -> Optional[dict]:
         """
         Intenta analizar con Gemini Vision.
-        Retorna None si falla (sin internet, rate limit, etc.)
+        - Primero revisa cache en memoria (TTL 5 min) para no re-llamar a Gemini
+          si el usuario re-fotografía el mismo documento.
+        - Retorna None si falla (sin internet, rate limit, etc.)
         """
+        import time as _time
+
+        img_hash = self._image_hash(image)
+        now = _time.time()
+
+        # Cache hit
+        if img_hash in self._gemini_cache:
+            ts, cached_result = self._gemini_cache[img_hash]
+            if now - ts < self._GEMINI_CACHE_TTL:
+                logger.info("[SmartReading] Gemini cache hit — reutilizando resultado anterior")
+                return cached_result
+            else:
+                del self._gemini_cache[img_hash]
+
         gemini = self._get_gemini()
         if gemini is None or not gemini.is_available:
             return None
@@ -4756,6 +4785,11 @@ class SmartReadingService:
             result = gemini.analyze_document(image)
             if result and result.get("narrative"):
                 logger.info("[SmartReading] Gemini respondió correctamente")
+                # Guardar en cache; limpiar entradas viejas si crece demasiado
+                if len(self._gemini_cache) >= self._MAX_CACHE_SIZE:
+                    oldest = min(self._gemini_cache, key=lambda k: self._gemini_cache[k][0])
+                    del self._gemini_cache[oldest]
+                self._gemini_cache[img_hash] = (now, result)
                 return result
             else:
                 logger.info("[SmartReading] Gemini no devolvió narrativa, usando Tesseract")
